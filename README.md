@@ -1,6 +1,6 @@
 # Bandi（班底）
 
-现实创业公司的本地数字孪生：在客户端中管理公司，在 Claude Code 中指挥班底工作。
+现实创业公司的本地数字孪生：在客户端中可视化管理多 Agent 配置与组织关系，在 Claude Code 中指挥班底工作。
 
 > [!NOTE]
 > Bandi 目前处于产品与页面架构确认阶段，仓库暂未包含可运行的客户端、Plugin 或 CLI 代码，不建议用于生产环境。
@@ -18,7 +18,23 @@ Bandi 把一家现实创业公司的组织和协作方式映射到用户本机�
 
 Bandi 支持管理多家 Company；每个 Company 表示一家现实公司的数字孪生，而不是随意生成的虚拟 AI 公司。
 
-每个长期 Agent 由独立的 `AgentPackage` 目录承载，其中可以包含灵魂、岗位职责、规则、长期记忆、能力、权限、编排策略和 Workspace 覆盖。编排能力由明确授权决定，不由“助理”“主管”或“员工”等身份标签硬编码。
+每个长期 Agent 由独立的 `AgentPackage` 目录承载，其中可以包含灵魂、岗位职责、Instructions、Skills、Memory、Rules、MCP、权限、编排策略、工作流（SOP）和该 Agent 的 Workspace 专属配置。部门和岗位只用于组织、职责与委派判断，不形成隐式配置继承。编排能力由明确授权决定，不由“助理”“主管”或“员工”等身份标签硬编码。
+
+Bandi Desktop 的日常主线保持简单：
+
+```text
+选择员工 Agent
+→ 查看完整配置
+→ 通过表单或原始文件修改
+→ 保存到对应真实配置文件
+→ 回到 Claude Code 使用
+```
+
+普通 Skill、Rules、MCP、权限、Agent × Workspace 专属配置和 SOP 修改不要求统一的草稿、审批或发布流程。Company / 全局配置只提供 Claude Code 底层公共配置、普通默认、显式共享资产和不可突破的安全边界；Agent 自有设置优先于普通默认，公共 Skill、Rule、MCP 和 SOP 只有被 AgentPackage 显式引用后才生效。来源关系按需解释；Diff、共享影响、冲突处理和额外确认只在用户主动查看、共享资产本体被修改、文件发生外部并发变化、存在真实冲突或扩大高风险权限时出现。
+
+设置中提供独立的“备份与恢复”入口：首版以本地手动/自动快照、历史和按 Company、Agent 或文件恢复为主，恢复前先保存当前状态。后续 Git 远程备份只连接私有仓库；Bandi 自动创建的仓库固定为 Private，凭据、Token、钥匙串数据和 Claude Code 执行过程永不进入备份，正式记忆进入远程备份前需要用户单独确认。
+
+任务相关交互统一发生在用户自己的 Claude Code CLI 中。董事长只需与董事长助理对话；助理依据客户端维护的组织、职责、Skills、Workspace、权限和 SOP 配置按需选择部门并委派主管，主管再选择本部门员工。目标确认、跨部门分配、执行协作、阻塞处理、逐级汇报和最终验收都不在 Desktop 中另建交互界面。用户无需在客户端为每次任务手动选择参与部门或员工。
 
 记忆按 `MemorySpace` 分层治理：
 
@@ -34,7 +50,7 @@ Bandi 支持管理多家 Company；每个 Company 表示一家现实公司的数
 
 ```text
 Bandi Desktop
-    管理公司、部门、岗位、Agent、Workflow、Workspace、权限和证据
+    管理公司、部门、岗位及 Agent 的 Skill、Memory、Rules、MCP、权限、Agent × Workspace 专属配置和 SOP
     ↓
 Rust Local Service
     统一保存和裁决事实、策略、投影、审计及受限本地操作
@@ -47,12 +63,12 @@ bandi CLI                Bandi Claude Code Plugin
 
 职责边界：
 
-- **Bandi Desktop**是管理与关系可视化平面，不是另一套 Claude Code，也不负责实际推理执行；
+- **Bandi Desktop**首先是多 Agent 配置资产与组织关系的可视化管理平面，负责查看、编辑并保存真实配置文件；它不是另一套 Claude Code，也不负责实际推理执行；
 - **Rust Local Service**是 Desktop、CLI 和 Plugin 共用的事实与策略中枢；SQLite 是其持久化实现之一；
 - **Bandi Plugin**是 Claude Code 侧的正式安装和能力载体，不保存另一套公司事实；
 - **Bandi MCP**是 Plugin 连接 Local Service 的结构化接口，不取代 Workflow、组织关系或审批策略；
 - **Hooks**用于门禁、审计和有限事件证据，但其存在不等于已经具备可靠 Runtime Connector；
-- **Claude Code CLI**始终由用户自己安装和使用，Bandi 不接管用户账号。
+- **Claude Code CLI**始终由用户自己安装和使用，实际任务执行及聊天、工具调用、Todo、日志等大量中间状态留在终端，Bandi 不接管用户账号或镜像完整执行过程。
 
 ## 进入 Bandi
 
@@ -105,20 +121,24 @@ Bandi 提供多个入口，但所有入口都读取同一个 Local Service：
 | 保留当前会话已有上下文 | 是 | 新会话隔离 |
 | 适用场景 | 已在 Claude Code 中，希望立即接入公司 | 需要完整董事长助理身份、权限和配置 |
 
-## 分层协作关系
+## Claude Code 中的分层协作
+
+以下交互全部发生在用户自己的 Claude Code CLI 中：
 
 ```text
 董事长（真实用户）
-    ↓ 下达目标、关键审批、最终验收
+    ↓ 向董事长助理下达目标
 董事长助理 Agent
-    ↓ 公司级 / 跨部门 Workflow，委派部门目标
+    ↓ 按需选择必要部门，复杂事项先向董事长确认简明协作方案
 部门主管 Agent
-    ↓ 部门级 Workflow，调度本部门员工
+    ↓ 根据职责、Skills、Workspace 绑定和权限选择本部门员工
 专业或执行 Agent
-    ↓ 获授权的岗位/任务级子工作流，或具体步骤
+    ↓ 完成具体工作，必要时按授权组织任务级子流程
 部门主管 → 董事长助理 → 董事长
-    逐级汇总交付物、证据、阻塞和审批结果
+    逐级汇总交付物、阻塞、审批结果和最终汇报
 ```
+
+低风险事项可由助理说明分配方式后直接推进；多部门复杂事项先在终端确认参与部门、目标、依赖和关键审批点；高风险动作在实际执行前再次确认。一次性协作过程默认留在终端，只有具有复用价值且董事长明确同意时，才将其整理并保存为正式 SOP。
 
 ## 当前产品原则
 
@@ -126,24 +146,30 @@ Bandi 提供多个入口，但所有入口都读取同一个 Local Service：
 - **多入口、单一中枢**：Desktop、CLI 和 Plugin 不分别维护公司事实。
 - **董事长拥有最终决定权**：任何 Agent 都不能伪造董事长同意或替代最终验收。
 - **编排能力分层授权**：董事长助理、主管和专业 Agent 都可以在授权范围内编排。
-- **Agent 是目录化长期员工**：AgentPackage 不等于单个 Prompt、Plugin Agent 或某次执行。
-- **Workflow 负责协作**：MCP 只是访问工作流服务的连接层。
+- **Agent 是配置独立的目录化长期员工**：每个 AgentPackage 独立拥有自己的配置，不等于单个 Prompt、Plugin Agent 或某次执行。
+- **公共配置不隐式继承**：部门和岗位不向 Agent 自动注入配置；全局提供普通默认、显式共享资产和强制安全边界，Agent 自有设置优先于普通默认。
+- **终端负责事项协作**：目标确认、部门与员工分配、执行、阻塞、汇报和验收都在 Claude Code 中完成；Desktop 不提供第二套任务交互界面。
+- **SOP 是配置定义**：SOP 描述责任部门/岗位、输入输出、依赖和审批边界，由 Claude Code 中的助理与主管解析使用；MCP 只是结构化连接层。
 - **Plugin 与投影分离**：Plugin 是稳定安装基线；RuntimeProjection 是公司、Workspace 和策略的动态可重建快照。
 - **快速接入不等于完整启动**：两种模式具有不同能力和证据边界。
 - **记忆按所有权和作用域隔离**：Agent 长期、Agent 项目、助理项目管理、Workspace 公共和部门项目记忆不能混为一体。
 - **候选先审后写**：Agent、Plugin、MCP 和 Hooks 不能直接修改正式长期记忆，提议者不能自审。
 - **投影保留来源**：MemoryProjection 保留作用域、所有者、版本、哈希、纳入原因和权限结果，冲突不静默覆盖。
-- **状态必须有证据**：候选获批、文件写入、投影重编译、Runtime 加载、Session 关联和任务完成是不同事实。
-- **用户掌握执行过程**：不内嵌或替代 Claude Code，不在后台隐藏执行。
+- **普通配置直接保存**：必要校验通过后写回明确的真实文件；来源、Diff、影响和冲突只在解释或异常处理时出现，不建立通用发布生命周期。
+- **正式记忆是治理例外**：任何写入正式 MemorySpace 的变化都先形成 MemoryCandidate，提议者不能自审；获批写入后生成 MemoryRevision。
+- **备份独立于保存安全**：本地快照和私有 Git 远程备份用于历史恢复与容灾，不能代替基线检查、原子写入和外部变化保护。
+- **远程备份默认私有**：Bandi 创建的 Git 仓库固定为 Private，不备份凭据与执行过程；正式记忆远程备份单独确认。
+- **状态必须有证据**：保存成功、备份完成、远端推送、候选获批、记忆文件写入、投影重编译和 Runtime 加载是不同事实。
+- **用户掌握执行过程**：不内嵌或替代 Claude Code，不复制 Agent View，不在后台隐藏或镜像完整执行过程。
 
 ## 当前有效文档
 
 1. [产品与页面架构](./docs/产品与页面架构.md)  
-   数字孪生定位、角色关系、五类 MemorySpace、记忆候选治理、Plugin 与双入口模型、页面职责和首版范围。
+   多 Agent 配置管理主线、数字孪生角色关系、五类 MemorySpace、正式记忆候选治理、Plugin 与双入口边界。
 2. [页面低保真线框图](./docs/页面低保真线框图.md)  
-   公司关系管理、AgentPackage、分层记忆、候选审核、Workflow、Claude Code 集成、快速接入、完整启动和运行证据线框。
+   Agent 完整配置、直接保存、按需诊断、条件异常处理、组织与 Workspace、SOP、Claude Code 文件衔接和记忆审核线框。
 3. [技术架构](./docs/技术架构.md)  
-   Desktop、Rust Local Service、Bandi Plugin、CLI、Memory Service、双入口契约、MemoryProjection 和证据边界。
+   Desktop、Rust Local Service、真实配置文件安全写回、Bandi Plugin、CLI、Memory Service 和启动投影边界。
 
 ## 历史归档
 
@@ -157,16 +183,17 @@ Bandi 提供多个入口，但所有入口都读取同一个 Local Service：
 当前已确认：
 
 1. Bandi 是现实创业公司的本地数字孪生；
-2. Desktop 是管理与关系可视化平面；
-3. Local Service 是统一事实与策略中枢；
+2. Desktop 首先是多 Agent 配置资产与组织关系的可视化管理平面，普通配置遵循“查看—修改—保存”；
+3. Local Service 是统一事实、策略与真实配置文件安全操作中枢；
 4. Bandi Plugin 是正式 Claude Code 交付载体；
 5. 董事长助理、部门主管和获授权 Agent 采用分层编排；
 6. `attach_current` 与 `launch_new` 必须严格区分；
 7. 五类 MemorySpace 的所有权、归口、审核与隔离边界固定；
 8. 每个 Agent × Workspace 拥有独立项目记忆载体；
-9. 运行记忆先形成 MemoryCandidate，审核和安全写回后才生成 MemoryRevision；
-10. 完整启动包含 MemoryProjection，快速接入只有有限 MemoryContext；
-11. MCP/Hooks 首版存在，但可靠 Runtime Connector 后续演进。
+9. 所有正式 MemorySpace 变化先形成 MemoryCandidate，审核和安全写回后才生成 MemoryRevision；
+10. 来源、Diff、共享影响、冲突和高风险确认按条件出现，不是普通保存的固定步骤；
+11. 完整启动包含 MemoryProjection，快速接入只有有限 MemoryContext；
+12. 任务执行和大量中间状态留在 Claude Code CLI，客户端不建设完整运行监控台。
 
 后续仍需验证 Plugin 安装作用域、可选 `/bandi` 薄别名、当前会话可获得的宿主字段、最小 Hook 事件范围、具体 Claude Code CLI 参数，以及 MemorySpace 的物理目录、文件名、格式和旧记忆迁移策略。
 
@@ -177,11 +204,11 @@ Bandi 提供多个入口，但所有入口都读取同一个 Local Service：
 - Bandi Claude Code Plugin；
 - Bandi Skill 与董事长助理 Custom Agent；
 - Bandi MCP Server 与最小 Hooks；
-- Plugin settings 与 Workspace 覆盖；
+- Plugin settings 与 Agent × Workspace 专属配置；
 - `bandi` 系统 CLI；
 - Tailwind CSS v4 + shadcn/ui + Radix + Lucide；
 - macOS 首发，Windows 后续；
-- 本地优先，可靠 Runtime Connector 和远程能力渐进演进。
+- 本地优先；真实文件、编辑器、Finder、系统终端与 Claude Code 顺畅衔接；远程能力按实际需求渐进演进。
 
 具体依赖版本、安装方式和 Claude Code 参数将在正式初始化实现时按目标版本验证。
 
@@ -191,8 +218,8 @@ Bandi 提供多个入口，但所有入口都读取同一个 Local Service：
 
 - 对数字孪生定位、角色模型和页面线框的反馈；
 - 真实创业公司、多 Agent、多 Workflow 和多 Workspace 场景；
-- Plugin、CLI、快速接入和完整启动需求；
-- AgentPackage、五类 MemorySpace 与 Claude Code 运行投影需求；
+- Plugin、CLI、快速接入和完整启动的必要衔接需求；
+- AgentPackage、配置文件编辑保存、五类 MemorySpace 与启动投影需求；
 - 记忆候选审核、项目隔离和迁移场景；
 - 文档、边界和可验证的小型改进。
 
