@@ -1,6 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { cn } from '../../lib'
 import { Tooltip } from './tooltip'
 
@@ -32,11 +32,20 @@ export function AppDialog({
   footer,
   size = 'md',
 }: Props) {
+  const triggerRef = useRef<HTMLElement | null>(null)
+  if (open && !triggerRef.current && document.activeElement instanceof HTMLElement) triggerRef.current = document.activeElement
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-[2px] data-[state=open]:animate-fade" />
         <DialogPrimitive.Content
+          onCloseAutoFocus={(event) => {
+            if (!triggerRef.current?.isConnected) return
+            event.preventDefault()
+            triggerRef.current.focus()
+            triggerRef.current = null
+          }}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl outline-none',
             sizes[size],

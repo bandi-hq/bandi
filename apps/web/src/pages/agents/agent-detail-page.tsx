@@ -1,49 +1,67 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ExternalLink, FileDiff, KeyRound, Plus, Save, Search, ShieldCheck, Trash2 } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { AppDialog } from '../../components/ui/dialog'
 import { useUnsavedChangesGuard } from '../../hooks/use-unsaved-changes-guard'
-import { EntityNotFound, EntityTabPanel, EntityTabs, FieldRow, MockBoundaryNote, MonoPath, PageHeader, PathActions, StatusBadge, toneForStatus } from '../../components/app/page'
+import { EntityNotFound, FieldRow, MockBoundaryNote, MonoPath, PageHeader, PathActions, StatusBadge, toneForStatus } from '../../components/app/page'
 import { useApp } from '../../state'
 import { getEligibleMemorySpaces, resolveMemoryGovernance } from '../../memory-policy'
 import type { FullAgent } from '../../domain'
-import { AgentPackageFiles } from './agent-package-files'
-
-const tabs = [
-  ['overview', '概览'], ['identity', '身份与职责'], ['instructions', 'Instructions'], ['skills', 'Skills'], ['memory', 'Memory'], ['rules', 'Rules'], ['mcp', 'MCP'], ['permissions', '权限'], ['workspaces', 'Workspaces'], ['sop', 'SOP'], ['files', '文件'],
-].map(([id, label]) => ({ id, label }))
+import { getFilesForAgentSection, getPrimarySectionForAgentFile, resolveAgentConfigRoute, type AgentConfigSection, type AgentFileView } from '../../agent-config-projection'
+import { AgentPackageTree } from './agent-package-files'
+import { AgentConfigFilesNav, AgentConfigNavigation } from './agent-config-navigation'
+import { AgentConfigFileViewer } from './agent-config-file-viewer'
 
 export function AgentDetailPage() {
   const { id } = useParams()
   const { state, dispatch } = useApp()
   const [params, setParams] = useSearchParams()
   const agent = state.agents.find((item) => item.id === id)
-  const rawTab = params.get('tab') ?? 'overview'
-  const tab = tabs.some((item) => item.id === rawTab) ? rawTab : 'overview'
   const [dirty, setDirty] = useState(false)
+  const [allFiles, setAllFiles] = useState(false)
+  const [routeNotice, setRouteNotice] = useState<string>()
   const unsavedDialog = useUnsavedChangesGuard({ dirty, resetDraft: () => setDirty(false) })
-  if (!agent) return <EntityNotFound entity="Agent" backTo="/agents" />
+  const route = useMemo(() => agent ? resolveAgentConfigRoute(agent, params) : undefined, [agent, params])
+  const projectionContext = useMemo(() => ({ assets: state.assets, workspaces: state.workspaces, memorySpaces: state.memorySpaces }), [state.assets, state.memorySpaces, state.workspaces])
 
-  const changeTab = (next: string) => { const nextParams = new URLSearchParams(params); if (next === 'overview') nextParams.delete('tab'); else nextParams.set('tab', next); if (next !== 'files') nextParams.delete('path'); setParams(nextParams) }
+  useEffect(() => {
+    if (!route?.needsReplace) return
+    setRouteNotice(route.notice)
+    setParams(route.canonicalParams, { replace: true })
+  }, [route, setParams])
+
+  if (!agent || !route) return <EntityNotFound entity="Agent" backTo="/agents" />
+  const relatedFiles = getFilesForAgentSection(agent, route.section)
+  const updateParams = (update: (next: URLSearchParams) => void) => { const next = new URLSearchParams(params); update(next); setParams(next) }
+  const changeSection = (section: AgentConfigSection) => { setAllFiles(false); updateParams((next) => { if (section === 'overview') next.delete('tab'); else next.set('tab', section); next.delete('path'); next.delete('view') }) }
+  const showStructured = () => { setAllFiles(false); updateParams((next) => { next.delete('path'); next.delete('view') }) }
+  const showFile = (path: string) => { setAllFiles(false); updateParams((next) => { next.set('tab', getPrimarySectionForAgentFile(agent, path) ?? route.section); next.set('path', path); next.set('view', 'preview') }) }
+  const changeView = (view: AgentFileView) => updateParams((next) => next.set('view', view))
 
   return <>
-    <PageHeader backTo="/agents" backLabel="返回 Agents" title={agent.name} description={`${agent.role} · ${agent.department}`} action={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'source', agentId: agent.id, section: tab } })}><Search size={16} />诊断来源</Button><Button onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'client-guide', workspaceId: state.currentWorkspaceId ?? undefined } })}><ExternalLink size={16} />客户端使用指引</Button></div>} />
+    <PageHeader backTo="/agents" backLabel="返回 Agents" title={agent.name} description={`${agent.role} · ${agent.department}`} action={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'source', agentId: agent.id, section: route.section } })}><Search size={16} aria-hidden="true" />诊断来源</Button><Button onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'client-guide', workspaceId: state.currentWorkspaceId ?? undefined } })}><ExternalLink size={16} aria-hidden="true" />客户端使用指引</Button></div>} />
     <div className="mb-4 flex flex-wrap items-center gap-3"><StatusBadge tone={toneForStatus(agent.status)}>{agent.status}</StatusBadge><StatusBadge tone={toneForStatus(agent.config)}>{agent.config}</StatusBadge><MonoPath>{agent.packagePath}</MonoPath></div>
-    <EntityTabs tabs={tabs} active={tab} onChange={changeTab} />
-    <EntityTabPanel tabId="overview" activeTab={tab}><Overview agent={agent} /></EntityTabPanel>
-    <EntityTabPanel tabId="identity" activeTab={tab}><IdentityTab agent={agent} onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="instructions" activeTab={tab}><InstructionsTab agent={agent} onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="skills" activeTab={tab}><ReferenceTab agent={agent} kind="Skills" field="skillRefs" onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="memory" activeTab={tab}><MemoryTab agent={agent} /></EntityTabPanel>
-    <EntityTabPanel tabId="rules" activeTab={tab}><ReferenceTab agent={agent} kind="Rules" field="ruleRefs" onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="mcp" activeTab={tab}><ReferenceTab agent={agent} kind="MCP" field="mcpRefs" onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="permissions" activeTab={tab}><PermissionsTab agent={agent} onDirty={setDirty} /></EntityTabPanel>
-    <EntityTabPanel tabId="workspaces" activeTab={tab}><WorkspacesTab agent={agent} /></EntityTabPanel>
-    <EntityTabPanel tabId="sop" activeTab={tab}><SopTab agent={agent} /></EntityTabPanel>
-    <EntityTabPanel tabId="files" activeTab={tab}><AgentPackageFiles agent={agent} /></EntityTabPanel>
+    {routeNotice && <div role="status" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm"><span>{routeNotice}</span><button type="button" className="rounded px-2 py-1 text-xs font-medium hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setRouteNotice(undefined)}>知道了</button></div>}
+    <div className="grid min-w-0 gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className="panel h-fit p-3"><AgentConfigNavigation active={route.section} onSelect={changeSection} /><AgentConfigFilesNav files={relatedFiles} selectedPath={route.path} allFiles={allFiles} onStructured={showStructured} onSelect={showFile} onAllFiles={() => setAllFiles(true)} />{allFiles && <div className="mt-4 border-t border-border pt-3 xl:hidden"><AgentPackageTree files={agent.files} selectedPath={route.path} onSelect={showFile} ariaLabel={`${agent.name} AgentPackage 目录`} /></div>}{allFiles && <div className="hidden border-t border-border xl:mt-4 xl:block"><div className="label px-3 pt-4">全部文件</div><AgentPackageTree files={agent.files} selectedPath={route.path} onSelect={showFile} ariaLabel={`${agent.name} AgentPackage 目录`} /></div>}</aside>
+      <main className="min-w-0">{route.path ? <AgentConfigFileViewer agent={agent} context={projectionContext} path={route.path} view={route.view} onView={changeView} onBack={showStructured} /> : <AgentConfigContent section={route.section} agent={agent} onDirty={setDirty} />}</main>
+    </div>
     {unsavedDialog}
   </>
+}
+
+function AgentConfigContent({ section, agent, onDirty }: { section: AgentConfigSection; agent: FullAgent; onDirty: (value: boolean) => void }) {
+  if (section === 'overview') return <Overview agent={agent} />
+  if (section === 'identity') return <IdentityTab agent={agent} onDirty={onDirty} />
+  if (section === 'instructions') return <InstructionsTab agent={agent} onDirty={onDirty} />
+  if (section === 'skills') return <ReferenceTab agent={agent} kind="Skills" field="skillRefs" onDirty={onDirty} />
+  if (section === 'memory') return <MemoryTab agent={agent} />
+  if (section === 'rules') return <ReferenceTab agent={agent} kind="Rules" field="ruleRefs" onDirty={onDirty} />
+  if (section === 'mcp') return <ReferenceTab agent={agent} kind="MCP" field="mcpRefs" onDirty={onDirty} />
+  if (section === 'permissions') return <PermissionsTab agent={agent} onDirty={onDirty} />
+  if (section === 'workspaces') return <WorkspacesTab agent={agent} />
+  return <SopTab agent={agent} />
 }
 
 function Overview({ agent }: { agent: FullAgent }) {

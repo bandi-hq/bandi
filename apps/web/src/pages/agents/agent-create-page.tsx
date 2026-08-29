@@ -63,7 +63,7 @@ export function AgentCreatePage() {
     }
     dispatch({ type: 'CREATE_AGENT', agent })
     setCommitted(true)
-    navigate(`/agents/${id}?tab=files`)
+    navigate(`/agents/${id}?tab=overview&path=agent.yaml&view=preview`)
   }
 
   return <>
