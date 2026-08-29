@@ -1,0 +1,16 @@
+{
+  "name": "bandi",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev": "pnpm --filter @bandi/web dev",
+    "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "lint": "pnpm --filter @bandi/web lint",
+    "typecheck": "pnpm --filter @bandi/web typecheck",
+    "test": "pnpm --filter @bandi/web test",
+    "build": "pnpm --filter @bandi/web build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

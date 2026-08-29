@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"仅允许基础窗口能力的演示壳","local":true,"windows":["main"],"permissions":["core:default"]}}

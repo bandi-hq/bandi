@@ -12,8 +12,9 @@ coverage/
 .env.*
 !.env.example
 
-# 日志
+# 日志与本地运行状态
 *.log
+.run/
 
 # 编辑器配置
 .idea/
