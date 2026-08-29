@@ -22,6 +22,7 @@ export function GlobalSheets() {
   const [restoreStep, setRestoreStep] = useState<1 | 2 | 3>(1)
   const [restoreScope, setRestoreScope] = useState<BackupScope>({ kind: 'all' })
   const [restoreFiles, setRestoreFiles] = useState<string[]>([])
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string>()
   const close = () => dispatch({ type: 'CLOSE_DIALOG' })
   const done = (text: string) => { close(); dispatch({ type: 'TOAST', text }) }
 
@@ -33,6 +34,7 @@ export function GlobalSheets() {
     setRestoreStep(1)
     setRestoreScope({ kind: 'all' })
     setRestoreFiles([])
+    setSelectedRevisionId(undefined)
   }, [dialog?.kind])
 
   const workspace = state.workspaces.find((item) => item.id === (dialog?.kind === 'client-guide' ? dialog.workspaceId : state.currentWorkspaceId))
@@ -46,7 +48,16 @@ export function GlobalSheets() {
   if (!dialog) return null
   if (dialog.kind === 'add-ai-client') return <AddAiClientDialog />
 
-  if (dialog.kind === 'client-guide') return <ClientGuideDialog view={dialog.view ?? 'overview'} client={client} workspace={workspace} close={close} done={done} />
+  if (dialog.kind === 'client-guide') return <ClientGuideDialog client={client} workspace={workspace} close={close} done={done} />
+
+  if (dialog.kind === 'config-history') {
+    const revisions = state.configRevisions.filter((item) => item.ownerType === dialog.ownerType && item.ownerId === dialog.ownerId && item.path === dialog.path)
+    const selected = revisions.find((item) => item.id === selectedRevisionId) ?? revisions[0]
+    const current = revisions[0]
+    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title={`配置历史 · ${dialog.path.split('/').at(-1)}`} description="历史版本不可变；恢复会生成新的演示版本。" size="xl" footer={<><Button variant="outline" onClick={close}>关闭</Button><Button disabled={!selected || selected.id === current?.id} onClick={() => selected && dispatch({ type: 'RESTORE_CONFIG_REVISION', revisionId: selected.id })}>恢复为新版本</Button></>}>
+      {revisions.length ? <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]"><div className="space-y-2" role="list" aria-label="配置版本">{revisions.map((revision, index) => <button key={revision.id} type="button" onClick={() => setSelectedRevisionId(revision.id)} className={`w-full rounded-lg border p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected?.id === revision.id ? 'border-foreground bg-muted' : 'border-border hover:bg-muted/60'}`}><span className="flex items-center justify-between gap-2"><b className="text-sm">{revision.id}</b>{index === 0 && <StatusBadge tone="success">当前</StatusBadge>}</span><small className="mt-1 block text-muted-foreground">{revision.savedAt} · {revision.summary}</small>{revision.restoredFromRevisionId && <small className="mt-1 block text-muted-foreground">恢复自 {revision.restoredFromRevisionId}</small>}</button>)}</div><div className="min-w-0"><div className="grid gap-3 sm:grid-cols-2"><div className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">当前版本</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap p-3 text-xs leading-6">{current?.content}</pre></div><div className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">{selected?.id === current?.id ? '选择一个历史版本比较' : selected?.id}</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap p-3 text-xs leading-6">{selected?.content}</pre></div></div><div className="mt-4 rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm">恢复会重新检查当前基线和长期配置风险；本 Web mock 只更新页面内存，不读取或写入文件。</div></div></div> : <p className="text-sm text-muted-foreground">当前文件尚无演示 ConfigRevision。正式 Memory 使用独立 MemoryRevision。</p>}
+    </AppDialog>
+  }
 
   if (dialog.kind === 'source') {
     return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="来源与有效配置" description={`${agent?.name ?? asset?.name ?? '配置对象'} / ${dialog.section ?? asset?.kind ?? '配置'}`} size="md" footer={<Button onClick={close}>关闭</Button>}>
@@ -66,7 +77,7 @@ export function GlobalSheets() {
   if (dialog.kind === 'conflict') {
     const allResolved = Boolean(conflicts.a && conflicts.b)
     const choices = (key: string) => <div className="mt-3 flex flex-wrap gap-2">{['外部版本', '我的版本', '手动合并'].map((choice) => <Button key={choice} variant={conflicts[key] === choice ? 'default' : 'outline'} size="sm" onClick={() => setConflicts((value) => ({ ...value, [key]: choice }))}>{choice}</Button>)}</div>
-    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="需要处理真实冲突" description="同一文本区域被同时修改，无法安全自动合并。" size="lg" footer={<><Button variant="outline" onClick={close}>取消保存</Button><Button disabled={!allResolved} onClick={() => done('2 处演示冲突已逐项解决 · 合并结果仅保存在当前页面内存')}>{allResolved ? '完成演示合并' : `请先解决 ${2 - Object.keys(conflicts).length} 处冲突`}</Button></>}>
+    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="解决配置文件冲突" description="同一文本区域被同时修改，无法安全自动合并。" size="lg" footer={<><Button variant="outline" onClick={close}>取消保存</Button><Button disabled={!allResolved} onClick={() => done('2 处演示冲突已逐项解决 · 合并结果仅保存在当前页面内存')}>{allResolved ? '完成演示合并' : `请先解决 ${2 - Object.keys(conflicts).length} 处冲突`}</Button></>}>
       {[['a', '生产发布必须由董事长批准', '生产发布由部门主管批准'], ['b', '验证证据必须附在汇报中', '验证证据按需提供']].map(([key, external, mine], index) => <div key={key} className="mb-4 rounded-lg border border-danger/30 bg-danger/5 p-4"><div className="mb-3 flex items-center gap-2 text-danger"><AlertTriangle size={18} /><b>冲突 {index + 1}</b></div><pre className="overflow-x-auto text-xs leading-6">{`<<<< 外部版本\n${external}\n====\n${mine}\n>>>> 你的编辑`}</pre>{choices(key)}</div>)}
     </AppDialog>
   }
@@ -79,7 +90,7 @@ export function GlobalSheets() {
       else dispatch({ type: 'TOAST', text: `已确认共享资产 ${asset.name} 的影响范围；未提交内容变更 · 未写入文件` })
       close()
     }
-    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="共享资产影响" description={`你正在修改 ${asset.path}`} size="lg" footer={<><Button variant="outline" onClick={close}>取消</Button><Button onClick={confirmShared}>{impact === 'shared' ? '确认影响并保存' : '返回局部定制'}</Button></>}>
+    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="共享配置影响" description={`你正在修改 ${asset.path}`} size="lg" footer={<><Button variant="outline" onClick={close}>取消</Button><Button onClick={confirmShared}>{impact === 'shared' ? '确认影响并保存' : '返回局部定制'}</Button></>}>
       <div className="rounded-lg bg-warning/8 p-4 text-warning"><b>影响范围：{asset.references.length} 个已登记显式引用</b></div><div className="mt-5 divide-y divide-border rounded-lg border border-border">{asset.references.map((item) => <div className="flex justify-between gap-4 p-3" key={`${item.type}-${item.id}`}><span>{item.label}</span><span className="shrink-0 text-muted-foreground">{item.type} · 显式引用</span></div>)}</div>
       <label className="mt-5 flex gap-3"><input type="radio" name="impact" checked={impact === 'local'} onChange={() => setImpact('local')} /><span>返回并为当前对象创建局部定制</span></label><label className="mt-3 flex gap-3"><input type="radio" name="impact" checked={impact === 'shared'} onChange={() => setImpact('shared')} /><span>修改共享本体并影响以上范围</span></label>
     </AppDialog>
@@ -89,7 +100,7 @@ export function GlobalSheets() {
     if (!agent) return <MissingDialog title="Agent 不存在" close={close} />
     const nextFiles = dialog.nextFiles ?? '任意目录'
     const confirm = () => { dispatch({ type: 'UPDATE_AGENT', agentId: agent.id, changes: { permissions: { ...agent.permissions, files: nextFiles } }, message: `已模拟确认 ${agent.name} 权限扩大 · 仅当前页面内存 · 未写入磁盘` }); close() }
-    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="高风险权限扩大" description={`Agent：${agent.name}`} size="lg" footer={<><Button variant="outline" onClick={close}>取消</Button><Button variant="danger" disabled={confirmName !== agent.name || !understood} onClick={confirm}>确认扩大权限并保存</Button></>}>
+    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="确认扩大长期 Agent 权限" description={`Agent：${agent.name}`} size="lg" footer={<><Button variant="outline" onClick={close}>取消</Button><Button variant="danger" disabled={confirmName !== agent.name || !understood} onClick={confirm}>确认扩大权限并保存</Button></>}>
       <div className="flex gap-3 rounded-lg border border-danger/30 bg-danger/5 p-4 text-danger"><ShieldAlert className="shrink-0" /><div><b>可能修改 Workspace 外的项目或系统文件</b><p className="mt-1 text-sm">影响已绑定 Workspace：{agent.workspaceBindings.map((item) => state.workspaces.find((ws) => ws.id === item.workspaceId)?.name).filter(Boolean).join('、') || '无'}</p></div></div><div className="mt-5 panel p-4"><InfoRow label="变更前">{agent.permissions.files}</InfoRow><InfoRow label="变更后"><b className="text-danger">{nextFiles}</b></InfoRow><InfoRow label="全局边界">仍受不可突破的安全规则约束</InfoRow></div><label className="mt-5 block text-sm font-medium">请输入 Agent 名称“{agent.name}”确认<input className="mt-2 h-10 w-full px-3" value={confirmName} onChange={(event) => setConfirmName(event.target.value)} /></label><label className="mt-4 flex items-start gap-3"><input className="mt-1" type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} /><span>我理解这是权限扩大，不是普通配置更新</span></label>
     </AppDialog>
   }
@@ -141,11 +152,12 @@ export function GlobalSheets() {
   return null
 }
 
-function ClientGuideDialog({ view, client, workspace, close, done }: { view: 'overview' | 'quick' | 'terminal' | 'records'; client: ReturnType<typeof useApp>['state']['aiClients'][number]; workspace?: ReturnType<typeof useApp>['state']['workspaces'][number]; close: () => void; done: (text: string) => void }) {
-  const { dispatch } = useApp(); const title = view === 'quick' ? '快速接入当前目录' : view === 'terminal' ? '新终端打开指引' : view === 'records' ? '有限接入记录' : `${client.name} 使用指引`
-  return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title={title} description="只展示配置上下文，不探测、打开、连接或接管真实客户端。" size="md" footer={<><Button variant="outline" onClick={close}>关闭</Button><Button disabled={!workspace} onClick={() => done(`已查看 ${title} · 未打开客户端、终端或连接 Session`)}>确认已查看</Button></>}>
-    <div className="rounded-lg border border-border bg-muted/40 p-4"><InfoRow label="当前客户端"><span className="flex items-center gap-2"><AiClientIcon client={client} size={16} />{client.name}</span></InfoRow><InfoRow label="状态">Bandi 中已启用 · 本机未探测 · 仅页面内存</InfoRow><InfoRow label="Workspace">{workspace?.name ?? '请先连接项目目录'}</InfoRow><InfoRow label="工作目录"><MonoPath>{workspace?.path ?? '—'}</MonoPath></InfoRow>{client.kind === 'claude-code' && workspace && <><InfoRow label="启动 CLI"><MonoPath>cd &quot;{workspace.path}&quot; &amp;&amp; claude</MonoPath></InfoRow><InfoRow label="Bandi 入口"><MonoPath>/bandi:bandi</MonoPath></InfoRow></>}</div>
-    {view === 'records' ? <div className="mt-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">暂无真实接入记录。只记录用户确认的有限配置事实；不记录聊天、工具、Todo、日志或 Session。</div> : <><div className="mt-5 flex gap-2 rounded-md bg-warning/10 p-3 text-sm text-warning"><Info size={18} className="shrink-0" /><span>指引不代表客户端已安装、命令已执行、Session 已连接或配置已加载。</span></div><div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!workspace} onClick={() => dispatch({ type: 'TOAST', text: `演示复制：${workspace?.path} · 未访问系统剪贴板` })}><Copy size={14} />演示复制路径</Button>{client.kind === 'claude-code' && workspace && <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'TOAST', text: `演示复制：cd &quot;${workspace?.path}&quot; && claude · 未访问系统剪贴板` })}><Copy size={14} />演示复制命令</Button>}</div></>}
+function ClientGuideDialog({ client, workspace, close, done }: { client: ReturnType<typeof useApp>['state']['aiClients'][number]; workspace?: ReturnType<typeof useApp>['state']['workspaces'][number]; close: () => void; done: (text: string) => void }) {
+  const { dispatch } = useApp()
+  const title = '在 Claude Code 中继续'
+  return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title={title} description="只展示 Workspace、cwd 和标准命令，不执行或跟踪真实客户端。" size="md" footer={<><Button variant="outline" onClick={close}>关闭</Button><Button disabled={!workspace} onClick={() => done(`已查看 ${title} 指引 · 未打开客户端、终端或连接 Session`)}>确认已查看</Button></>}>
+    <div className="rounded-lg border border-border bg-muted/40 p-4"><InfoRow label="当前客户端"><span className="flex items-center gap-2"><AiClientIcon client={client} size={16} />{client.name}</span></InfoRow><InfoRow label="Workspace">{workspace?.name ?? '请先连接项目目录'}</InfoRow><InfoRow label="工作目录"><MonoPath>{workspace?.path ?? '—'}</MonoPath></InfoRow>{client.kind === 'claude-code' && workspace && <><InfoRow label="标准命令"><MonoPath>cd &quot;{workspace.path}&quot; &amp;&amp; claude</MonoPath></InfoRow><InfoRow label="Bandi 入口"><MonoPath>/bandi:bandi</MonoPath></InfoRow></>}</div>
+    <div className="mt-5 flex gap-2 rounded-md bg-warning/10 p-3 text-sm text-warning"><Info size={18} className="shrink-0" aria-hidden="true" /><span>指引不代表客户端已安装、命令已执行、Session 已创建或配置已加载。</span></div><div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!workspace} onClick={() => dispatch({ type: 'TOAST', text: `演示复制：${workspace?.path} · 未访问系统剪贴板` })}><Copy size={14} aria-hidden="true" />演示复制路径</Button>{client.kind === 'claude-code' && workspace && <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'TOAST', text: `演示复制：cd &quot;${workspace?.path}&quot; && claude · 未访问系统剪贴板` })}><Copy size={14} aria-hidden="true" />演示复制命令</Button>}</div>
   </AppDialog>
 }
 

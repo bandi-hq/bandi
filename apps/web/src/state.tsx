@@ -6,12 +6,14 @@ import {
   initialAssets,
   initialBackupSnapshots,
   initialCompanies,
+  initialConfigRevisions,
   initialDepartments,
   initialMemoryCandidates,
   initialMemorySpaces,
   initialWorkspaces,
   type BackupSnapshot,
   type Company,
+  type ConfigRevision,
   type FullAgent,
   type FullAsset,
   type FullDepartment,
@@ -39,7 +41,8 @@ export type DialogState =
   | { kind: 'conflict'; assetId?: string; agentId?: string }
   | { kind: 'permission'; agentId: string; nextFiles?: string }
   | { kind: 'memory'; candidateId: string }
-  | { kind: 'client-guide'; workspaceId?: string; view?: 'overview' | 'quick' | 'terminal' | 'records' }
+  | { kind: 'client-guide'; workspaceId?: string }
+  | { kind: 'config-history'; ownerType: 'agent' | 'asset'; ownerId: string; path: string }
   | { kind: 'add-ai-client' }
   | { kind: 'workspace-responsibility'; workspaceId: string }
   | { kind: 'remove-workspace-index'; workspaceId: string }
@@ -70,6 +73,7 @@ export type State = {
   assets: FullAsset[]
   memorySpaces: MemorySpace[]
   memoryCandidates: MemoryCandidate[]
+  configRevisions: ConfigRevision[]
   backupSnapshots: BackupSnapshot[]
   backupSettings: BackupSettings
   settings: SettingsState
@@ -90,6 +94,7 @@ export type Action =
   | { type: 'UPDATE_AGENT'; agentId: string; changes: Partial<FullAgent>; message?: string }
   | { type: 'SET_AGENT_LIFECYCLE'; agentId: string; status: FullAgent['status'] }
   | { type: 'SAVE_INSTRUCTIONS'; agentId?: string; text: string }
+  | { type: 'RESTORE_CONFIG_REVISION'; revisionId: string }
   | { type: 'CREATE_COMPANY'; company: Company }
   | { type: 'UPDATE_COMPANY'; companyId: string; changes: Partial<Company> }
   | { type: 'CREATE_DEPARTMENT'; department: FullDepartment }
@@ -131,6 +136,7 @@ export const initialState: State = {
   assets: initialAssets,
   memorySpaces: initialMemorySpaces,
   memoryCandidates: initialMemoryCandidates,
+  configRevisions: initialConfigRevisions,
   backupSnapshots: initialBackupSnapshots,
   backupSettings: { gitConnection: { status: 'disconnected', visibility: 'private' }, formalMemoryRemote: 'excluded' },
   settings: {
@@ -161,6 +167,25 @@ const notice = (tone: NoticeTone, title: string, description?: string, duration 
 const clientNotice = (name: string, action: string) =>
   notice('success', `${name}${action}`, '仅更新当前页面内存 · 未探测本机 · 未写入磁盘')
 
+const demoContentHash = (content: string) => {
+  let hash = 0
+  for (const character of content) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  return `demo-${hash.toString(16).padStart(8, '0')}`
+}
+
+function appendConfigRevision(state: State, input: Omit<ConfigRevision, 'id' | 'parentRevisionId' | 'contentHash' | 'savedAt'> & { restoredFromRevisionId?: string }) {
+  const previous = state.configRevisions.find((item) => item.ownerType === input.ownerType && item.ownerId === input.ownerId && item.path === input.path)
+  const sequence = state.configRevisions.filter((item) => item.ownerType === input.ownerType && item.ownerId === input.ownerId && item.path === input.path).length + 1
+  const revision: ConfigRevision = {
+    ...input,
+    id: `cfg-${input.ownerType}-${input.ownerId}-${sequence}`,
+    parentRevisionId: previous?.id,
+    contentHash: demoContentHash(input.content),
+    savedAt: '刚刚',
+  }
+  return [revision, ...state.configRevisions]
+}
+
 const legacyDialog = (sheet: Exclude<Extract<Action, { type: 'SHEET' }>['sheet'], null>, state: State): Exclude<DialogState, null> => {
   if (sheet === 'claude') return { kind: 'client-guide', workspaceId: state.currentWorkspaceId ?? undefined }
   if (sheet === 'add-ai-client') return { kind: 'add-ai-client' }
@@ -189,7 +214,38 @@ export function reducer(state: State, action: Action): State {
       return { ...state, agents: state.agents.map((item) => item.id === action.agentId ? { ...item, status: action.status, updated: '刚刚' } : item), notice: notice('success', `生命周期已更新为${action.status}`, 'AgentPackage 与正式记忆仍保留') }
     case 'SAVE_INSTRUCTIONS': {
       const agentId = action.agentId ?? 'zhouce'
-      return { ...state, agents: state.agents.map((item) => item.id === agentId ? { ...item, instructions: action.text, updated: '刚刚' } : item), notice: notice('success', 'Instructions 演示配置已更新', `目标：~/.bandi/agents/agt_${agentId}/instructions.md · 仅当前页面内存 · 未写入真实文件`) }
+      const agent = state.agents.find((item) => item.id === agentId)
+      if (!agent || agent.instructions === action.text) return state
+      const configRevisions = appendConfigRevision(state, { ownerType: 'agent', ownerId: agentId, path: 'instructions.md', content: action.text, summary: '保存 Instructions 演示配置' })
+      const revision = configRevisions[0]
+      return {
+        ...state,
+        agents: state.agents.map((item) => item.id === agentId ? { ...item, instructions: action.text, updated: '刚刚', files: item.files.map((file) => file.path === 'instructions.md' ? { ...file, revision: revision.id } : file) } : item),
+        configRevisions,
+        notice: notice('success', 'Instructions 演示配置已更新', `已记录 ${revision.id} · 仅当前页面内存 · 未写入真实文件`),
+      }
+    }
+    case 'RESTORE_CONFIG_REVISION': {
+      const target = state.configRevisions.find((item) => item.id === action.revisionId)
+      if (!target) return { ...state, notice: notice('warning', '无法恢复配置版本', '目标版本不存在') }
+      const configRevisions = appendConfigRevision(state, { ownerType: target.ownerType, ownerId: target.ownerId, path: target.path, content: target.content, summary: `恢复自 ${target.id}`, restoredFromRevisionId: target.id })
+      const revision = configRevisions[0]
+      if (target.ownerType === 'agent' && target.path === 'instructions.md') {
+        return {
+          ...state,
+          agents: state.agents.map((item) => item.id === target.ownerId ? { ...item, instructions: target.content, updated: '刚刚', files: item.files.map((file) => file.path === target.path ? { ...file, revision: revision.id } : file) } : item),
+          configRevisions,
+          dialog: null,
+          notice: notice('success', '已恢复为新的演示版本', `${revision.id} · 来源 ${target.id} · 未写入真实文件`),
+        }
+      }
+      if (target.ownerType === 'asset') {
+        const asset = state.assets.find((item) => item.id === target.ownerId)
+        if (!asset || asset.kind === 'Memory') return { ...state, notice: notice('warning', '无法恢复配置版本', '正式 Memory 使用独立 MemoryRevision') }
+        const changes: Partial<FullAsset> = asset.kind === 'SOP' ? { steps: JSON.parse(target.content) as FullAsset['steps'] } : { content: target.content }
+        return { ...state, assets: state.assets.map((item) => item.id === target.ownerId ? { ...item, ...changes } : item), configRevisions, dialog: null, notice: notice('success', '已恢复为新的演示版本', `${revision.id} · 来源 ${target.id} · 未写入真实文件`) }
+      }
+      return state
     }
     case 'CREATE_COMPANY':
       if (state.companies.some((item) => item.id === action.company.id)) return state
@@ -220,8 +276,17 @@ export function reducer(state: State, action: Action): State {
     }
     case 'SELECT_WORKSPACE':
       return state.workspaces.some((workspace) => workspace.id === action.workspaceId) ? { ...state, currentWorkspaceId: action.workspaceId } : state
-    case 'UPDATE_ASSET':
-      return { ...state, assets: state.assets.map((item) => item.id === action.assetId ? { ...item, ...action.changes } as FullAsset : item), notice: notice('success', '资产演示配置已更新', action.message ?? '仅当前页面内存 · 未写入真实文件') }
+    case 'UPDATE_ASSET': {
+      const asset = state.assets.find((item) => item.id === action.assetId)
+      if (!asset) return state
+      const nextAsset = { ...asset, ...action.changes } as FullAsset
+      const revisionContent = asset.kind === 'SOP' && action.changes.steps ? JSON.stringify(nextAsset.steps ?? []) : typeof action.changes.content === 'string' ? nextAsset.content : undefined
+      const configRevisions = revisionContent !== undefined && asset.kind !== 'Memory'
+        ? appendConfigRevision(state, { ownerType: 'asset', ownerId: asset.id, path: asset.path, content: revisionContent, summary: `保存 ${asset.name} 演示配置` })
+        : state.configRevisions
+      const revision = configRevisions[0]
+      return { ...state, assets: state.assets.map((item) => item.id === action.assetId ? nextAsset : item), configRevisions, notice: notice('success', '资产演示配置已更新', revisionContent !== undefined ? `已记录 ${revision.id} · 仅当前页面内存 · 未写入真实文件` : action.message ?? '仅当前页面内存 · 未写入真实文件') }
+    }
     case 'CREATE_ASSET':
       if (state.assets.some((item) => item.id === action.asset.id)) return state
       return { ...state, assets: [...state.assets, action.asset], notice: notice('success', '资产已创建在演示内存中', '未创建真实文件') }

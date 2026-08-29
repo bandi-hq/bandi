@@ -35,8 +35,28 @@ describe('演示状态', () => {
 
   it('切换主题', () => expect(reducer(initialState, { type: 'THEME' }).theme).toBe('dark'))
 
-  it('保存指令只生成明确模拟回执', () =>
-    expect(reducer(initialState, { type: 'SAVE_INSTRUCTIONS', text: 'x' }).notice?.description).toContain('仅当前页面内存'))
+  it('保存指令生成新的不可变配置版本', () => {
+    const result = reducer(initialState, { type: 'SAVE_INSTRUCTIONS', agentId: 'zhouce', text: '新的演示指令' })
+    expect(result.notice?.description).toContain('仅当前页面内存')
+    expect(result.configRevisions).toHaveLength(initialState.configRevisions.length + 1)
+    expect(result.configRevisions[0]).toMatchObject({ ownerType: 'agent', ownerId: 'zhouce', path: 'instructions.md', content: '新的演示指令' })
+    expect(initialState.configRevisions[0].content).not.toBe('新的演示指令')
+  })
+
+  it('未改变指令时不生成重复版本', () => {
+    const agent = initialState.agents.find((item) => item.id === 'zhouce')!
+    expect(reducer(initialState, { type: 'SAVE_INSTRUCTIONS', agentId: agent.id, text: agent.instructions })).toBe(initialState)
+  })
+
+  it('恢复历史配置生成新版本并保留来源', () => {
+    const target = initialState.configRevisions.find((item) => item.id === 'cfg-zhouce-instructions-r7')!
+    const result = reducer(initialState, { type: 'RESTORE_CONFIG_REVISION', revisionId: target.id })
+    expect(result.configRevisions).toHaveLength(initialState.configRevisions.length + 1)
+    expect(result.configRevisions[0].restoredFromRevisionId).toBe(target.id)
+    expect(result.configRevisions[0].content).toBe(target.content)
+    expect(result.agents.find((item) => item.id === 'zhouce')?.instructions).toBe(target.content)
+    expect(initialState.configRevisions.find((item) => item.id === target.id)).toEqual(target)
+  })
 
   it('添加 Workspace 只更新集中状态并选中它', () => {
     const result = reducer(initialState, {

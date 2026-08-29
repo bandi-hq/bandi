@@ -130,6 +130,19 @@ export type FullAsset = Asset & {
   skill?: SkillDetails
 }
 
+export type ConfigRevision = {
+  id: string
+  ownerType: 'agent' | 'asset'
+  ownerId: string
+  path: string
+  parentRevisionId?: string
+  restoredFromRevisionId?: string
+  content: string
+  contentHash: string
+  savedAt: string
+  summary: string
+}
+
 export type MemoryScopeType = 'Agent 长期' | 'Agent × Workspace' | 'Workspace 公共' | 'Department × Workspace'
 export type MemorySpace = {
   id: string
@@ -248,6 +261,14 @@ export const initialAssets: FullAsset[] = [
   { id: 'mcp-bandi', name: 'Bandi MCP', kind: 'MCP', owner: '系统', scope: '用户级', refs: 13, path: '~/.claude/settings.json', status: '已配置', sourceType: 'Bandi 自有', summary: 'Bandi 配置上下文接口；当前 Web mock 未连接。', content: '{ "status": "demo-configured", "credentials": "not-read" }', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
   { id: 'memory-bandi', name: 'Bandi 公共记忆', kind: 'Memory', owner: 'Bandi Workspace', scope: 'Workspace 公共', refs: 3, path: '.bandi/memory/public.md', status: 'r12', sourceType: 'Bandi 自有', summary: 'Bandi Workspace 的正式公共记忆。', content: '', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
   { id: 'claude-project', name: '项目 CLAUDE.md', kind: 'CLAUDE.md', owner: 'Bandi', scope: '项目级', refs: 1, path: 'CLAUDE.md', status: '已索引', sourceType: '外部来源', summary: '项目级 Claude Code 规则。', content: 'Bandi 项目规则（演示摘要）', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
+]
+
+export const initialConfigRevisions: ConfigRevision[] = [
+  { id: 'cfg-zhouce-instructions-r8', ownerType: 'agent', ownerId: 'zhouce', path: 'instructions.md', parentRevisionId: 'cfg-zhouce-instructions-r7', content: initialAgents.find((item) => item.id === 'zhouce')?.instructions ?? '', contentHash: 'demo-instructions-r8', savedAt: '8 分钟前', summary: '补充可验证交付要求' },
+  { id: 'cfg-zhouce-instructions-r7', ownerType: 'agent', ownerId: 'zhouce', path: 'instructions.md', parentRevisionId: 'cfg-zhouce-instructions-r6', content: '你是软件开发部主管。负责研发交付，并向直属主管汇报。', contentHash: 'demo-instructions-r7', savedAt: '昨天', summary: '明确研发交付职责' },
+  { id: 'cfg-zhouce-instructions-r6', ownerType: 'agent', ownerId: 'zhouce', path: 'instructions.md', content: '你是软件开发部主管。', contentHash: 'demo-instructions-r6', savedAt: '3 天前', summary: '建立主 Instructions' },
+  { id: 'cfg-sop-delivery-r4', ownerType: 'asset', ownerId: 'sop-delivery', path: '.claude/sops/software-delivery.md', content: JSON.stringify(initialAssets.find((item) => item.id === 'sop-delivery')?.steps ?? []), contentHash: 'demo-sop-delivery-r4', savedAt: '昨天', summary: '补充实现与验证步骤' },
+  { id: 'cfg-rule-common-r3', ownerType: 'asset', ownerId: 'rule-common', path: '~/.bandi/shared/rules/common.md', content: initialAssets.find((item) => item.id === 'rule-common')?.content ?? '', contentHash: 'demo-rule-common-r3', savedAt: '3 天前', summary: '明确权限不可自行扩大' },
 ]
 
 export const initialMemorySpaces: MemorySpace[] = [

@@ -16,7 +16,7 @@ import {
   Sun,
   Workflow,
 } from 'lucide-react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AiClientIcon, AiClientPickerPopover } from './components/ai-clients'
 import { Button } from './components/ui/button'
 import { Sheet } from './components/ui/sheet'
@@ -70,6 +70,7 @@ function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
 export function Shell() {
   const { state, dispatch } = useApp()
   const location = useLocation()
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [clientPickerOpen, setClientPickerOpen] = useState(false)
   const addClientButtonRef = useRef<HTMLButtonElement>(null)
@@ -174,9 +175,12 @@ export function Shell() {
             <PrimaryNavigation />
           </div>
           <div className="absolute inset-x-3 bottom-4 space-y-2 border-t border-border pt-4">
-            <button onClick={() => { const candidate = state.memoryCandidates.find((item) => item.status === '待审核'); if (candidate) dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'memory', candidateId: candidate.id } }); else dispatch({ type: 'TOAST', text: '当前没有待审核 MemoryCandidate；其他配置问题请从首页进入' }) }} className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted">
-              <CircleAlert size={16} className="text-warning" />
-              <span>配置问题 <b>{issueCount}</b></span>
+            <button
+              onClick={() => navigate('/#pending-config')}
+              className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <CircleAlert size={16} className="text-warning" aria-hidden="true" />
+              <span>待处理 <b>{issueCount}</b></span>
             </button>
             <div className="px-2 text-[11px] leading-5 text-muted-foreground">演示模式<br />未探测本机 · 未写入磁盘</div>
           </div>
