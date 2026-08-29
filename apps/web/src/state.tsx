@@ -20,6 +20,7 @@ import {
   type MemoryCandidateStatus,
   type MemorySpace,
 } from './domain'
+import { applySkillAction, type SkillAction } from './skill-installation'
 
 export type NoticeTone = 'success' | 'info' | 'warning' | 'error'
 
@@ -46,6 +47,11 @@ export type DialogState =
   | { kind: 'organization'; entity: 'company' | 'department'; id?: string; mode: 'create' | 'edit' }
   | null
 
+export type BackupSettings = {
+  gitConnection: { status: 'disconnected'; visibility: 'private' } | { status: 'connected-demo'; visibility: 'private'; repository: string }
+  formalMemoryRemote: 'excluded' | 'confirmed'
+}
+
 export type SettingsState = {
   language: '简体中文' | 'English'
   defaultWorkspaceAssociation: '暂不关联' | '当前公司'
@@ -65,6 +71,7 @@ export type State = {
   memorySpaces: MemorySpace[]
   memoryCandidates: MemoryCandidate[]
   backupSnapshots: BackupSnapshot[]
+  backupSettings: BackupSettings
   settings: SettingsState
   aiClients: AiClient[]
   activeAiClientId: string
@@ -93,6 +100,8 @@ export type Action =
   | { type: 'SELECT_WORKSPACE'; workspaceId: string }
   | { type: 'UPDATE_ASSET'; assetId: string; changes: Partial<FullAsset>; message?: string }
   | { type: 'CREATE_ASSET'; asset: FullAsset }
+  | { type: 'APPLY_SKILL_ACTION'; skillId: string; action: SkillAction; version?: string }
+  | { type: 'UPDATE_BACKUP_SETTINGS'; changes: Partial<BackupSettings> }
   | { type: 'CREATE_MEMORY_CANDIDATE'; candidate: MemoryCandidate }
   | { type: 'REVIEW_MEMORY_CANDIDATE'; candidateId: string; status: MemoryCandidateStatus }
   | { type: 'CREATE_DEMO_BACKUP_SNAPSHOT'; snapshot: BackupSnapshot }
@@ -123,6 +132,7 @@ export const initialState: State = {
   memorySpaces: initialMemorySpaces,
   memoryCandidates: initialMemoryCandidates,
   backupSnapshots: initialBackupSnapshots,
+  backupSettings: { gitConnection: { status: 'disconnected', visibility: 'private' }, formalMemoryRemote: 'excluded' },
   settings: {
     language: '简体中文',
     defaultWorkspaceAssociation: '暂不关联',
@@ -215,6 +225,16 @@ export function reducer(state: State, action: Action): State {
     case 'CREATE_ASSET':
       if (state.assets.some((item) => item.id === action.asset.id)) return state
       return { ...state, assets: [...state.assets, action.asset], notice: notice('success', '资产已创建在演示内存中', '未创建真实文件') }
+    case 'APPLY_SKILL_ACTION': {
+      const asset = state.assets.find((item) => item.id === action.skillId)
+      if (!asset?.skill) return { ...state, notice: notice('warning', '无法更新 Skill 演示状态', '目标不存在或不是可管理的 Skill') }
+      const installation = applySkillAction(asset.skill.installation, action.action, action.version)
+      if (!installation) return { ...state, notice: notice('warning', '当前 Skill 状态不支持此操作', '未修改安装事实或 Agent 引用') }
+      const labels: Record<SkillAction, string> = { install: '安装', update: '更新', rollback: '回滚', uninstall: '卸载' }
+      return { ...state, assets: state.assets.map((item) => item.id === asset.id && item.skill ? { ...item, status: action.action === 'uninstall' ? '可演示安装' : '演示已安装', skill: { ...item.skill, installation } } : item), notice: notice('success', `Skill 已模拟${labels[action.action]}`, '仅更新当前页面内存 · 未下载、复制或删除文件 · 未执行安装脚本 · 未自动分配给 Agent') }
+    }
+    case 'UPDATE_BACKUP_SETTINGS':
+      return { ...state, backupSettings: { ...state.backupSettings, ...action.changes }, notice: notice('info', '备份演示策略已更新', '仅当前页面内存 · 未连接 Git、上传文件或读取凭据') }
     case 'CREATE_MEMORY_CANDIDATE': {
       if (state.memoryCandidates.some((item) => item.id === action.candidate.id)) return { ...state, notice: notice('warning', '无法创建正式记忆候选', '候选 ID 已存在') }
       const governance = resolveMemoryGovernance(state, action.candidate.spaceId, action.candidate.proposerAgentId)
@@ -279,8 +299,8 @@ export function reducer(state: State, action: Action): State {
 
 const Ctx = createContext<{ state: State; dispatch: React.Dispatch<Action> } | null>(null)
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+export function AppProvider({ children, initialState: providedState }: { children: ReactNode; initialState?: State }) {
+  const [state, dispatch] = useReducer(reducer, providedState ?? initialState)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', state.theme === 'dark')

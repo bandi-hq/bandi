@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { initialState, reducer } from '../state'
 import type { AiClient } from '../mock'
+import { buildBackupPreview, createDemoSnapshot } from '../backup-policy'
 
 const customClient: AiClient = {
   id: 'custom-demo',
@@ -101,6 +102,35 @@ describe('演示状态', () => {
     const result = reducer(single, { type: 'REMOVE_WORKSPACE_INDEX', workspaceId: 'bandi' })
     expect(result.workspaces).toHaveLength(0)
     expect(result.currentWorkspaceId).toBeNull()
+  })
+
+  it('Skill 生命周期只修改安装事实，不修改 Agent 引用', () => {
+    const originalRefs = initialState.agents.map((agent) => agent.skillRefs)
+    const installed = reducer(initialState, { type: 'APPLY_SKILL_ACTION', skillId: 'skill-docs', action: 'install' })
+    expect(installed.assets.find((asset) => asset.id === 'skill-docs')?.skill?.installation.status).toBe('installed')
+    expect(installed.agents.map((agent) => agent.skillRefs)).toEqual(originalRefs)
+    expect(installed.notice?.description).toContain('未自动分配给 Agent')
+
+    const rolledBack = reducer(initialState, { type: 'APPLY_SKILL_ACTION', skillId: 'skill-release', action: 'rollback', version: '2.0.0' })
+    expect(rolledBack.assets.find((asset) => asset.id === 'skill-release')?.skill?.installation.installedVersion).toBe('2.0.0')
+  })
+
+  it('备份设置只更新演示策略且 Private 固定', () => {
+    const result = reducer(initialState, { type: 'UPDATE_BACKUP_SETTINGS', changes: { gitConnection: { status: 'connected-demo', visibility: 'private', repository: 'github.com/demo/private' }, formalMemoryRemote: 'confirmed' } })
+    expect(result.backupSettings.gitConnection.visibility).toBe('private')
+    expect(result.backupSettings.formalMemoryRemote).toBe('confirmed')
+    expect(result.notice?.description).toContain('未连接 Git')
+  })
+
+  it('模拟恢复只新增恢复前快照，不修改业务集合', () => {
+    const preview = buildBackupPreview(initialState, { kind: 'agent', agentId: 'zhouce' })!
+    const beforeSnapshot = createDemoSnapshot(preview, { id: 'before-test', createdAt: '刚刚', kind: '恢复前演示' })
+    const result = reducer(initialState, { type: 'SIMULATE_RESTORE', snapshotId: 'snap-demo-001', beforeSnapshot })
+    expect(result.backupSnapshots[0]).toEqual(beforeSnapshot)
+    expect(result.agents).toBe(initialState.agents)
+    expect(result.assets).toBe(initialState.assets)
+    expect(result.companies).toBe(initialState.companies)
+    expect(result.workspaces).toBe(initialState.workspaces)
   })
 
   it('拒绝创建提议者无法写入的 MemoryCandidate', () => {

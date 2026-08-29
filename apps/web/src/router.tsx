@@ -7,6 +7,7 @@ import { AgentDetailPage } from './pages/agents/agent-detail-page'
 import { CompanyDetailPage, DepartmentDetailPage, OrganizationPage } from './pages/organization/organization-pages'
 import { WorkspaceDetailPage, WorkspacesPage, WorkspaceWizardPage } from './pages/workspaces/workspace-pages'
 import { AssetDetailPage, AssetsPage } from './pages/assets/asset-pages'
+import { SkillsPage } from './pages/assets/skills-page'
 import { BackupRestorePage, ClaudeCodeIntegrationPage, SettingsPage } from './pages/settings/settings-pages'
 import { NotFoundPage } from './pages/not-found-page'
 import { RouteErrorPage } from './pages/route-error-page'
@@ -27,6 +28,7 @@ export const router = createHashRouter([{
     { path: 'workspaces/new', element: <WorkspaceWizardPage /> },
     { path: 'workspaces/:id', element: <WorkspaceDetailPage /> },
     { path: 'assets', element: <AssetsPage /> },
+    { path: 'assets/skills', element: <SkillsPage /> },
     { path: 'assets/:id', element: <AssetDetailPage /> },
     { path: 'settings', element: <SettingsPage /> },
     { path: 'settings/claude-code', element: <ClaudeCodeIntegrationPage /> },

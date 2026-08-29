@@ -18,7 +18,21 @@ export type WorkspaceBinding = {
   memoryRevision: string
 }
 
-export type AgentFile = { path: string; type: string; status: string }
+export type AgentPackageSource =
+  | { kind: 'bandi-demo'; strategy: 'create-demo' }
+  | { kind: 'external-reference'; externalPath: string; strategy: 'reference-only' }
+
+export type AgentFileScope =
+  | { kind: 'agent-root' }
+  | { kind: 'workspace'; workspaceId: string }
+
+export type AgentFile = {
+  path: string
+  type: string
+  status: string
+  scope: AgentFileScope
+  revision?: string
+}
 
 export type FullAgent = Agent & {
   companyId?: string
@@ -33,6 +47,7 @@ export type FullAgent = Agent & {
   completionDefinition: string[]
   serviceGrants: ServiceGrant[]
   packagePath: string
+  packageSource: AgentPackageSource
   instructions: string
   skillRefs: string[]
   ruleRefs: string[]
@@ -83,6 +98,22 @@ export type FullWorkspace = Workspace & {
 export type AssetKind = 'Skill' | 'Memory' | 'Rules' | 'MCP' | 'SOP' | 'CLAUDE.md' | 'Settings' | 'Hooks / Commands' | 'Plugin'
 export type AssetReference = { type: 'Agent' | 'Workspace' | 'Department'; id: string; label: string }
 export type SopStep = { id: string; title: string; objective: string; input: string; output: string; owner: string; dependsOn: string[] }
+export type SkillSource =
+  | { kind: 'local'; path: string }
+  | { kind: 'git'; repository: string; ref: string; subdirectory?: string }
+  | { kind: 'marketplace'; provider: string; listingId: string; mockCatalog: true }
+export type SkillInstallation = {
+  status: 'available' | 'installed' | 'update-available'
+  installedVersion?: string
+  availableVersion: string
+  previousVersions: string[]
+}
+export type SkillDetails = {
+  source: SkillSource
+  delivery: { kind: 'standalone' } | { kind: 'plugin'; pluginAssetId: string }
+  installation: SkillInstallation
+  review: { permissions: string[]; impact: string[]; files: string[] }
+}
 export type FullAsset = Asset & {
   kind: AssetKind
   companyId?: string
@@ -96,6 +127,7 @@ export type FullAsset = Asset & {
   responsibilities?: string[]
   approvalConditions?: string[]
   escalationConditions?: string[]
+  skill?: SkillDetails
 }
 
 export type MemoryScopeType = 'Agent 长期' | 'Agent × Workspace' | 'Workspace 公共' | 'Department × Workspace'
@@ -121,22 +153,37 @@ export type MemoryCandidate = {
   status: MemoryCandidateStatus
 }
 
+export type BackupScope =
+  | { kind: 'all' }
+  | { kind: 'company'; companyId: string }
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'files'; paths: string[] }
+
 export type BackupSnapshot = {
   id: string
   createdAt: string
   kind: '手动演示' | '恢复前演示'
-  scope: string
+  scope: BackupScope
   includes: string[]
   excludes: string[]
+  localPath: string
+  deviceName: string
+  hash: string
+  integrity: 'demo-verified' | 'demo-unverified'
+  remoteStatus: 'local-only' | 'private-git-not-connected' | 'private-git-demo-synced' | 'private-git-demo-failed'
+  includesFormalMemory: boolean
 }
 
+const rootScope: AgentFileScope = { kind: 'agent-root' }
 const defaultFiles = (id: string): AgentFile[] => [
-  { path: 'agent.yaml', type: '稳定身份与状态', status: '已保存' },
-  { path: 'soul.md', type: '长期行为原则', status: '已保存' },
-  { path: 'instructions.md', type: '主 Instructions', status: id === 'zhouce' ? '外部变化' : '已保存' },
-  { path: 'config/rules.yaml', type: 'Rule 配置与引用', status: '已保存' },
-  { path: 'memory/long-term.md', type: '长期正式记忆', status: 'r18' },
-  { path: 'workspaces/bandi/config.yaml', type: 'Workspace 专属', status: '已保存' },
+  { path: 'agent.yaml', type: '稳定身份与状态', status: '已保存', scope: rootScope, revision: 'r1' },
+  { path: 'soul.md', type: '长期行为原则', status: '已保存', scope: rootScope },
+  { path: 'instructions.md', type: '主 Instructions', status: id === 'zhouce' ? '外部变化' : '已保存', scope: rootScope, revision: 'r8' },
+  { path: 'config/rules.yaml', type: 'Rule 配置与引用', status: '已保存', scope: rootScope },
+  { path: 'config/skills.yaml', type: 'Skill 配置与引用', status: '已保存', scope: rootScope },
+  { path: 'memory/long-term.md', type: '长期正式记忆', status: '已保存', scope: rootScope, revision: 'r18' },
+  { path: 'workspaces/bandi/config.yaml', type: 'Workspace 专属配置', status: '已保存', scope: { kind: 'workspace', workspaceId: 'bandi' }, revision: 'r7' },
+  { path: 'workspaces/bandi/memory.md', type: 'Workspace 专属记忆', status: '已保存', scope: { kind: 'workspace', workspaceId: 'bandi' }, revision: 'r7' },
 ]
 
 const baseAgent = (agent: Agent, details: Partial<FullAgent>): FullAgent => ({
@@ -151,6 +198,7 @@ const baseAgent = (agent: Agent, details: Partial<FullAgent>): FullAgent => ({
   completionDefinition: ['结果可验证', '异常已升级'],
   serviceGrants: [],
   packagePath: `~/.bandi/agents/agt_${agent.id}/`,
+  packageSource: { kind: 'bandi-demo', strategy: 'create-demo' },
   instructions: `你是${agent.role}。负责${agent.department}相关职责，并把结果以可验证方式向直属主管汇报。\n\n不得自行扩大权限；遇到目标冲突或跨部门依赖时及时升级。`,
   skillRefs: ['skill-review'],
   ruleRefs: ['rule-common'],
@@ -192,7 +240,11 @@ export const initialWorkspaces: FullWorkspace[] = [
 export const initialAssets: FullAsset[] = [
   { id: 'sop-delivery', name: '软件功能交付', kind: 'SOP', owner: '产品与研发', companyId: 'xinghe', scope: '部门级', refs: 7, path: '.claude/sops/software-delivery.md', status: '已保存', sourceType: '显式共享', summary: '从确认目标到附带验证证据的软件交付定义。', content: '', version: 'v4', objective: '把确认的产品目标交付为可验证软件。', references: [{ type: 'Agent', id: 'zhouce', label: '周策' }, { type: 'Department', id: 'dev', label: '研发部' }, { type: 'Workspace', id: 'bandi', label: 'Bandi' }], steps: [{ id: 'clarify', title: '澄清目标', objective: '确认范围和验收标准', input: '产品目标', output: '确认后的范围', owner: '产品部 / 产品岗位', dependsOn: [] }, { id: 'design', title: '技术方案', objective: '形成可实施方案', input: '确认后的范围', output: '技术方案', owner: '研发部 / 主管岗位', dependsOn: ['clarify'] }, { id: 'deliver', title: '实现与验证', objective: '交付带验证证据的软件', input: '技术方案', output: '软件与验证证据', owner: '研发部 / 工程岗位', dependsOn: ['design'] }], responsibilities: ['产品部定义范围', '研发部实现与验证'], approvalConditions: ['涉及既定权限边界或生产操作'], escalationConditions: ['目标、范围或验收标准需要重新确认'] },
   { id: 'rule-common', name: '公共安全边界', kind: 'Rules', owner: '星河科技', companyId: 'xinghe', scope: '公司共享', refs: 6, path: '~/.bandi/shared/rules/common.md', status: '已保存', sourceType: '显式共享', summary: '所有 Agent 不可突破的公司安全边界。', content: '禁止泄露凭据；生产发布必须确认；权限只能收紧，不能自行扩大。', references: [{ type: 'Agent', id: 'zhouce', label: '周策' }, { type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
-  { id: 'skill-review', name: '代码审查', kind: 'Skill', owner: '研发部', companyId: 'xinghe', scope: '公司共享', refs: 4, path: '~/.bandi/shared/skills/code-review', status: '已保存', sourceType: '显式共享', summary: '代码正确性与可维护性审查能力。', content: '按正确性、安全性、复杂度和验证证据进行审查。', references: [{ type: 'Agent', id: 'zhouce', label: '周策' }] },
+  { id: 'skill-review', name: '代码审查', kind: 'Skill', owner: '研发部', companyId: 'xinghe', scope: '公司共享', refs: 4, path: '~/.bandi/shared/skills/code-review', status: '演示已安装', sourceType: '显式共享', summary: '代码正确性与可维护性审查能力。', content: '按正确性、安全性、复杂度和验证证据进行审查。', references: [{ type: 'Agent', id: 'zhouce', label: '周策' }], skill: { source: { kind: 'local', path: '~/.bandi/shared/skills/code-review' }, delivery: { kind: 'standalone' }, installation: { status: 'installed', installedVersion: '1.4.0', availableVersion: '1.4.0', previousVersions: ['1.3.0'] }, review: { permissions: ['读取当前 Workspace 代码'], impact: ['生成审查建议，不执行修改'], files: ['SKILL.md', 'references/checklist.md'] } } },
+  { id: 'skill-release', name: '发布检查', kind: 'Skill', owner: '研发部', companyId: 'xinghe', scope: '公司共享', refs: 1, path: '~/.bandi/shared/skills/release-check', status: '有演示更新', sourceType: '显式共享', summary: '发布前检查配置、测试与变更说明。', content: '预置 Git 来源 Skill。', references: [], skill: { source: { kind: 'git', repository: 'github.com/example/release-check', ref: 'v2.2.0' }, delivery: { kind: 'standalone' }, installation: { status: 'update-available', installedVersion: '2.1.0', availableVersion: '2.2.0', previousVersions: ['2.0.0'] }, review: { permissions: ['读取构建与测试结果'], impact: ['不执行发布'], files: ['SKILL.md'] } } },
+  { id: 'skill-docs', name: '文档整理', kind: 'Skill', owner: '预置目录', scope: '可浏览', refs: 0, path: 'marketplace://demo/docs-organizer', status: '可演示安装', sourceType: '外部来源', summary: '整理项目文档结构和摘要。', content: '预置 Marketplace Mock 内容。', references: [], skill: { source: { kind: 'marketplace', provider: 'Bandi 预置目录', listingId: 'docs-organizer', mockCatalog: true }, delivery: { kind: 'standalone' }, installation: { status: 'available', availableVersion: '1.0.0', previousVersions: [] }, review: { permissions: ['读取显式选择的文档'], impact: ['可能生成文档修改建议'], files: ['SKILL.md'] } } },
+  { id: 'plugin-productivity', name: 'Productivity Plugin', kind: 'Plugin', owner: '预置目录', scope: '用户级', refs: 0, path: 'marketplace://demo/productivity', status: '演示已安装', sourceType: '外部来源', summary: '提供一组配置辅助 Skill 的预置 Plugin。', content: '', references: [] },
+  { id: 'skill-planning', name: '方案规划', kind: 'Skill', owner: 'Productivity Plugin', scope: '用户级', refs: 0, path: 'plugin://productivity/planning', status: '演示已安装', sourceType: '外部来源', summary: '由预置 Plugin 提供的方案规划 Skill。', content: '', references: [], skill: { source: { kind: 'marketplace', provider: 'Bandi 预置目录', listingId: 'productivity/planning', mockCatalog: true }, delivery: { kind: 'plugin', pluginAssetId: 'plugin-productivity' }, installation: { status: 'installed', installedVersion: '1.1.0', availableVersion: '1.1.0', previousVersions: [] }, review: { permissions: ['读取用户提供的配置上下文'], impact: ['只生成规划建议'], files: ['skills/planning/SKILL.md'] } } },
   { id: 'mcp-bandi', name: 'Bandi MCP', kind: 'MCP', owner: '系统', scope: '用户级', refs: 13, path: '~/.claude/settings.json', status: '已配置', sourceType: 'Bandi 自有', summary: 'Bandi 配置上下文接口；当前 Web mock 未连接。', content: '{ "status": "demo-configured", "credentials": "not-read" }', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
   { id: 'memory-bandi', name: 'Bandi 公共记忆', kind: 'Memory', owner: 'Bandi Workspace', scope: 'Workspace 公共', refs: 3, path: '.bandi/memory/public.md', status: 'r12', sourceType: 'Bandi 自有', summary: 'Bandi Workspace 的正式公共记忆。', content: '', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
   { id: 'claude-project', name: '项目 CLAUDE.md', kind: 'CLAUDE.md', owner: 'Bandi', scope: '项目级', refs: 1, path: 'CLAUDE.md', status: '已索引', sourceType: '外部来源', summary: '项目级 Claude Code 规则。', content: 'Bandi 项目规则（演示摘要）', references: [{ type: 'Workspace', id: 'bandi', label: 'Bandi' }] },
@@ -211,5 +263,5 @@ export const initialMemoryCandidates: MemoryCandidate[] = [
 ]
 
 export const initialBackupSnapshots: BackupSnapshot[] = [
-  { id: 'snap-demo-001', createdAt: '今天 09:30', kind: '手动演示', scope: '星河科技 / 全部配置', includes: ['AgentPackage', '组织关系', 'Workspace 索引', '共享资产'], excludes: ['凭据', 'Token', '钥匙串', '聊天与执行过程'] },
+  { id: 'snap-demo-001', createdAt: '今天 09:30', kind: '手动演示', scope: { kind: 'company', companyId: 'xinghe' }, includes: ['AgentPackage', '组织关系', 'Workspace 索引', '共享资产', '正式 Memory'], excludes: ['凭据', 'Token', '钥匙串', '聊天与执行过程'], localPath: '~/.bandi/backups/snap-demo-001', deviceName: '当前设备（演示）', hash: 'demo-a84f2c1', integrity: 'demo-verified', remoteStatus: 'private-git-not-connected', includesFormalMemory: true },
 ]

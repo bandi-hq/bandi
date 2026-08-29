@@ -5,6 +5,8 @@ import { Button } from './components/ui/button'
 import { AppDialog } from './components/ui/dialog'
 import { MonoPath, StatusBadge, toneForStatus } from './components/app/page'
 import { useApp } from './state'
+import { buildBackupPreview, createDemoSnapshot, describeBackupScope } from './backup-policy'
+import type { BackupScope } from './domain'
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="grid gap-2 border-b border-border py-3 last:border-0 sm:grid-cols-[128px_1fr]"><div className="text-sm text-muted-foreground">{label}</div><div className="min-w-0 break-words text-sm">{children}</div></div>
@@ -17,7 +19,9 @@ export function GlobalSheets() {
   const [understood, setUnderstood] = useState(false)
   const [impact, setImpact] = useState<'local' | 'shared'>('shared')
   const [conflicts, setConflicts] = useState<Record<string, string>>({})
-  const [restoreScope, setRestoreScope] = useState('全部配置')
+  const [restoreStep, setRestoreStep] = useState<1 | 2 | 3>(1)
+  const [restoreScope, setRestoreScope] = useState<BackupScope>({ kind: 'all' })
+  const [restoreFiles, setRestoreFiles] = useState<string[]>([])
   const close = () => dispatch({ type: 'CLOSE_DIALOG' })
   const done = (text: string) => { close(); dispatch({ type: 'TOAST', text }) }
 
@@ -26,10 +30,12 @@ export function GlobalSheets() {
     setUnderstood(false)
     setImpact('shared')
     setConflicts({})
-    setRestoreScope('全部配置')
+    setRestoreStep(1)
+    setRestoreScope({ kind: 'all' })
+    setRestoreFiles([])
   }, [dialog?.kind])
 
-  const workspace = state.workspaces.find((item) => item.id === (dialog?.kind === 'client-guide' ? dialog.workspaceId : state.currentWorkspaceId)) ?? state.workspaces[0]
+  const workspace = state.workspaces.find((item) => item.id === (dialog?.kind === 'client-guide' ? dialog.workspaceId : state.currentWorkspaceId))
   const client = state.aiClients.find((item) => item.id === state.activeAiClientId) ?? state.aiClients[0]
   const agentId = dialog && 'agentId' in dialog ? dialog.agentId : undefined
   const agent = state.agents.find((item) => item.id === agentId)
@@ -119,19 +125,27 @@ export function GlobalSheets() {
   if (dialog.kind === 'backup-restore') {
     const snapshot = state.backupSnapshots.find((item) => item.id === dialog.snapshotId)
     if (!snapshot) return <MissingDialog title="快照不存在" close={close} />
-    const restore = () => dispatch({ type: 'SIMULATE_RESTORE', snapshotId: snapshot.id, beforeSnapshot: { id: `before-${state.backupSnapshots.length + 1}`, createdAt: '刚刚', kind: '恢复前演示', scope: restoreScope, includes: snapshot.includes, excludes: snapshot.excludes } })
-    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="模拟范围恢复" description={snapshot.id} size="lg" footer={<><Button variant="outline" onClick={close}>取消</Button><Button variant="danger" disabled={!understood} onClick={restore}>确认模拟恢复</Button></>}><InfoRow label="快照时间">{snapshot.createdAt}</InfoRow><InfoRow label="范围">{snapshot.scope}</InfoRow><InfoRow label="包含">{snapshot.includes.join('、')}</InfoRow><InfoRow label="永不包含">{snapshot.excludes.join('、')}</InfoRow><label className="mt-5 block text-sm font-medium">恢复范围<select className="mt-2 h-10 w-full px-3" value={restoreScope} onChange={(event) => setRestoreScope(event.target.value)}><option>全部配置</option><option>仅 AgentPackage</option><option>仅组织与 Workspace 索引</option><option>仅共享资产</option></select></label><label className="mt-4 flex items-start gap-3"><input className="mt-1" type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} /><span>我理解这是演示流程，不会读取或恢复真实文件；确认后会先新增“恢复前演示”记录。</span></label></AppDialog>
+    const effectiveScope: BackupScope = restoreScope.kind === 'files' ? { kind: 'files', paths: restoreFiles } : restoreScope
+    const preview = buildBackupPreview(state, effectiveScope)
+    const availableFiles = [...new Set(state.agents.flatMap((item) => item.files.map((file) => `${item.id}/${file.path}`)))]
+    const restore = () => { if (!preview) return; dispatch({ type: 'SIMULATE_RESTORE', snapshotId: snapshot.id, beforeSnapshot: createDemoSnapshot(preview, { id: `before-${state.backupSnapshots.length + 1}`, createdAt: '刚刚', kind: '恢复前演示' }) }) }
+    const chooseKind = (kind: BackupScope['kind']) => { if (kind === 'company') setRestoreScope({ kind, companyId: state.companies[0]?.id ?? '' }); else if (kind === 'agent') setRestoreScope({ kind, agentId: state.agents[0]?.id ?? '' }); else if (kind === 'files') setRestoreScope({ kind, paths: [] }); else setRestoreScope({ kind: 'all' }); setRestoreFiles([]) }
+    return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title="模拟范围恢复" description={`第 ${restoreStep} 步，共 3 步 · ${snapshot.id}`} size="lg" footer={<>{restoreStep > 1 && <Button variant="outline" onClick={() => setRestoreStep((step) => Math.max(1, step - 1) as 1 | 2 | 3)}>上一步</Button>}<Button variant="outline" onClick={close}>取消</Button>{restoreStep < 3 ? <Button disabled={restoreStep === 2 && !preview} onClick={() => setRestoreStep((step) => Math.min(3, step + 1) as 1 | 2 | 3)}>下一步</Button> : <Button variant="danger" disabled={!understood || !preview} onClick={restore}>确认模拟恢复</Button>}</>}>
+      {restoreStep === 1 && <><InfoRow label="快照时间">{snapshot.createdAt}</InfoRow><InfoRow label="快照范围">{describeBackupScope(snapshot.scope, state)}</InfoRow><label className="mt-5 block text-sm font-medium">恢复层级<select className="mt-2 h-10 w-full px-3" value={restoreScope.kind} onChange={(event) => chooseKind(event.target.value as BackupScope['kind'])}><option value="all">全部配置</option><option value="company">Company</option><option value="agent">Agent</option><option value="files">指定文件</option></select></label></>}
+      {restoreStep === 2 && <>{restoreScope.kind === 'company' && <label className="block text-sm font-medium">Company<select className="mt-2 h-10 w-full px-3" value={restoreScope.companyId} onChange={(event) => setRestoreScope({ kind: 'company', companyId: event.target.value })}>{state.companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}{restoreScope.kind === 'agent' && <label className="block text-sm font-medium">Agent<select className="mt-2 h-10 w-full px-3" value={restoreScope.agentId} onChange={(event) => setRestoreScope({ kind: 'agent', agentId: event.target.value })}>{state.agents.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}{restoreScope.kind === 'files' && <fieldset><legend className="text-sm font-medium">指定恢复文件</legend><div className="mt-2 max-h-64 space-y-2 overflow-auto rounded-lg border border-border p-3">{availableFiles.map((path) => <label key={path} className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={restoreFiles.includes(path)} onChange={(event) => setRestoreFiles((items) => event.target.checked ? [...items, path] : items.filter((item) => item !== path))} />{path}</label>)}</div>{!restoreFiles.length && <p className="mt-2 text-xs text-danger">请选择至少一个文件。</p>}</fieldset>}{restoreScope.kind === 'all' && <p className="text-sm text-muted-foreground">该层级无需选择具体对象，将恢复全部演示配置范围。</p>}</>}
+      {restoreStep === 3 && preview && <><InfoRow label="将恢复">{preview.label}</InfoRow><InfoRow label="包含">{preview.includes.join('、')}</InfoRow><InfoRow label="不受影响">范围外配置、Agent 引用关系和当前业务集合</InfoRow><InfoRow label="Memory 策略">本地正式 Memory 可包含；远端仍遵循单独确认</InfoRow><InfoRow label="永不包含">{preview.excludes.join('、')}</InfoRow><InfoRow label="恢复前保护">先新增“恢复前演示”快照记录</InfoRow><label className="mt-4 flex items-start gap-3"><input className="mt-1" type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} /><span>我理解这是演示流程，不会读取或恢复真实文件，也不会修改 Agent、资产、Company 或 Workspace。</span></label></>}
+    </AppDialog>
   }
 
   if (dialog.kind === 'organization') return <OrganizationDialog dialog={dialog} close={close} />
   return null
 }
 
-function ClientGuideDialog({ view, client, workspace, close, done }: { view: 'overview' | 'quick' | 'terminal' | 'records'; client: ReturnType<typeof useApp>['state']['aiClients'][number]; workspace: ReturnType<typeof useApp>['state']['workspaces'][number]; close: () => void; done: (text: string) => void }) {
+function ClientGuideDialog({ view, client, workspace, close, done }: { view: 'overview' | 'quick' | 'terminal' | 'records'; client: ReturnType<typeof useApp>['state']['aiClients'][number]; workspace?: ReturnType<typeof useApp>['state']['workspaces'][number]; close: () => void; done: (text: string) => void }) {
   const { dispatch } = useApp(); const title = view === 'quick' ? '快速接入当前目录' : view === 'terminal' ? '新终端打开指引' : view === 'records' ? '有限接入记录' : `${client.name} 使用指引`
-  return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title={title} description="只展示配置上下文，不探测、打开、连接或接管真实客户端。" size="md" footer={<><Button variant="outline" onClick={close}>关闭</Button><Button onClick={() => done(`已查看 ${title} · 未打开客户端、终端或连接 Session`)}>确认已查看</Button></>}>
-    <div className="rounded-lg border border-border bg-muted/40 p-4"><InfoRow label="当前客户端"><span className="flex items-center gap-2"><AiClientIcon client={client} size={16} />{client.name}</span></InfoRow><InfoRow label="状态">Bandi 中已启用 · 本机未探测 · 仅页面内存</InfoRow><InfoRow label="Workspace">{workspace?.name ?? '未选择'}</InfoRow><InfoRow label="工作目录"><MonoPath>{workspace?.path ?? '—'}</MonoPath></InfoRow>{client.kind === 'claude-code' && <InfoRow label="标准入口"><MonoPath>cd &quot;{workspace?.path}&quot; &amp;&amp; claude</MonoPath></InfoRow>}</div>
-    {view === 'records' ? <div className="mt-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">暂无真实接入记录。只记录用户确认的有限配置事实；不记录聊天、工具、Todo、日志或 Session。</div> : <><div className="mt-5 flex gap-2 rounded-md bg-warning/10 p-3 text-sm text-warning"><Info size={18} className="shrink-0" /><span>指引不代表客户端已安装、命令已执行、Session 已连接或配置已加载。</span></div><div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => dispatch({ type: 'TOAST', text: `演示复制：${workspace?.path} · 未访问系统剪贴板` })}><Copy size={14} />演示复制路径</Button>{client.kind === 'claude-code' && <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'TOAST', text: `演示复制：cd &quot;${workspace?.path}&quot; && claude · 未访问系统剪贴板` })}><Copy size={14} />演示复制命令</Button>}</div></>}
+  return <AppDialog open onOpenChange={(open) => { if (!open) close() }} title={title} description="只展示配置上下文，不探测、打开、连接或接管真实客户端。" size="md" footer={<><Button variant="outline" onClick={close}>关闭</Button><Button disabled={!workspace} onClick={() => done(`已查看 ${title} · 未打开客户端、终端或连接 Session`)}>确认已查看</Button></>}>
+    <div className="rounded-lg border border-border bg-muted/40 p-4"><InfoRow label="当前客户端"><span className="flex items-center gap-2"><AiClientIcon client={client} size={16} />{client.name}</span></InfoRow><InfoRow label="状态">Bandi 中已启用 · 本机未探测 · 仅页面内存</InfoRow><InfoRow label="Workspace">{workspace?.name ?? '请先连接项目目录'}</InfoRow><InfoRow label="工作目录"><MonoPath>{workspace?.path ?? '—'}</MonoPath></InfoRow>{client.kind === 'claude-code' && workspace && <><InfoRow label="启动 CLI"><MonoPath>cd &quot;{workspace.path}&quot; &amp;&amp; claude</MonoPath></InfoRow><InfoRow label="Bandi 入口"><MonoPath>/bandi:bandi</MonoPath></InfoRow></>}</div>
+    {view === 'records' ? <div className="mt-4 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">暂无真实接入记录。只记录用户确认的有限配置事实；不记录聊天、工具、Todo、日志或 Session。</div> : <><div className="mt-5 flex gap-2 rounded-md bg-warning/10 p-3 text-sm text-warning"><Info size={18} className="shrink-0" /><span>指引不代表客户端已安装、命令已执行、Session 已连接或配置已加载。</span></div><div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!workspace} onClick={() => dispatch({ type: 'TOAST', text: `演示复制：${workspace?.path} · 未访问系统剪贴板` })}><Copy size={14} />演示复制路径</Button>{client.kind === 'claude-code' && workspace && <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'TOAST', text: `演示复制：cd &quot;${workspace?.path}&quot; && claude · 未访问系统剪贴板` })}><Copy size={14} />演示复制命令</Button>}</div></>}
   </AppDialog>
 }
 
