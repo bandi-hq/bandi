@@ -33,6 +33,15 @@ describe('演示状态', () => {
     expect(initialState.activeAiClientId).toBe('claude-code')
   })
 
+  it('onboarding 初始启用，完成后只返回新内存状态', () => {
+    expect(initialState.onboarding).toEqual({ status: 'active' })
+    const completed = reducer(initialState, { type: 'COMPLETE_ONBOARDING' })
+    expect(completed.onboarding).toEqual({ status: 'completed' })
+    expect(completed).not.toBe(initialState)
+    expect(initialState.onboarding).toEqual({ status: 'active' })
+    expect(reducer(completed, { type: 'COMPLETE_ONBOARDING' })).toBe(completed)
+  })
+
   it('切换主题', () => expect(reducer(initialState, { type: 'THEME' }).theme).toBe('dark'))
 
   it('保存指令生成新的不可变配置版本', () => {
@@ -126,9 +135,11 @@ describe('演示状态', () => {
 
   it('Skill 生命周期只修改安装事实，不修改 Agent 引用', () => {
     const originalRefs = initialState.agents.map((agent) => agent.skillRefs)
+    const originalWorkspaceRefs = initialState.agents.map((agent) => agent.workspaceBindings.map((binding) => binding.skillIds))
     const installed = reducer(initialState, { type: 'APPLY_SKILL_ACTION', skillId: 'skill-docs', action: 'install' })
     expect(installed.assets.find((asset) => asset.id === 'skill-docs')?.skill?.installation.status).toBe('installed')
     expect(installed.agents.map((agent) => agent.skillRefs)).toEqual(originalRefs)
+    expect(installed.agents.map((agent) => agent.workspaceBindings.map((binding) => binding.skillIds))).toEqual(originalWorkspaceRefs)
     expect(installed.notice?.description).toContain('未自动分配给 Agent')
 
     const rolledBack = reducer(initialState, { type: 'APPLY_SKILL_ACTION', skillId: 'skill-release', action: 'rollback', version: '2.0.0' })

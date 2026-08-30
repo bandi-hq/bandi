@@ -16,9 +16,16 @@ describe('Skill 安装生命周期', () => {
 
   it('拒绝非法转换', () => expect(applySkillAction(available, 'update')).toBeUndefined())
 
-  it('只读取显式引用而不修改 Agent', () => {
+  it('只读取显式引用而不修改 Agent 或 WorkspaceBinding', () => {
     const before = structuredClone(initialAgents)
     expect(getSkillReferences(initialAgents, 'skill-review').length).toBeGreaterThan(0)
     expect(initialAgents).toEqual(before)
+  })
+
+  it('卸载事实不会删除仍需诊断的引用', () => {
+    const references = getSkillReferences(initialAgents, 'skill-review')
+    const uninstalled = applySkillAction({ status: 'installed', installedVersion: '2.0.0', availableVersion: '2.0.0', previousVersions: ['1.0.0'] }, 'uninstall')!
+    expect(uninstalled.status).toBe('available')
+    expect(getSkillReferences(initialAgents, 'skill-review')).toEqual(references)
   })
 })

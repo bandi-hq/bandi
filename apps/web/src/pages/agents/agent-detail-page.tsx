@@ -8,8 +8,8 @@ import { EntityNotFound, FieldRow, MockBoundaryNote, MonoPath, PageHeader, PathA
 import { useApp } from '../../state'
 import { getEligibleMemorySpaces, resolveMemoryGovernance } from '../../memory-policy'
 import type { FullAgent } from '../../domain'
-import { getFilesForAgentSection, getPrimarySectionForAgentFile, resolveAgentConfigRoute, type AgentConfigSection, type AgentFileView } from '../../agent-config-projection'
-import { AgentPackageTree } from './agent-package-files'
+import { getFilesForAgentSection, resolveAgentConfigRoute, type AgentConfigSection, type AgentFileView } from '../../agent-config-projection'
+import { AgentPackageBrowser } from './agent-package-files'
 import { AgentConfigFilesNav, AgentConfigNavigation } from './agent-config-navigation'
 import { AgentConfigFileViewer } from './agent-config-file-viewer'
 
@@ -19,7 +19,6 @@ export function AgentDetailPage() {
   const [params, setParams] = useSearchParams()
   const agent = state.agents.find((item) => item.id === id)
   const [dirty, setDirty] = useState(false)
-  const [allFiles, setAllFiles] = useState(false)
   const [routeNotice, setRouteNotice] = useState<string>()
   const unsavedDialog = useUnsavedChangesGuard({ dirty, resetDraft: () => setDirty(false) })
   const route = useMemo(() => agent ? resolveAgentConfigRoute(agent, params) : undefined, [agent, params])
@@ -34,9 +33,9 @@ export function AgentDetailPage() {
   if (!agent || !route) return <EntityNotFound entity="Agent" backTo="/agents" />
   const relatedFiles = getFilesForAgentSection(agent, route.section)
   const updateParams = (update: (next: URLSearchParams) => void) => { const next = new URLSearchParams(params); update(next); setParams(next) }
-  const changeSection = (section: AgentConfigSection) => { setAllFiles(false); updateParams((next) => { if (section === 'overview') next.delete('tab'); else next.set('tab', section); next.delete('path'); next.delete('view') }) }
-  const showStructured = () => { setAllFiles(false); updateParams((next) => { next.delete('path'); next.delete('view') }) }
-  const showFile = (path: string) => { setAllFiles(false); updateParams((next) => { next.set('tab', getPrimarySectionForAgentFile(agent, path) ?? route.section); next.set('path', path); next.set('view', 'preview') }) }
+  const changeSection = (section: AgentConfigSection) => updateParams((next) => { if (section === 'overview') next.delete('tab'); else next.set('tab', section); next.delete('path'); next.delete('view') })
+  const showStructured = () => updateParams((next) => { next.delete('path'); next.delete('view') })
+  const showFile = (path: string) => updateParams((next) => { next.set('tab', 'package'); next.set('path', path); next.set('view', 'preview') })
   const changeView = (view: AgentFileView) => updateParams((next) => next.set('view', view))
 
   return <>
@@ -44,8 +43,8 @@ export function AgentDetailPage() {
     <div className="mb-4 flex flex-wrap items-center gap-3"><StatusBadge tone={toneForStatus(agent.status)}>{agent.status}</StatusBadge><StatusBadge tone={toneForStatus(agent.config)}>{agent.config}</StatusBadge><MonoPath>{agent.packagePath}</MonoPath></div>
     {routeNotice && <div role="status" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm"><span>{routeNotice}</span><button type="button" className="rounded px-2 py-1 text-xs font-medium hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setRouteNotice(undefined)}>知道了</button></div>}
     <div className="grid min-w-0 gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="panel h-fit p-3"><AgentConfigNavigation active={route.section} onSelect={changeSection} /><AgentConfigFilesNav files={relatedFiles} selectedPath={route.path} allFiles={allFiles} onStructured={showStructured} onSelect={showFile} onAllFiles={() => setAllFiles(true)} />{allFiles && <div className="mt-4 border-t border-border pt-3 xl:hidden"><AgentPackageTree files={agent.files} selectedPath={route.path} onSelect={showFile} ariaLabel={`${agent.name} AgentPackage 目录`} /></div>}{allFiles && <div className="hidden border-t border-border xl:mt-4 xl:block"><div className="label px-3 pt-4">全部文件</div><AgentPackageTree files={agent.files} selectedPath={route.path} onSelect={showFile} ariaLabel={`${agent.name} AgentPackage 目录`} /></div>}</aside>
-      <main className="min-w-0">{route.path ? <AgentConfigFileViewer agent={agent} context={projectionContext} path={route.path} view={route.view} onView={changeView} onBack={showStructured} /> : <AgentConfigContent section={route.section} agent={agent} onDirty={setDirty} />}</main>
+      <aside className="panel h-fit p-3"><AgentConfigNavigation active={route.section} onSelect={changeSection} />{route.section !== 'package' && <AgentConfigFilesNav files={relatedFiles} selectedPath={route.path} onStructured={showStructured} onSelect={showFile} />}</aside>
+      <main className="min-w-0">{route.section === 'package' ? <AgentPackageBrowser agent={agent} context={projectionContext} path={route.path} view={route.view} onSelect={showFile} onView={changeView} onBack={() => changeSection('overview')} /> : route.path ? <AgentConfigFileViewer agent={agent} context={projectionContext} path={route.path} view={route.view} onView={changeView} onBack={showStructured} /> : <AgentConfigContent section={route.section} agent={agent} onDirty={setDirty} />}</main>
     </div>
     {unsavedDialog}
   </>
@@ -96,7 +95,7 @@ function ReferenceTab({ agent, kind, field, onDirty }: { agent: FullAgent; kind:
   useEffect(() => setRefs(agent[field]), [agent, field])
   const toggle = (id: string) => { setRefs((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]); onDirty(true) }
   const save = () => { dispatch({ type: 'UPDATE_AGENT', agentId: agent.id, changes: { [field]: refs }, message: `${kind} 引用已更新 · 目标：${agent.packagePath}config/ · 仅内存 · 未写盘` }); setEditing(false); onDirty(false) }
-  return <section className="panel overflow-hidden"><TabHeader title={kind} description="自有配置与显式共享引用；部门归属不会自动加入资产。" editing={editing} onEdit={() => setEditing(true)} onCancel={() => { setRefs(agent[field]); setEditing(false); onDirty(false) }} onSave={save} /><div className="divide-y divide-border">{candidates.map((asset) => <div key={asset.id} className="flex items-center gap-4 px-5 py-4"><div className="min-w-0 flex-1"><Link to={`/assets/${asset.id}`} className="font-semibold hover:underline">{asset.name}</Link><p className="mt-1 text-xs text-muted-foreground">{asset.sourceType} · {asset.scope} · {asset.path}</p>{kind === 'Skills' && asset.skill?.installation.status === 'available' && <p className="mt-1 text-xs text-danger">引用失效 · Skill 本体未安装</p>}{kind === 'Skills' && asset.skill?.installation.status === 'update-available' && <p className="mt-1 text-xs text-warning">本体有可用更新</p>}</div>{editing ? <input type="checkbox" checked={refs.includes(asset.id)} onChange={() => toggle(asset.id)} aria-label={`${refs.includes(asset.id) ? '移除' : '添加'} ${asset.name}`} /> : <StatusBadge tone={refs.includes(asset.id) ? 'success' : 'neutral'}>{refs.includes(asset.id) ? '已引用' : '未引用'}</StatusBadge>}</div>)}</div>{kind === 'Skills' && <div className="border-t border-border p-4"><Button asChild variant="outline"><Link to="/assets/skills?view=installed">浏览已管理 Skills</Link></Button></div>}{editing && candidates.some((item) => item.sourceType === '显式共享' && refs.includes(item.id)) && <div className="border-t border-border p-4"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'shared', assetId: refs.find((id) => state.assets.find((item) => item.id === id)?.sourceType === '显式共享') ?? candidates[0].id } })}>查看共享影响</Button></div>}</section>
+  return <section className="panel overflow-hidden"><TabHeader title={kind} description="自有配置与显式共享引用；部门归属不会自动加入资产。" editing={editing} onEdit={() => setEditing(true)} onCancel={() => { setRefs(agent[field]); setEditing(false); onDirty(false) }} onSave={save} /><div className="divide-y divide-border">{candidates.map((asset) => <div key={asset.id} className="flex items-center gap-4 px-5 py-4"><div className="min-w-0 flex-1"><Link to={`/assets/${asset.id}`} className="font-semibold hover:underline">{asset.name}</Link><p className="mt-1 text-xs text-muted-foreground">{asset.sourceType} · {asset.scope} · {asset.path}</p>{kind === 'Skills' && asset.skill?.installation.status === 'available' && <p className="mt-1 text-xs text-danger">引用失效 · Skill 本体未安装</p>}{kind === 'Skills' && asset.skill?.installation.status === 'update-available' && <p className="mt-1 text-xs text-warning">本体有可用更新</p>}</div>{editing ? <input type="checkbox" checked={refs.includes(asset.id)} onChange={() => toggle(asset.id)} aria-label={`${refs.includes(asset.id) ? '移除' : '添加'} ${asset.name}`} /> : <StatusBadge tone={refs.includes(asset.id) ? 'success' : 'neutral'}>{refs.includes(asset.id) ? '已引用' : '未引用'}</StatusBadge>}</div>)}</div>{kind === 'Skills' && <div className="border-t border-border p-4"><p className="mb-3 text-xs leading-5 text-muted-foreground">这里仅维护当前 Agent 的显式引用；Skill 本体的来源、安装、更新和回滚在资产中独立管理。</p><div className="flex flex-wrap gap-2"><Button asChild variant="outline"><Link to="/assets/skills">管理 Skill 本体</Link></Button><Button asChild variant="ghost"><Link to="/assets/skills?view=installed">查看已安装</Link></Button></div></div>}{editing && candidates.some((item) => item.sourceType === '显式共享' && refs.includes(item.id)) && <div className="border-t border-border p-4"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'shared', assetId: refs.find((id) => state.assets.find((item) => item.id === id)?.sourceType === '显式共享') ?? candidates[0].id } })}>查看共享影响</Button></div>}</section>
 }
 
 function MemoryTab({ agent }: { agent: FullAgent }) {

@@ -65,7 +65,12 @@ export type SettingsState = {
   autoSnapshot: boolean
 }
 
+export type OnboardingState = {
+  status: 'active' | 'completed'
+}
+
 export type State = {
+  onboarding: OnboardingState
   agents: FullAgent[]
   companies: Company[]
   departments: FullDepartment[]
@@ -87,6 +92,7 @@ export type State = {
 
 export type Action =
   | { type: 'THEME' }
+  | { type: 'COMPLETE_ONBOARDING' }
   | { type: 'OPEN_DIALOG'; dialog: Exclude<DialogState, null> }
   | { type: 'CLOSE_DIALOG' }
   | { type: 'SHEET'; sheet: 'diff' | 'source' | 'shared' | 'conflict' | 'permission' | 'memory' | 'claude' | 'add-ai-client' | null }
@@ -129,6 +135,7 @@ function getInitialTheme(): State['theme'] {
 }
 
 export const initialState: State = {
+  onboarding: { status: 'active' },
   agents: initialAgents,
   companies: initialCompanies,
   departments: initialDepartments,
@@ -199,6 +206,10 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'THEME':
       return { ...state, theme: state.theme === 'light' ? 'dark' : 'light' }
+    case 'COMPLETE_ONBOARDING':
+      return state.onboarding.status === 'completed'
+        ? state
+        : { ...state, onboarding: { status: 'completed' } }
     case 'OPEN_DIALOG':
       return { ...state, dialog: action.dialog }
     case 'CLOSE_DIALOG':

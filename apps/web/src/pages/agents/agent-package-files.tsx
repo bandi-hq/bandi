@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ChevronDown, ChevronRight, File, Folder } from 'lucide-react'
 import { buildAgentPackageTree, type AgentPackageNode } from '../../agent-package'
-import type { AgentFile } from '../../domain'
+import type { AgentFile, FullAgent } from '../../domain'
+import type { AgentFileView, AgentProjectionContext } from '../../agent-config-projection'
+import { MockBoundaryNote, MonoPath, StatusBadge } from '../../components/app/page'
+import { AgentConfigFileViewer } from './agent-config-file-viewer'
+
+export function AgentPackageBrowser({ agent, context, path, view, onSelect, onView, onBack }: { agent: FullAgent; context: AgentProjectionContext; path?: string; view: AgentFileView; onSelect: (path: string) => void; onView: (view: AgentFileView) => void; onBack: () => void }) {
+  const workspaceDirectories = new Set(agent.files.flatMap((file) => file.scope.kind === 'workspace' ? [file.scope.workspaceId] : [])).size
+  return <div className="space-y-5"><section className="panel overflow-hidden"><header className="border-b border-border p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="label">AgentPackage</div><h2 className="mt-2 text-xl font-semibold">完整配置目录</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">稳定 agent-id 对应独立目录；根级文件保存长期配置，workspaces/&lt;workspace-id&gt;/ 保存显式的 Workspace 专属配置。</p></div><StatusBadge tone={agent.packageSource.kind === 'external-reference' ? 'warning' : 'success'}>{agent.packageSource.kind === 'external-reference' ? '外部只读引用' : 'Bandi 演示创建'}</StatusBadge></div><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>{agent.files.length} 个已登记文件</span><span>{workspaceDirectories} 个 Workspace 目录</span><MonoPath>{agent.packagePath}</MonoPath></div></header><div className="grid min-w-0 xl:grid-cols-[320px_minmax(0,1fr)]"><aside className="min-w-0 border-b border-border xl:border-b-0 xl:border-r"><AgentPackageTree files={agent.files} selectedPath={path} onSelect={onSelect} ariaLabel={`${agent.name} AgentPackage 目录`} /><MockBoundaryNote>目录只由当前页面已登记的 AgentFile[] 派生，未读取磁盘，也不会虚构未登记文件。</MockBoundaryNote></aside><main className="min-w-0 p-4 sm:p-5">{path ? <AgentConfigFileViewer agent={agent} context={context} path={path} view={view} onView={onView} onBack={onBack} embedded /> : <p className="text-sm text-muted-foreground">选择一个文件查看结构化预览或只读源码。</p>}</main></div></section></div>
+}
 
 export function AgentPackageTree({ files, selectedPath, onSelect, ariaLabel }: { files: AgentFile[]; selectedPath?: string; onSelect: (path: string) => void; ariaLabel: string }) {
   const tree = useMemo(() => buildAgentPackageTree(files), [files])

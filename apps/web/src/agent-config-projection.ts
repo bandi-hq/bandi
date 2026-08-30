@@ -3,6 +3,7 @@ import type { AgentFile, FullAgent, FullAsset, FullWorkspace, MemorySpace } from
 
 export type AgentConfigSection =
   | 'overview'
+  | 'package'
   | 'identity'
   | 'instructions'
   | 'skills'
@@ -50,6 +51,7 @@ export type AgentConfigRoute = {
 
 export const agentConfigSections: AgentConfigSectionDefinition[] = [
   { id: 'overview', label: '概览' },
+  { id: 'package', label: 'AgentPackage' },
   { id: 'identity', label: '身份与职责' },
   { id: 'instructions', label: 'Instructions' },
   { id: 'skills', label: 'Skills' },
@@ -111,7 +113,10 @@ export function getAgentFileAssociations(agent: FullAgent): AgentFileAssociation
 }
 
 export function getFilesForAgentSection(agent: FullAgent, section: AgentConfigSection): AgentFileAssociation[] {
-  return getAgentFileAssociations(agent).filter((item) => item.sections.includes(section))
+  const associations = getAgentFileAssociations(agent)
+  return section === 'package'
+    ? associations
+    : associations.filter((item) => item.sections.includes(section))
 }
 
 export function getPrimarySectionForAgentFile(agent: FullAgent, path: string): AgentConfigSection | undefined {
@@ -177,12 +182,11 @@ export function resolveAgentConfigRoute(agent: FullAgent, params: URLSearchParam
   let path = association?.file.path
 
   if (rawTab === 'files') {
-    if (!rawPath) {
-      const defaultPath = getDefaultAgentPackagePath(agent.files)
-      path = defaultPath
-      section = defaultPath ? getPrimarySectionForAgentFile(agent, defaultPath) ?? 'overview' : 'overview'
-    } else if (association) section = association.primarySection
-    else notice = '链接中的文件不存在或路径无效，已返回当前配置领域。'
+    section = 'package'
+    if (!rawPath) path = getDefaultAgentPackagePath(agent.files)
+    else if (!association) notice = '链接中的文件不存在或路径无效，已返回 AgentPackage。'
+  } else if (section === 'package' && !rawPath) {
+    path = getDefaultAgentPackagePath(agent.files)
   } else if (rawTab && !isAgentConfigSection(rawTab)) {
     section = 'overview'
     notice = '链接中的配置领域无效，已返回概览。'
@@ -191,7 +195,7 @@ export function resolveAgentConfigRoute(agent: FullAgent, params: URLSearchParam
   if (rawPath && !association) {
     path = undefined
     notice ??= '链接中的文件不存在或路径无效，已返回当前配置领域。'
-  } else if (association && !association.sections.includes(section)) {
+  } else if (association && section !== 'package' && !association.sections.includes(section)) {
     section = association.primarySection
     notice = '该文件不属于原配置领域，已切换到对应配置。'
   }
