@@ -1,0 +1,178 @@
+- generic:
+  - generic:
+    - generic:
+      - generic:
+        - complementary:
+          - navigation:
+            - generic:
+              - link:
+                - /url: "#/"
+                - generic: "4"
+            - generic:
+              - link:
+                - /url: "#/agents"
+            - generic:
+              - link:
+                - /url: "#/organization"
+            - generic:
+              - link:
+                - /url: "#/workspaces"
+            - generic:
+              - link:
+                - /url: "#/assets"
+          - generic:
+            - generic:
+              - link:
+                - /url: "#/settings"
+            - generic:
+              - button
+        - generic:
+          - banner:
+            - generic:
+              - generic:
+                - heading [level=1]: 设置
+                - paragraph: /Volumes/wwx/org/bandi
+            - generic:
+              - generic:
+                - text: 工作区
+                - combobox
+              - button [expanded]:
+                - generic: 选择 AI 编程工具
+          - main:
+            - generic:
+              - generic:
+                - generic:
+                  - heading [level=2]: 设置
+                  - paragraph: 管理 AI 编程工具、网络代理、终端、配置方案与备份，以及本机个性化。
+            - generic:
+              - navigation:
+                - button: AI 编程工具
+                - button: 网络与代理
+                - button: 终端
+                - button: 配置与备份
+                - button: 个性化
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - text: AI 编程工具
+                      - paragraph: 当前方案只记录已加入的工具，不表示工具已安装、已探测或可启动。
+                    - generic:
+                      - generic:
+                        - text: 当前配置方案
+                        - combobox
+                      - button: 添加工具
+                  - generic: 当前未探测本机工具；配置方案与加入状态只记录在当前页面内存。
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Claude Code
+                          - text: 支持终端交接 · 未探测安装状态
+                      - generic:
+                        - generic: 当前默认支持的 Claude Code 配置环境
+                        - generic: 已加入“团队配置（演示）”
+                      - button: 移出
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Claude Desktop
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: Claude 桌面工具配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic: CX
+                        - generic:
+                          - generic: Codex
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: OpenAI 编码工具配置入口
+                        - generic: 已加入“团队配置（演示）”
+                      - button: 移出
+                    - generic:
+                      - generic:
+                        - generic: GE
+                        - generic:
+                          - generic: Gemini CLI
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: Google Gemini 命令行工具配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic: GB
+                        - generic:
+                          - generic: Grok Build
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: xAI Grok Build 工具配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: OpenCode
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: OpenCode 编码工具配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: OpenClaw
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: OpenClaw AI 助手配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic: HE
+                        - generic:
+                          - generic: Hermes
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: Nous Research Hermes Agent 配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Pi
+                          - text: 仅配置 · 尚未定义启动适配
+                      - generic:
+                        - generic: Pi 编码 Agent 配置入口
+                        - generic: 未加入“团队配置（演示）”
+                      - button: 加入当前方案
+                - generic:
+                  - text: Plugin 安装摘要
+                  - generic:
+                    - paragraph: 这里只查看独立 PluginInstallation 事实；安装、更新、回滚和卸载统一在 Plugin 资产详情管理。
+                    - generic:
+                      - link:
+                        - /url: "#/assets/plugin-productivity"
+                        - generic:
+                          - text: Productivity Plugin
+                          - generic: 1.1.0 · 用户作用域
+                        - generic: installed
+                    - paragraph: 不表示当前工具或 Session 已加载 Plugin。
+  - menu "选择 AI 编程工具" [active] [ref=e238]:
+    - generic [ref=e239]: 可继续使用
+    - menuitem "Claude Code 打开工作区交接说明" [ref=e240]:
+      - generic [ref=e242]:
+        - generic [ref=e243]: Claude Code
+        - generic [ref=e244]: 打开工作区交接说明
+    - separator [ref=e245]
+    - generic [ref=e246]: 仅配置
+    - menuitem "Codex 仅配置 · 尚未定义启动适配" [ref=e247]:
+      - generic [ref=e248]: CX
+      - generic [ref=e249]:
+        - generic [ref=e250]: Codex
+        - generic [ref=e251]: 仅配置 · 尚未定义启动适配
+    - separator [ref=e252]
+    - menuitem "管理 AI 编程工具" [ref=e253]

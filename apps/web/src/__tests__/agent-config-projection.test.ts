@@ -6,10 +6,26 @@ const agent = initialAgents.find((item) => item.id === 'zhouce')!
 const context = { assets: initialAssets, workspaces: initialWorkspaces, memorySpaces: initialMemorySpaces }
 
 describe('Agent 配置文件投影', () => {
+  it('缺省 URL 进入管理概览且不需要规范化', () => {
+    const route = resolveAgentConfigRoute(agent, new URLSearchParams())
+    expect(route.section).toBe('overview')
+    expect(route.path).toBeUndefined()
+    expect(route.canonicalParams.toString()).toBe('')
+    expect(route.needsReplace).toBe(false)
+  })
+
+  it('已规范的 AgentPackage URL 再次解析保持稳定', () => {
+    const first = resolveAgentConfigRoute(agent, new URLSearchParams('tab=package'))
+    const second = resolveAgentConfigRoute(agent, first.canonicalParams)
+    expect(second.canonicalParams.toString()).toBe(first.canonicalParams.toString())
+    expect(second.needsReplace).toBe(false)
+  })
+
   it('支持同一 Workspace 配置关联多个领域', () => {
     expect(getFilesForAgentSection(agent, 'instructions').map((item) => item.file.path)).toContain('workspaces/bandi/config.yaml')
     expect(getFilesForAgentSection(agent, 'rules').map((item) => item.file.path)).toContain('workspaces/bandi/config.yaml')
     expect(getFilesForAgentSection(agent, 'mcp').map((item) => item.file.path)).toContain('workspaces/bandi/config.yaml')
+    expect(getFilesForAgentSection(agent, 'context').map((item) => item.file.path)).toContain('config/context.yaml')
     expect(getPrimarySectionForAgentFile(agent, 'workspaces/bandi/config.yaml')).toBe('workspaces')
   })
 
@@ -22,10 +38,22 @@ describe('Agent 配置文件投影', () => {
     expect(projectAgentFilePreview(changed, context, 'instructions.md')?.fields[0].value).toBe('新的演示正文')
   })
 
+  it('上下文预览只展示长期策略与输出格式引用', () => {
+    const preview = projectAgentFilePreview(agent, context, 'config/context.yaml')!
+    expect(preview.fields.map((field) => field.label)).toEqual(['压缩策略', '消息保护', '输出格式', '输出参数'])
+    expect(preview.notice).toContain('不包含当前 Session')
+  })
+
   it('AgentPackage 包含全部已登记文件', () => {
     expect(getFilesForAgentSection(agent, 'package').map((item) => item.file.path)).toEqual(
       expect.arrayContaining(['agent.yaml', 'instructions.md', 'workspaces/bandi/config.yaml']),
     )
+  })
+
+  it('agent.yaml 只归属概览和身份，编排文件归属唯一协作入口', () => {
+    expect(getFilesForAgentSection(agent, 'permissions').map((item) => item.file.path)).not.toContain('agent.yaml')
+    expect(getFilesForAgentSection(agent, 'sop').map((item) => item.file.path)).not.toContain('agent.yaml')
+    expect(getFilesForAgentSection(agent, 'collaboration').map((item) => item.file.path)).toContain('config/orchestration.yaml')
   })
 
   it('AgentPackage 无路径时选择默认文件并规范 URL', () => {

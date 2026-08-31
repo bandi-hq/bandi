@@ -2,28 +2,43 @@ import { Plus, Search, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { EmptyState, PageHeader, StatusBadge, toneForStatus } from '../../components/app/page'
+import { AgentAvatar } from '../../components/agents/agent-avatar'
 import { useApp } from '../../state'
+import type { FullAgent } from '../../domain'
 
 const filterKeys = ['q', 'company', 'department', 'role', 'workspace', 'health', 'lifecycle'] as const
+
+export function getAgentListTarget(agent: FullAgent) {
+  if (agent.config === '缺少 Rules') return `/agents/${agent.id}?tab=rules`
+  if (agent.config !== '外部变化') return `/agents/${agent.id}`
+  const params = new URLSearchParams({ tab: 'package' })
+  const changedFile = agent.files.find((file) => file.status.includes('外部变化'))
+  if (changedFile) {
+    params.set('path', changedFile.path)
+    params.set('view', 'preview')
+  }
+  return `/agents/${agent.id}?${params}`
+}
 
 export function AgentsPage() {
   const { state } = useApp()
   const [params, setParams] = useSearchParams()
   const value = (key: typeof filterKeys[number]) => params.get(key) ?? ''
   const set = (key: typeof filterKeys[number], next: string) => { const copy = new URLSearchParams(params); if (next) copy.set(key, next); else copy.delete(key); setParams(copy) }
+  const roleName = (roleId: string) => state.roles.find((role) => role.id === roleId)?.name ?? 'Role 引用缺失'
   const rows = state.agents.filter((agent) => {
     const q = value('q').toLocaleLowerCase()
     const workspaceMatch = !value('workspace') || agent.workspaceBindings.some((binding) => binding.workspaceId === value('workspace'))
-    return (!q || `${agent.name} ${agent.role} ${agent.department} ${agent.service ?? ''}`.toLocaleLowerCase().includes(q))
+    return (!q || `${agent.name} ${roleName(agent.roleId)} ${agent.department} ${agent.service ?? ''}`.toLocaleLowerCase().includes(q))
       && (!value('company') || agent.companyId === value('company'))
       && (!value('department') || agent.primaryDepartmentId === value('department'))
-      && (!value('role') || agent.role === value('role'))
+      && (!value('role') || agent.roleId === value('role'))
       && workspaceMatch
       && (!value('health') || agent.config === value('health'))
       && (!value('lifecycle') || agent.status === value('lifecycle'))
   })
   const clear = () => setParams({})
-  const roles = [...new Set(state.agents.map((item) => item.role))]
+  const roles = state.roles.filter((role) => state.agents.some((agent) => agent.roleId === role.id))
 
   return <>
     <PageHeader title="Agents" description="长期 AgentPackage 及其组织归属、服务授权和配置健康度；此处不是进程或会话列表。" action={<Button asChild><Link to="/agents/new"><Plus size={16} />创建 Agent</Link></Button>} />
@@ -32,13 +47,13 @@ export function AgentsPage() {
         <label className="relative md:col-span-2"><span className="sr-only">搜索 Agents</span><Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} /><input value={value('q')} onChange={(event) => set('q', event.target.value)} className="h-9 w-full pl-9 pr-3" placeholder="搜索名称、岗位、部门或服务范围…" /></label>
         <Filter label="公司" value={value('company')} onChange={(next) => set('company', next)} options={state.companies.map((item) => [item.id, item.name])} />
         <Filter label="部门" value={value('department')} onChange={(next) => set('department', next)} options={state.departments.map((item) => [item.id, item.name])} />
-        <Filter label="岗位" value={value('role')} onChange={(next) => set('role', next)} options={roles.map((item) => [item, item])} />
-        <Filter label="Workspace" value={value('workspace')} onChange={(next) => set('workspace', next)} options={state.workspaces.map((item) => [item.id, item.name])} />
+        <Filter label="岗位" value={value('role')} onChange={(next) => set('role', next)} options={roles.map((item) => [item.id, item.name])} />
+        <Filter label="工作区" value={value('workspace')} onChange={(next) => set('workspace', next)} options={state.workspaces.map((item) => [item.id, item.name])} />
         <Filter label="配置状态" value={value('health')} onChange={(next) => set('health', next)} options={['配置完整', '外部变化', '缺少 Rules'].map((item) => [item, item])} />
-        <Filter label="生命周期" value={value('lifecycle')} onChange={(next) => set('lifecycle', next)} options={['启用', '停用', '归档'].map((item) => [item, item])} />
+        <Filter label="生命周期" value={value('lifecycle')} onChange={(next) => set('lifecycle', next)} options={([['active', '启用'], ['inactive', '停用'], ['archived', '归档']] as const).map(([id, label]) => [id, label])} />
       </div>
       {filterKeys.some((key) => value(key)) && <div className="flex items-center justify-between border-b border-border bg-muted/35 px-4 py-2 text-xs"><span>已应用组合筛选</span><button onClick={clear} className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"><X size={13} />清除全部</button></div>}
-      {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{['Agent', '岗位', '主属 / 服务', '生命周期', 'Workspaces', '配置状态', '最近编辑'].map((heading) => <th className="px-5 py-3 font-medium" key={heading}>{heading}</th>)}</tr></thead><tbody className="divide-y divide-border">{rows.map((agent) => <tr key={agent.id} className="hover:bg-muted/40"><td><Link className="flex items-center gap-3 px-5 py-4 font-semibold" to={`/agents/${agent.id}`}><span className="grid size-8 place-items-center rounded-lg bg-muted">{agent.name[0]}</span>{agent.name}</Link></td><td className="px-5 py-4">{agent.role}</td><td className="px-5 py-4 text-sm">{agent.department}{agent.service && <small className="block text-muted-foreground">显式服务 {agent.service}</small>}</td><td className="px-5 py-4"><StatusBadge tone={toneForStatus(agent.status)}>{agent.status}</StatusBadge></td><td className="px-5 py-4">{agent.workspaceBindings.length}</td><td className="px-5 py-4"><StatusBadge tone={toneForStatus(agent.config)}>{agent.config}</StatusBadge></td><td className="px-5 py-4 text-muted-foreground">{agent.updated}</td></tr>)}</tbody></table></div> : <div className="p-5"><EmptyState title="没有匹配的 Agent" description="请清除部分筛选条件，或创建一个新的长期 AgentPackage 演示记录。" action={<Button variant="outline" onClick={clear}>清除筛选</Button>} /></div>}
+      {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{['Agent', '岗位', '主属 / 服务', '生命周期', '工作区', '配置状态', '最近编辑'].map((heading) => <th className="px-5 py-3 font-medium" key={heading}>{heading}</th>)}</tr></thead><tbody className="divide-y divide-border">{rows.map((agent) => <tr key={agent.id} className="group relative hover:bg-muted/40 focus-within:bg-muted/40"><td className="px-5 py-4"><Link className="absolute inset-0 z-10 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" to={getAgentListTarget(agent)} aria-label={`查看 ${agent.name} Agent 详情${agent.config === '配置完整' ? '' : `，定位到${agent.config}`}`}><span className="sr-only">{agent.name}</span></Link><div className="flex items-center gap-3 font-semibold"><AgentAvatar agent={agent} />{agent.name}</div></td><td className="px-5 py-4">{roleName(agent.roleId)}</td><td className="px-5 py-4 text-sm">{agent.department}{agent.service && <small className="block text-muted-foreground">显式服务 {agent.service}</small>}</td><td className="px-5 py-4"><StatusBadge tone={toneForStatus(agent.status)}>{agent.status}</StatusBadge></td><td className="px-5 py-4">{agent.workspaceBindings.length}</td><td className="px-5 py-4"><StatusBadge tone={toneForStatus(agent.config)}>{agent.config}</StatusBadge></td><td className="px-5 py-4 text-muted-foreground">{agent.updated}</td></tr>)}</tbody></table></div> : <div className="p-5"><EmptyState title="没有匹配的 Agent" description="请清除部分筛选条件，或创建一个新的长期 AgentPackage 演示记录。" action={<Button variant="outline" onClick={clear}>清除筛选</Button>} /></div>}
       <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">{rows.length} / {state.agents.length} 个 Agent</div>
     </section>
   </>

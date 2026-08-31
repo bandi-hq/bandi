@@ -49,5 +49,6 @@ Bandi Desktop 管理长期配置资产及其可追溯版本；用户自己的 Cl
 - `docs/产品与页面架构.md`
 - `docs/页面低保真线框图.md`
 - `docs/技术架构.md`
+- `docs/本地服务与前端联调契约.md`
 
 除非用户明确要求，不修改 `docs/archive/*` 中的历史归档文档。

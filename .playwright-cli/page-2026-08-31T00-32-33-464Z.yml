@@ -1,0 +1,103 @@
+- generic:
+  - generic:
+    - generic:
+      - generic:
+        - complementary:
+          - navigation:
+            - generic:
+              - link:
+                - /url: "#/"
+                - generic: "4"
+            - generic:
+              - link:
+                - /url: "#/agents"
+            - generic:
+              - link:
+                - /url: "#/organization"
+            - generic:
+              - link:
+                - /url: "#/workspaces"
+            - generic:
+              - link:
+                - /url: "#/assets"
+          - generic:
+            - generic:
+              - link:
+                - /url: "#/settings"
+            - generic:
+              - button
+        - generic:
+          - banner:
+            - generic:
+              - generic:
+                - heading [level=1]: 配置概览
+                - paragraph: /Volumes/wwx/org/bandi
+            - generic:
+              - generic:
+                - text: 工作区
+                - combobox
+              - generic: 演示模式 · 未探测本机 · 未写盘
+              - button:
+                - generic: 在 Claude Code 中继续
+          - main:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic: 欢迎使用 Bandi
+                    - heading [level=1]: 从现有项目目录开始
+                    - paragraph: 先登记本地目录和配置作用域，再选择当前方案已加入的 AI 编程工具；长期 Agent、Plugin 和组织关系都可在需要时再配置。
+                    - generic:
+                      - link:
+                        - /url: "#/workspaces/new?onboarding=1"
+                        - text: 选择目录开始
+                      - button: 查看预置演示
+                    - paragraph: 无需先创建 AgentPackage、安装 Bandi Plugin 或建立 Company。
+                  - list:
+                    - listitem:
+                      - generic: "01"
+                      - generic:
+                        - generic: 登记配置作用域
+                        - generic: 输入本地工作目录
+                    - listitem:
+                      - generic: "02"
+                      - generic:
+                        - generic: 按需管理配置
+                        - generic: 查看 Workspace，按需添加 Agent 与资产
+                    - listitem:
+                      - generic: "03"
+                      - generic:
+                        - generic: 选择 AI 编程工具
+                        - generic: 从当前配置方案已加入的工具继续
+                - generic: 当前 Web mock 不会打开系统目录选择器，不读取目录或探测工具安装状态，也不会创建、复制、安装或执行任何文件和命令。当前只有 Claude Code 提供经过验证的终端交接；其他工具仅提供配置入口。
+  - dialog [ref=e102]:
+    - banner [ref=e103]:
+      - generic [ref=e104]:
+        - heading "在 Claude Code 中继续" [level=2] [ref=e105]
+        - paragraph [ref=e106]: 使用「系统默认终端」打开 Bandi 工作目录。终端打开后，请运行 claude。
+      - button "关闭" [active] [ref=e107] [cursor=pointer]
+    - generic [ref=e111]:
+      - generic [ref=e112]:
+        - generic [ref=e113]: Bandi
+        - generic [ref=e114]:
+          - code [ref=e115]: /Volumes/wwx/org/bandi
+          - button "复制工作目录" [ref=e116] [cursor=pointer]: 复制
+      - region [ref=e120]:
+        - heading "打开后" [level=3] [ref=e121]
+        - list [ref=e122]:
+          - listitem [ref=e123]:
+            - generic [ref=e124]: "1"
+            - generic [ref=e125]:
+              - text: 在终端运行
+              - code [ref=e126]: claude
+            - button "复制完整启动命令" [ref=e127] [cursor=pointer]: 复制
+          - listitem [ref=e131]:
+            - generic [ref=e132]: "2"
+            - generic [ref=e133]:
+              - text: 在 Claude Code 中输入
+              - code [ref=e134]: /bandi:bandi
+            - button "复制 Bandi 命令" [ref=e135] [cursor=pointer]: 复制
+      - generic [ref=e139]: Bandi 只会打开这个工作目录。命令仍由你运行，终端内容和后续会话不会被 Bandi 读取。
+      - paragraph [ref=e143]: 浏览器无法直接打开本机终端，请复制上面的完整启动命令。
+    - contentinfo [ref=e144]:
+      - button "关闭" [ref=e145] [cursor=pointer]

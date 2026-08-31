@@ -1,14 +1,20 @@
 import { FileCode2 } from 'lucide-react'
-import { agentConfigSections, type AgentConfigSection, type AgentFileAssociation } from '../../agent-config-projection'
+import { type AgentConfigSection, type AgentFileAssociation } from '../../agent-config-projection'
 import { StatusBadge, toneForStatus } from '../../components/app/page'
 
-export function AgentConfigNavigation({ active, onSelect }: { active: AgentConfigSection; onSelect: (section: AgentConfigSection) => void }) {
+const managementGroups: Array<{ label: string; items: Array<{ id: Exclude<AgentConfigSection, 'package'>; label: string }> }> = [
+  { label: '核心定义', items: [{ id: 'overview', label: '概览' }, { id: 'identity', label: '身份与职责' }, { id: 'instructions', label: '主指令' }] },
+  { label: '能力与知识', items: [{ id: 'context', label: '上下文' }, { id: 'skills', label: '技能' }, { id: 'memory', label: '长期记忆' }, { id: 'rules', label: '规则' }, { id: 'mcp', label: '工具连接' }] },
+  { label: '边界与协作', items: [{ id: 'permissions', label: '权限' }, { id: 'collaboration', label: '协作与编排' }] },
+  { label: '作用域与流程', items: [{ id: 'workspaces', label: '工作区配置' }, { id: 'sop', label: '标准流程' }] },
+]
+
+export function AgentConfigNavigation({ active, onSelect }: { active: Exclude<AgentConfigSection, 'package'>; onSelect: (section: AgentConfigSection) => void }) {
   return <>
-    <nav aria-label="Agent 配置领域" className="hidden space-y-1 xl:block">
-      <div className="label mb-3 px-2">配置</div>
-      {agentConfigSections.map((item) => <button key={item.id} type="button" aria-current={active === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)} className={`flex min-h-11 w-full items-center rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active === item.id ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{item.label}</button>)}
+    <nav aria-label="Agent 配置领域" className="hidden space-y-4 xl:block">
+      {managementGroups.map((group) => <div key={group.label}><div className="label mb-1.5 px-2">{group.label}</div><div className="space-y-0.5">{group.items.map((item) => <button key={item.id} type="button" aria-current={active === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)} className={`flex min-h-11 w-full items-center rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active === item.id ? 'bg-foreground font-medium text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>{item.label}</button>)}</div></div>)}
     </nav>
-    <label className="block text-sm font-medium xl:hidden">配置领域<select value={active} onChange={(event) => onSelect(event.target.value as AgentConfigSection)} className="mt-2 min-h-11 w-full px-3">{agentConfigSections.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+    <label className="block text-sm font-medium xl:hidden">配置领域<select value={active} onChange={(event) => onSelect(event.target.value as AgentConfigSection)} className="mt-2 min-h-11 w-full px-3">{managementGroups.map((group) => <optgroup key={group.label} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
   </>
 }
 

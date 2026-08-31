@@ -1,27 +1,40 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ChevronDown, ChevronRight, File, Folder } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, ListTree } from 'lucide-react'
 import { buildAgentPackageTree, type AgentPackageNode } from '../../agent-package'
 import type { AgentFile, FullAgent } from '../../domain'
 import type { AgentFileView, AgentProjectionContext } from '../../agent-config-projection'
 import { MockBoundaryNote, MonoPath, StatusBadge } from '../../components/app/page'
+import { Button } from '../../components/ui/button'
+import { Sheet } from '../../components/ui/sheet'
 import { AgentConfigFileViewer } from './agent-config-file-viewer'
 
-export function AgentPackageBrowser({ agent, context, path, view, onSelect, onView, onBack }: { agent: FullAgent; context: AgentProjectionContext; path?: string; view: AgentFileView; onSelect: (path: string) => void; onView: (view: AgentFileView) => void; onBack: () => void }) {
+export function AgentPackageBrowser({ agent, context, path, view, onSelect, onView }: { agent: FullAgent; context: AgentProjectionContext; path?: string; view: AgentFileView; onSelect: (path: string) => void; onView: (view: AgentFileView) => void }) {
+  const [treeOpen, setTreeOpen] = useState(false)
   const workspaceDirectories = new Set(agent.files.flatMap((file) => file.scope.kind === 'workspace' ? [file.scope.workspaceId] : [])).size
-  return <div className="space-y-5"><section className="panel overflow-hidden"><header className="border-b border-border p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="label">AgentPackage</div><h2 className="mt-2 text-xl font-semibold">完整配置目录</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">稳定 agent-id 对应独立目录；根级文件保存长期配置，workspaces/&lt;workspace-id&gt;/ 保存显式的 Workspace 专属配置。</p></div><StatusBadge tone={agent.packageSource.kind === 'external-reference' ? 'warning' : 'success'}>{agent.packageSource.kind === 'external-reference' ? '外部只读引用' : 'Bandi 演示创建'}</StatusBadge></div><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>{agent.files.length} 个已登记文件</span><span>{workspaceDirectories} 个 Workspace 目录</span><MonoPath>{agent.packagePath}</MonoPath></div></header><div className="grid min-w-0 xl:grid-cols-[320px_minmax(0,1fr)]"><aside className="min-w-0 border-b border-border xl:border-b-0 xl:border-r"><AgentPackageTree files={agent.files} selectedPath={path} onSelect={onSelect} ariaLabel={`${agent.name} AgentPackage 目录`} /><MockBoundaryNote>目录只由当前页面已登记的 AgentFile[] 派生，未读取磁盘，也不会虚构未登记文件。</MockBoundaryNote></aside><main className="min-w-0 p-4 sm:p-5">{path ? <AgentConfigFileViewer agent={agent} context={context} path={path} view={view} onView={onView} onBack={onBack} embedded /> : <p className="text-sm text-muted-foreground">选择一个文件查看结构化预览或只读源码。</p>}</main></div></section></div>
+  const compatibilityLabel = { current: 'v1 · 当前兼容', legacy: '旧版 · 只读', future: '更高版本 · 只读', unverified: '未验证 · 只读' }[agent.packageSchema.compatibility]
+  const compatibilityTone = agent.packageSchema.compatibility === 'current' ? 'success' : 'warning'
+  const selectFromSheet = (nextPath: string) => { onSelect(nextPath); setTreeOpen(false) }
+  const tree = <><AgentPackageTree files={agent.files} selectedPath={path} onSelect={onSelect} ariaLabel={`${agent.name} AgentPackage 目录`} /><div className="p-3 pt-0"><MockBoundaryNote>目录只由当前页面已登记的 AgentFile[] 派生，未读取磁盘，也不会虚构未登记文件。</MockBoundaryNote></div></>
+  return <div className="min-w-0"><div className="mb-4 flex flex-wrap items-center justify-between gap-3 xl:hidden"><Button variant="outline" onClick={() => setTreeOpen(true)}><ListTree size={16} aria-hidden="true" />选择文件</Button>{path && <MonoPath>{path}</MonoPath>}</div><div className="grid min-w-0 gap-5 xl:grid-cols-[280px_minmax(0,1fr)]"><aside aria-label="AgentPackage 目录" className="panel hidden min-w-0 overflow-hidden xl:block"><div className="border-b border-border px-4 py-4"><div className="label">AgentPackage</div><div className="mt-2 flex flex-wrap gap-2"><StatusBadge tone={compatibilityTone}>{compatibilityLabel}</StatusBadge><StatusBadge tone={agent.packageSource.kind === 'external-reference' ? 'warning' : 'success'}>{agent.packageSource.kind === 'external-reference' ? '外部只读引用' : 'Bandi 演示创建'}</StatusBadge></div><div className="mt-3 space-y-1 text-xs text-muted-foreground"><p>{agent.files.length} 个文件 · {workspaceDirectories} 个工作区目录</p><MonoPath>{agent.packagePath}</MonoPath></div></div>{tree}</aside><section aria-label="文件内容" className="min-w-0">{path ? <AgentConfigFileViewer agent={agent} context={context} path={path} view={view} onView={onView} embedded /> : <div className="panel p-5 text-sm text-muted-foreground">选择一个文件查看结构化预览或只读源码。</div>}</section></div><Sheet open={treeOpen} onOpenChange={setTreeOpen} title="选择 AgentPackage 文件" description={`${agent.name} · ${agent.files.length} 个已登记文件`} side="left" navigation><AgentPackageTree files={agent.files} selectedPath={path} onSelect={selectFromSheet} ariaLabel={`${agent.name} AgentPackage 文件选择`} /><MockBoundaryNote>这里只展示当前页面内存中已登记的文件。</MockBoundaryNote></Sheet></div>
 }
 
 export function AgentPackageTree({ files, selectedPath, onSelect, ariaLabel }: { files: AgentFile[]; selectedPath?: string; onSelect: (path: string) => void; ariaLabel: string }) {
   const tree = useMemo(() => buildAgentPackageTree(files), [files])
-  const [expanded, setExpanded] = useState(() => new Set(['config', 'memory', 'workspaces', 'workspaces/bandi']))
+  const [expanded, setExpanded] = useState(() => new Set(selectedPath ? ancestorPaths(selectedPath) : ['config', 'memory', 'workspaces']))
   const visibleNodes = useMemo(() => flattenVisibleNodes(tree, expanded), [expanded, tree])
   const [focusedPath, setFocusedPath] = useState(selectedPath ?? visibleNodes[0]?.path)
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>())
+  const typeahead = useRef({ value: '', at: 0 })
 
   useEffect(() => {
-    if (selectedPath && visibleNodes.some((item) => item.path === selectedPath)) setFocusedPath(selectedPath)
-    else if (!visibleNodes.some((item) => item.path === focusedPath)) setFocusedPath(visibleNodes[0]?.path)
-  }, [focusedPath, selectedPath, visibleNodes])
+    if (!selectedPath) return
+    setExpanded((current) => new Set([...current, ...ancestorPaths(selectedPath)]))
+    setFocusedPath(selectedPath)
+  }, [selectedPath])
+
+  useEffect(() => {
+    if (!visibleNodes.some((item) => item.path === focusedPath)) setFocusedPath(visibleNodes[0]?.path)
+  }, [focusedPath, visibleNodes])
 
   const toggle = (path: string, open?: boolean) => setExpanded((current) => {
     const next = new Set(current)
@@ -32,7 +45,7 @@ export function AgentPackageTree({ files, selectedPath, onSelect, ariaLabel }: {
   })
   const focusNode = (path: string) => {
     setFocusedPath(path)
-    requestAnimationFrame(() => buttonRefs.current.get(path)?.focus())
+    buttonRefs.current.get(path)?.focus()
   }
   const onTreeKeyDown = (event: KeyboardEvent<HTMLButtonElement>, node: AgentPackageNode) => {
     const index = visibleNodes.findIndex((item) => item.path === node.path)
@@ -49,13 +62,27 @@ export function AgentPackageTree({ files, selectedPath, onSelect, ariaLabel }: {
         const parentPath = node.path.split('/').slice(0, -1).join('/')
         if (parentPath) focusNode(parentPath)
       }
-    } else if ((event.key === 'Enter' || event.key === ' ') && node.kind === 'file') onSelect(node.path)
-    else return
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      if (node.kind === 'directory') toggle(node.path)
+      else onSelect(node.path)
+    } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const now = Date.now()
+      const value = now - typeahead.current.at > 700 ? event.key : `${typeahead.current.value}${event.key}`
+      typeahead.current = { value: value.toLocaleLowerCase(), at: now }
+      const candidates = [...visibleNodes.slice(index + 1), ...visibleNodes.slice(0, index + 1)]
+      const match = candidates.find((item) => item.name.toLocaleLowerCase().startsWith(typeahead.current.value))
+      if (match) focusNode(match.path)
+    } else return
     event.preventDefault()
   }
 
   if (!tree.length) return <p className="p-3 text-sm text-muted-foreground">当前 AgentPackage 没有文件记录。</p>
   return <div role="tree" aria-label={ariaLabel} className="max-h-[430px] overflow-auto p-2">{tree.map((node) => <TreeNode key={node.path} node={node} level={1} expanded={expanded} selectedPath={selectedPath} focusedPath={focusedPath} buttonRefs={buttonRefs.current} onToggle={toggle} onSelect={onSelect} onFocus={setFocusedPath} onKeyDown={onTreeKeyDown} />)}</div>
+}
+
+function ancestorPaths(path: string): string[] {
+  const segments = path.split('/')
+  return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'))
 }
 
 function flattenVisibleNodes(nodes: AgentPackageNode[], expanded: Set<string>): AgentPackageNode[] {

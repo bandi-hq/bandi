@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   Bot,
   Boxes,
@@ -8,84 +9,150 @@ import {
   CircleX,
   Home,
   Info,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   X,
-  Menu,
   Moon,
-  Plus,
   Settings,
   Sun,
   Workflow,
 } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { AiClientIcon, AiClientPickerPopover } from './components/ai-clients'
+import { AiClientHandoffAction } from './components/ai-clients'
 import { Button } from './components/ui/button'
-import { Sheet } from './components/ui/sheet'
 import { Tooltip } from './components/ui/tooltip'
 import { GlobalSheets } from './sheets'
 import { useApp } from './state'
 import { cn } from './lib'
+import { executeAppCommand, isAppCommandId, type AppCommandId } from './app-commands'
+import { isDesktopRuntime, listenForDesktopCommands, readUiAsset, setDesktopTitle } from './desktop-bridge'
+import { useEditorSession } from './editor-session'
+import { formatWindowTitle, resolveRouteMetadata } from './route-metadata'
+import { getAgentConfigStatus } from './domain-selectors'
+import { BrandMark } from './components/app/brand-mark'
+import { resolveMainMenuLayout } from './navigation-layout'
 
 const nav = [
-  ['/', '首页', Home],
+  ['/', '概览', Home],
   ['/agents', 'Agents', Bot],
   ['/organization', '组织', Building2],
-  ['/workspaces', 'Workspaces', Boxes],
+  ['/workspaces', '工作区', Boxes],
   ['/assets', '资产', Workflow],
-  ['/settings', '设置', Settings],
 ] as const
 
-const titles: Record<string, string> = {
-  '/': '首页',
-  '/agents': 'Agents',
-  '/organization': '组织',
-  '/workspaces': 'Workspaces',
-  '/assets': '资产',
-  '/settings': '设置',
+const settingsNav = ['/settings', '设置', Settings] as const
+
+function useMediaQuery(query: string) {
+  const getMatches = () => typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(query).matches
+  const [matches, setMatches] = useState(getMatches)
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia(query)
+    const update = () => setMatches(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [query])
+
+  return matches
 }
 
-function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
+const railLinkClass = ({ isActive }: { isActive: boolean }) => cn(
+  'relative grid size-10 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+  isActive && 'bg-foreground text-background hover:bg-foreground hover:text-background before:absolute before:-left-2 before:h-5 before:w-0.5 before:rounded-full before:bg-foreground',
+)
+
+const menuContentClass = 'z-50 min-w-40 rounded-lg border border-border bg-card p-1 text-sm text-foreground shadow-lg'
+const menuItemClass = 'flex min-h-9 cursor-default select-none items-center rounded-md px-2.5 outline-none data-[highlighted]:bg-muted data-[highlighted]:text-foreground'
+
+function ActionMenu({ label, children }: { label: string; children: ReactNode }) {
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <Button variant="ghost" size="icon" className="size-8 min-h-8 shrink-0 p-0" aria-label={label}><MoreHorizontal size={16} aria-hidden="true" /></Button>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="end" sideOffset={4} className={menuContentClass}>{children}</DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>
+}
+
+function RailNavigation({ issueCount }: { issueCount: number }) {
   return (
-    <nav className="space-y-1" aria-label="主导航">
+    <nav className="flex w-full flex-col items-center gap-2" aria-label="配置管理">
       {nav.map(([to, label, Icon]) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={to === '/'}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              'flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              isActive && 'bg-foreground font-medium text-background hover:bg-foreground hover:text-background',
-            )
-          }
-        >
-          <Icon size={17} aria-hidden="true" />
-          {label}
-        </NavLink>
+        <Tooltip key={to} content={label} side="right">
+          <NavLink to={to} end={to === '/'} aria-label={to === '/' && issueCount ? `${label}，${issueCount} 项待处理` : label} className={railLinkClass}>
+            <Icon size={18} aria-hidden="true" />
+            {to === '/' && issueCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-4 text-background" aria-hidden="true">{issueCount}</span>}
+          </NavLink>
+        </Tooltip>
       ))}
     </nav>
   )
 }
 
 export function Shell() {
-  const { state, dispatch } = useApp()
+  const { state, dispatch, effectiveUiPreferences, effectiveTheme, uiPreviewAssets } = useApp()
+  const [savedAssets, setSavedAssets] = useState<{ logo?: string; background?: string }>({})
   const location = useLocation()
   const navigate = useNavigate()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [clientPickerOpen, setClientPickerOpen] = useState(false)
-  const addClientButtonRef = useRef<HTMLButtonElement>(null)
-  const root = `/${location.pathname.split('/')[1]}`
-  const title = location.pathname === '/agents/new' ? '创建 Agent'
-    : location.pathname.startsWith('/organization/companies/') ? '公司详情'
-      : location.pathname.startsWith('/organization/departments/') ? '部门详情'
-        : location.pathname === '/workspaces/new' ? '添加 Workspace'
-          : location.pathname === '/settings/claude-code' ? 'Claude Code 集成'
-            : location.pathname === '/settings/backup' ? '备份与恢复'
-              : titles[root] || '配置详情'
+  const editor = useEditorSession()
+  const metadata = resolveRouteMetadata(`${location.pathname}${location.search}`, {
+    agents: state.agents,
+    companies: state.companies,
+    departments: state.departments,
+    workspaces: state.workspaces,
+    assets: state.assets,
+  })
+  const title = metadata.title
   const workspace = state.workspaces.find((item) => item.id === state.currentWorkspaceId)
-  const activeClient = state.aiClients.find((item) => item.id === state.activeAiClientId) ?? state.aiClients[0]
-  const enabledClients = state.aiClients.filter((item) => item.enabled)
-  const issueCount = state.agents.filter((item) => item.config !== '配置完整').length + state.memoryCandidates.filter((item) => item.status === '待审核').length
+  const recentAgents = state.recentAgentIds.flatMap((id) => {
+    const agent = state.agents.find((item) => item.id === id)
+    return agent ? [{ ...agent, roleName: state.roles.find((role) => role.id === agent.roleId)?.name ?? agent.department }] : []
+  })
+  const isWideViewport = useMediaQuery('(min-width: 1280px)')
+  const canFitExpandedMenu = useMediaQuery('(min-width: 960px)')
+  const mainMenuLayout = resolveMainMenuLayout(
+    effectiveUiPreferences.mainMenuLayout,
+    isWideViewport,
+    canFitExpandedMenu,
+    recentAgents.length > 0,
+  )
+  const logoUrl = uiPreviewAssets?.logo === null ? undefined : uiPreviewAssets?.logo ?? savedAssets.logo
+  const backgroundUrl = uiPreviewAssets?.background === null ? undefined : uiPreviewAssets?.background ?? savedAssets.background
+  const agentMenuExpanded = mainMenuLayout === 'expanded'
+  const agentMenuCompact = mainMenuLayout === 'compact'
+  const issueCount = state.agents.filter((agent) => getAgentConfigStatus(state, agent).level !== 'healthy').length + state.memoryCandidates.filter((item) => item.status === '待审核').length
+  const runCommand = useCallback((command: AppCommandId) => executeAppCommand(command, {
+    navigate,
+    dispatch,
+    editor,
+  }), [dispatch, editor, navigate])
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return
+    let disposed = false
+    let loaded: { logo?: string; background?: string } = {}
+    Promise.all([
+      state.uiPreferences.logoAsset ? readUiAsset('logo') : undefined,
+      state.uiPreferences.backgroundAsset ? readUiAsset('background') : undefined,
+    ]).then(([logo, background]) => {
+      loaded = { logo, background }
+      if (disposed) {
+        if (logo) URL.revokeObjectURL(logo)
+        if (background) URL.revokeObjectURL(background)
+      } else setSavedAssets(loaded)
+    }).catch(() => undefined)
+    return () => {
+      disposed = true
+      if (loaded.logo) URL.revokeObjectURL(loaded.logo)
+      if (loaded.background) URL.revokeObjectURL(loaded.background)
+    }
+  }, [state.uiPreferences.backgroundAsset, state.uiPreferences.logoAsset])
 
   useEffect(() => {
     if (!state.notice?.duration) return
@@ -94,144 +161,150 @@ export function Shell() {
     return () => window.clearTimeout(timer)
   }, [dispatch, state.notice])
 
+  useEffect(() => {
+    const windowTitle = formatWindowTitle(title)
+    document.title = windowTitle
+    void setDesktopTitle(windowTitle).catch(() => undefined)
+  }, [title])
+
+  useEffect(() => {
+    if (metadata.agentId) dispatch({ type: 'RECORD_RECENT_AGENT', agentId: metadata.agentId })
+  }, [dispatch, location.key, metadata.agentId])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: () => void = () => undefined
+    void listenForDesktopCommands((payload) => {
+      if (isAppCommandId(payload)) runCommand(payload)
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unlisten = cleanup
+    }).catch(() => undefined)
+    return () => {
+      disposed = true
+      unlisten()
+    }
+  }, [runCommand])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+      if (event.key === ',') {
+        event.preventDefault()
+        runCommand('navigation.settings')
+        return
+      }
+      if (event.key.toLowerCase() === 's' && editor?.canSave) {
+        event.preventDefault()
+        runCommand('editor.save')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [editor?.canSave, runCommand])
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="grid min-h-screen grid-cols-[56px_220px_minmax(0,1fr)] max-[1279px]:grid-cols-[56px_188px_minmax(0,1fr)] max-[959.98px]:grid-cols-[56px_minmax(0,1fr)]">
-        <aside className="sticky top-0 z-30 flex h-screen flex-col items-center border-r border-border bg-card py-3" aria-label="AI 客户端">
-          <Tooltip content="Bandi 首页" side="right" triggerClassName="mb-5">
-            <NavLink
-              to="/"
-              className="grid size-10 place-items-center rounded-xl border border-foreground bg-foreground text-sm font-black text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label="Bandi 首页"
-            >
-              B
-            </NavLink>
-          </Tooltip>
-          <div className="flex w-full flex-1 flex-col items-center gap-2">
-            {enabledClients.map((client) => {
-              const active = client.id === activeClient.id
-              return (
-                <Tooltip key={client.id} content={client.name} side="right">
-                  <button
-                    type="button"
-                    onClick={() => dispatch({ type: 'SELECT_AI_CLIENT', clientId: client.id })}
-                    className={cn(
-                      'group relative grid size-10 place-items-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card',
-                      active ? 'bg-muted/70' : 'hover:bg-muted/60',
-                    )}
-                    aria-label={`${client.name}，已启用${active ? '，当前客户端' : ''}，本机未探测`}
-                    aria-pressed={active}
-                  >
-                    {active && <span aria-hidden="true" className="absolute -right-1 h-5 w-0.5 rounded-full bg-foreground" />}
-                    <span className={cn(
-                      'transition-[filter,opacity,transform] duration-150 motion-reduce:transition-none',
-                      active
-                        ? 'opacity-100'
-                        : 'opacity-65 grayscale group-hover:scale-[1.03] group-hover:opacity-90 group-hover:grayscale-[35%]',
-                    )}>
-                      <AiClientIcon client={client} size={40} tile />
-                    </span>
-                  </button>
-                </Tooltip>
-              )
-            })}
-            <Tooltip content="添加 AI 客户端" side="right">
-              <button
-                ref={addClientButtonRef}
-                type="button"
-                onClick={() => setClientPickerOpen((value) => !value)}
-                className="grid size-10 place-items-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors hover:border-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="添加 AI 客户端"
-                aria-expanded={clientPickerOpen}
-                aria-haspopup="listbox"
-                aria-controls="ai-client-picker"
-              >
-                <Plus size={18} />
-              </button>
+    <div className="relative min-h-screen text-foreground">
+      {backgroundUrl && <><img src={backgroundUrl} alt="" aria-hidden="true" className="pointer-events-none fixed inset-0 size-full" style={{ objectFit: effectiveUiPreferences.backgroundFit }} /><div className="pointer-events-none fixed inset-0 bg-background" style={{ opacity: effectiveUiPreferences.backgroundDim / 100 }} /></>}
+      <div
+        data-main-menu-layout={mainMenuLayout}
+        className={cn(
+          'relative grid min-h-screen',
+          agentMenuExpanded && 'grid-cols-[56px_220px_minmax(0,1fr)] max-[1279px]:grid-cols-[56px_188px_minmax(0,1fr)]',
+          agentMenuCompact && 'grid-cols-[56px_64px_minmax(0,1fr)]',
+          mainMenuLayout === 'hidden' && 'grid-cols-[56px_minmax(0,1fr)]',
+        )}
+      >
+        <aside className="sticky top-0 z-30 flex h-screen flex-col items-center border-r border-border bg-card py-3" aria-label="Bandi 配置管理">
+          <div className="mb-5 grid size-10 place-items-center rounded-xl border border-border bg-background" aria-label="Bandi">
+            <BrandMark theme={effectiveTheme} size={30} className="object-contain" />
+          </div>
+          <RailNavigation issueCount={issueCount} />
+          <div className="mt-auto flex flex-col items-center gap-2">
+            <Tooltip content="设置" side="right">
+              <NavLink to={settingsNav[0]} aria-label="设置" className={railLinkClass}>
+                <Settings size={18} aria-hidden="true" />
+              </NavLink>
+            </Tooltip>
+            <Tooltip content={effectiveTheme === 'light' ? '切换暗色' : '切换亮色'} side="right">
+              <Button variant="ghost" size="icon" onClick={() => dispatch({ type: 'THEME' })} aria-label={effectiveTheme === 'light' ? '切换暗色' : '切换亮色'}>
+                {effectiveTheme === 'light' ? <Moon size={18} aria-hidden="true" /> : <Sun size={18} aria-hidden="true" />}
+              </Button>
             </Tooltip>
           </div>
-          <Tooltip content={state.theme === 'light' ? '切换暗色' : '切换亮色'} side="right">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => dispatch({ type: 'THEME' })}
-              aria-label={state.theme === 'light' ? '切换暗色' : '切换亮色'}
-            >
-              {state.theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-            </Button>
-          </Tooltip>
         </aside>
 
-        <aside className="sticky top-0 h-screen border-r border-border bg-card max-[959.98px]:hidden">
-          <div className="border-b border-border px-4 py-4">
-            <div className="text-sm font-semibold">Bandi</div>
-            <div className="mt-3 flex items-center gap-3 rounded-lg bg-muted/65 px-3 py-2.5">
-              <span className="grid size-8 shrink-0 place-items-center"><AiClientIcon client={activeClient} size={32} tile /></span>
-              <span className="min-w-0"><small className="block text-[10px] font-semibold uppercase tracking-[.08em] text-muted-foreground">当前客户端</small><b className="block truncate text-sm">{activeClient.name}</b></span>
-            </div>
+        {mainMenuLayout !== 'hidden' && <aside className="sticky top-0 flex h-screen min-w-0 flex-col border-r border-border bg-card" aria-label="最近访问 Agent">
+          {agentMenuCompact && logoUrl && <div className="flex h-14 items-center justify-center border-b border-border"><img src={logoUrl} alt="" aria-hidden="true" className="size-8 rounded-lg object-contain" /></div>}
+          <div className={cn('flex h-14 items-center border-b border-border', agentMenuExpanded ? 'justify-between gap-2 px-3' : 'justify-center', agentMenuCompact && logoUrl && 'h-12')}>
+            {agentMenuExpanded ? <>
+              <div className="flex min-w-0 items-center gap-2">{logoUrl && <img src={logoUrl} alt="" aria-hidden="true" className="size-8 shrink-0 rounded-lg object-contain" />}<div className="min-w-0"><b className="text-sm font-semibold">最近 Agent</b>{effectiveUiPreferences.shellLabel && <p className="truncate text-xs text-muted-foreground">{effectiveUiPreferences.shellLabel}</p>}</div></div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <Tooltip content="收起最近 Agent" side="bottom">
+                  <Button variant="ghost" size="icon" className="size-8 min-h-8 p-0" aria-label="收起最近 Agent" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'compact' })}><PanelLeftClose size={16} aria-hidden="true" /></Button>
+                </Tooltip>
+                <ActionMenu label="最近 Agent 更多操作">
+                  {state.recentAgentIds.some((id) => id !== metadata.agentId) && <>
+                    <DropdownMenu.Item className={menuItemClass} onSelect={() => dispatch({ type: 'CLEAR_RECENT_AGENTS' })}>{metadata.agentId ? '清空其他最近记录' : '清空最近记录'}</DropdownMenu.Item>
+                    <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                  </>}
+                  <DropdownMenu.Item className={menuItemClass} onSelect={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'hidden' })}>隐藏此栏</DropdownMenu.Item>
+                </ActionMenu>
+              </div>
+            </> : <Tooltip content="展开最近 Agent" side="right">
+              <Button variant="ghost" size="icon" aria-label="展开最近 Agent" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'expanded' })}><PanelLeftOpen size={17} aria-hidden="true" /></Button>
+            </Tooltip>}
           </div>
-          <div className="p-3">
-            <div className="label px-2 pb-2 pt-1">配置管理</div>
-            <PrimaryNavigation />
-          </div>
-          <div className="absolute inset-x-3 bottom-4 space-y-2 border-t border-border pt-4">
-            <button
-              onClick={() => navigate('/#pending-config')}
-              className="flex min-h-10 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <CircleAlert size={16} className="text-warning" aria-hidden="true" />
-              <span>待处理 <b>{issueCount}</b></span>
-            </button>
-            <div className="px-2 text-[11px] leading-5 text-muted-foreground">演示模式<br />未探测本机 · 未写入磁盘</div>
-          </div>
-        </aside>
+          <nav className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto py-2', agentMenuExpanded ? 'gap-2 px-2' : 'items-center gap-1 px-2')} aria-label="最近 Agent">
+            {recentAgents.map((agent) => {
+              const label = `${agent.name} · ${agent.roleName}`
+              const link = <NavLink
+                to={`/agents/${agent.id}`}
+                aria-label={label}
+                className={({ isActive }) => cn(
+                  'relative flex shrink-0 items-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  agentMenuExpanded ? 'min-h-14 min-w-0 flex-1 gap-3 px-2' : 'size-11 justify-center',
+                  agentMenuExpanded && 'pr-10',
+                  isActive && 'bg-muted/50 text-foreground before:absolute before:left-0 before:h-6 before:w-0.5 before:rounded-full before:bg-foreground',
+                )}
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-xs font-semibold text-foreground">{agent.name.slice(0, 1)}</span>
+                {agentMenuExpanded && <span className="min-w-0"><b className="block truncate text-sm font-medium">{agent.name}</b><span className="block truncate text-xs text-muted-foreground">{agent.roleName}</span></span>}
+              </NavLink>
+              return agentMenuExpanded ? <div key={agent.id} className="group relative">{link}<Tooltip content="从最近记录移除" side="right" triggerClassName="absolute right-1.5 top-1/2 -translate-y-1/2"><Button variant="ghost" size="icon" className="size-8 min-h-8 rounded-md p-0 text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-background/80 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100" aria-label={`从最近 Agent 中移除${agent.name}`} onClick={() => dispatch({ type: 'REMOVE_RECENT_AGENT', agentId: agent.id })}><X size={14} strokeWidth={1.8} aria-hidden="true" /></Button></Tooltip></div> : <Tooltip key={agent.id} content={label} side="right">{link}</Tooltip>
+            })}
+          </nav>
+        </aside>}
 
-        <div className="min-w-0">
-          <header className="sticky top-0 z-20 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-border bg-background/94 px-6 py-2 backdrop-blur max-[1279px]:px-4">
+        <div className="min-w-0 bg-background/90">
+          <header className="sticky top-0 z-20 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-border bg-background/94 px-6 py-2 backdrop-blur max-[1280px]:px-4">
             <div className="flex min-w-0 items-center gap-3">
-              <Tooltip content="打开主菜单" side="bottom" triggerClassName="hidden max-[959.98px]:inline-flex">
-                <Button variant="ghost" size="icon" onClick={() => setMenuOpen(true)} aria-label="打开主菜单">
-                  <Menu size={19} />
-                </Button>
-              </Tooltip>
               <div className="min-w-0">
                 <h1 className="font-semibold">{title}</h1>
-                <p className="mono max-w-[38vw] truncate text-[11px] text-muted-foreground max-[700px]:max-w-[45vw]">{workspace?.path ?? '尚未选择 Workspace'}</p>
+                <p className="mono max-w-[38vw] truncate text-[11px] text-muted-foreground max-[700px]:max-w-[45vw]">{workspace?.path ?? '尚未选择工作区'}</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <label className="flex items-center gap-2 text-xs text-muted-foreground max-[700px]:hidden">
-                Workspace
+                工作区
                 <select
-                  aria-label="当前 Workspace"
+                  aria-label="当前工作区"
                   value={workspace?.id ?? ''}
                   disabled={!state.workspaces.length}
                   onChange={(event) => dispatch({ type: 'SELECT_WORKSPACE', workspaceId: event.target.value })}
                   className="h-9 max-w-40 bg-card px-3 text-sm text-foreground disabled:cursor-not-allowed"
                 >
-                  {!state.workspaces.length && <option value="">暂无 Workspace</option>}
+                  {!state.workspaces.length && <option value="">暂无工作区</option>}
                   {state.workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </label>
               <div className="hidden rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted-foreground min-[1180px]:block">演示模式 · 未探测本机 · 未写盘</div>
-              <Button disabled={!workspace} onClick={() => workspace && dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'client-guide', workspaceId: workspace.id } })} aria-label={workspace ? `打开 ${activeClient.name} 使用指引` : '请先添加 Workspace'}>
-                <AiClientIcon client={activeClient} size={16} />
-                <span className="max-[700px]:hidden">{activeClient.name} 使用指引</span>
-              </Button>
+              <AiClientHandoffAction workspaceId={workspace?.id} className="max-[700px]:px-2.5" />
             </div>
           </header>
-          <main className="mx-auto max-w-[1420px] p-6 max-[1279px]:p-5 max-[700px]:p-4"><Outlet /></main>
+          <main className="shell-main mx-auto max-w-[1420px]"><Outlet /></main>
         </div>
       </div>
-
-      <AiClientPickerPopover open={clientPickerOpen} onClose={() => setClientPickerOpen(false)} anchorRef={addClientButtonRef} />
-
-      {menuOpen && (
-        <Sheet open onOpenChange={setMenuOpen} title="主菜单" description={`当前客户端：${activeClient.name}`} side="left" navigation>
-          <PrimaryNavigation onNavigate={() => setMenuOpen(false)} />
-          <div className="mt-6 rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">演示模式 · 未探测本机 · 未写入磁盘</div>
-        </Sheet>
-      )}
 
       {state.notice && (() => {
         const Icon = state.notice.tone === 'success' ? CircleCheck : state.notice.tone === 'error' ? CircleX : state.notice.tone === 'warning' ? CircleAlert : Info

@@ -1,0 +1,62 @@
+- generic [ref=e4]:
+  - complementary "Bandi 配置管理" [ref=e5]:
+    - generic "Bandi" [ref=e6]
+    - navigation "配置管理" [ref=e8]:
+      - link "概览，4 项待处理" [ref=e10] [cursor=pointer]:
+        - /url: "#/"
+        - generic [ref=e14]: "4"
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: "#/agents"
+      - link "组织" [ref=e21] [cursor=pointer]:
+        - /url: "#/organization"
+      - link "工作区" [ref=e27] [cursor=pointer]:
+        - /url: "#/workspaces"
+      - link "资产" [ref=e39] [cursor=pointer]:
+        - /url: "#/assets"
+    - generic [ref=e44]:
+      - link "设置" [ref=e46] [cursor=pointer]:
+        - /url: "#/settings"
+      - button "切换暗色" [ref=e51] [cursor=pointer]
+  - generic [ref=e54]:
+    - banner [ref=e55]:
+      - generic [ref=e57]:
+        - heading "配置概览" [level=1] [ref=e58]
+        - paragraph [ref=e59]: /Volumes/wwx/org/bandi
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - text: 工作区
+          - combobox "当前工作区" [ref=e62]:
+            - option "Bandi" [selected]
+            - option "名片岛 Web"
+            - option "独立研究"
+        - generic [ref=e63]: 演示模式 · 未探测本机 · 未写盘
+        - button "在 Claude Code 中继续" [ref=e64] [cursor=pointer]
+    - main [ref=e67]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - generic [ref=e72]: 欢迎使用 Bandi
+            - heading "从现有项目目录开始" [level=1] [ref=e73]
+            - paragraph [ref=e74]: 先登记本地目录和配置作用域，再选择当前方案已加入的 AI 编程工具；长期 Agent、Plugin 和组织关系都可在需要时再配置。
+            - generic [ref=e75]:
+              - link "选择目录开始" [ref=e76] [cursor=pointer]:
+                - /url: "#/workspaces/new?onboarding=1"
+              - button "查看预置演示" [ref=e79] [cursor=pointer]
+            - paragraph [ref=e80]: 无需先创建 AgentPackage、安装 Bandi Plugin 或建立公司。
+          - list "首次使用步骤" [ref=e81]:
+            - listitem [ref=e82]:
+              - generic [ref=e83]: "01"
+              - generic [ref=e84]:
+                - generic [ref=e85]: 登记配置作用域
+                - generic [ref=e86]: 输入本地工作目录
+            - listitem [ref=e87]:
+              - generic [ref=e88]: "02"
+              - generic [ref=e89]:
+                - generic [ref=e90]: 按需管理配置
+                - generic [ref=e91]: 查看工作区，按需添加 Agent 与资产
+            - listitem [ref=e92]:
+              - generic [ref=e93]: "03"
+              - generic [ref=e94]:
+                - generic [ref=e95]: 选择 AI 编程工具
+                - generic [ref=e96]: 从当前配置方案已加入的工具继续
+        - generic [ref=e97]: 当前 Web mock 不会打开系统目录选择器，不读取目录或探测工具安装状态，也不会创建、复制、安装或执行任何文件和命令。当前只有 Claude Code 提供经过验证的终端交接；其他工具仅提供配置入口。

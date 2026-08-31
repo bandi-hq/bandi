@@ -14,7 +14,7 @@ type BackupContext = { companies: Company[]; agents: FullAgent[] }
 
 export function describeBackupScope(scope: BackupScope, context: BackupContext): string {
   if (scope.kind === 'all') return '全部配置'
-  if (scope.kind === 'company') return `Company：${context.companies.find((item) => item.id === scope.companyId)?.name ?? '不存在'}`
+  if (scope.kind === 'company') return `公司：${context.companies.find((item) => item.id === scope.companyId)?.name ?? '不存在'}`
   if (scope.kind === 'agent') return `Agent：${context.agents.find((item) => item.id === scope.agentId)?.name ?? '不存在'}`
   return `指定文件：${scope.paths.length} 项`
 }
@@ -23,7 +23,17 @@ export function buildBackupPreview(context: BackupContext, scope: BackupScope): 
   if (scope.kind === 'company' && !context.companies.some((item) => item.id === scope.companyId)) return undefined
   if (scope.kind === 'agent' && !context.agents.some((item) => item.id === scope.agentId)) return undefined
   if (scope.kind === 'files' && !scope.paths.length) return undefined
-  return { scope, label: describeBackupScope(scope, context), includes: scope.kind === 'files' ? [...scope.paths, '正式 Memory（若选中文件包含）'] : ['AgentPackage', '组织关系', 'Workspace 索引', '共享资产', '正式 Memory'], excludes: [...NEVER_BACKED_UP], includesFormalMemory: true }
+  const includes = scope.kind === 'files'
+    ? [...scope.paths, '正式 Memory（若选中文件包含）']
+    : [
+        ...(scope.kind === 'all' ? ['Bandi 配置方案元数据'] : []),
+        'AgentPackage',
+        '组织关系',
+        '工作区索引',
+        '共享资产',
+        '正式 Memory',
+      ]
+  return { scope, label: describeBackupScope(scope, context), includes, excludes: [...NEVER_BACKED_UP], includesFormalMemory: true }
 }
 
 export function createDemoSnapshot(preview: BackupPreview, input: { id: string; createdAt: string; kind?: BackupSnapshot['kind']; remoteConnected?: boolean }): BackupSnapshot {

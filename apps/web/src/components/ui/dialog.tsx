@@ -2,7 +2,6 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useRef, type ReactNode } from 'react'
 import { cn } from '../../lib'
-import { Tooltip } from './tooltip'
 
 type DialogSize = 'sm' | 'md' | 'lg' | 'xl'
 
@@ -60,14 +59,12 @@ export function AppDialog({
                 </DialogPrimitive.Description>
               )}
             </div>
-            <Tooltip content="关闭" side="left">
-              <DialogPrimitive.Close
-                className="grid size-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:size-11"
-                aria-label="关闭"
-              >
-                <X size={18} aria-hidden="true" />
-              </DialogPrimitive.Close>
-            </Tooltip>
+            <DialogPrimitive.Close
+              className="grid size-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:size-11"
+              aria-label="关闭"
+            >
+              <X size={18} aria-hidden="true" />
+            </DialogPrimitive.Close>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-6 max-sm:p-4">{children}</div>
           {footer && (

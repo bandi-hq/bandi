@@ -27,7 +27,9 @@ Bandi Desktop 管理“下次及以后如何工作”的长期配置：
 - 任务冲突、任务审批、逐级汇报与最终验收；
 - 聊天、工具调用、Todo、日志、Agent View、Session 和执行状态。
 
-Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。它只展示 Workspace、cwd 和标准命令，帮助用户回到自己的 Claude Code；命令已复制或终端已请求打开，不代表 Session 已创建、已连接或已加载配置。
+Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。界面中的**工作区**是一个本地项目及其长期配置作用域，**本地目录**是该工作区登记的路径，只有进入外部 CLI 的指引才将这个路径称为**工作目录（cwd）**。Claude Code 可使用配置方案中的非敏感“启动程序 + 独立参数”完成一次受控终端交接并进入 `/bandi:bandi`；不支持 Shell 语法，不读取输出或跟踪会话。客户端配置不代表客户端已安装、连接或运行。
+
+用户可以同时在 Claude Code、Codex、OpenClaw 等宿主工具中打开多个终端；DeepSeek 等通常是宿主工具中的 Model / Provider，不单独视为终端客户端。Bandi 不跟踪这些终端或会话，多个外部程序对配置文件的影响统一通过“编辑基线 → 保存前复核 → 三方 Diff → 解决冲突后重新保存”处理，也不猜测修改来自哪个终端。
 
 ## 日常主线
 
@@ -82,6 +84,7 @@ Bandi Plugin / bandi CLI
 1. [产品与页面架构](./docs/产品与页面架构.md) — 产品边界、领域模型、页面架构与首版验收。
 2. [页面低保真线框图](./docs/页面低保真线框图.md) — 配置工作台、Agent 配置、版本历史、条件 Dialog 与正式记忆审核。
 3. [技术架构](./docs/技术架构.md) — 安全写回、ConfigRevision、MemoryRevision、BackupSnapshot 与 Plugin / CLI 边界。
+4. [本地服务与前端联调契约](./docs/本地服务与前端联调契约.md) — Rust / TypeScript 跨进程 DTO、结果与事件契约。
 
 `docs/archive/**` 为历史讨论，不作为当前施工契约。
 

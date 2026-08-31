@@ -21,22 +21,20 @@ export type AiClient = {
   name: string
   shortName: string
   description: string
-  enabled: boolean
-  isDefault?: boolean
   detection: 'not-checked'
   persistence: 'initial-demo' | 'memory-only'
 }
 
 export const aiClients: AiClient[] = [
-  { id:'claude-code', kind:'claude-code', name:'Claude Code', shortName:'CC', description:'当前默认支持的 Claude Code 配置环境', enabled:true, isDefault:true, detection:'not-checked', persistence:'initial-demo' },
-  { id:'claude-desktop', kind:'claude-desktop', name:'Claude Desktop', shortName:'CD', description:'Claude 桌面客户端配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'codex', kind:'codex', name:'Codex', shortName:'CX', description:'OpenAI 编码客户端配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'gemini-cli', kind:'gemini-cli', name:'Gemini CLI', shortName:'GE', description:'Google Gemini 命令行客户端配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'grok-build', kind:'grok-build', name:'Grok Build', shortName:'GB', description:'xAI Grok Build 客户端配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'opencode', kind:'opencode', name:'OpenCode', shortName:'OC', description:'OpenCode 编码客户端配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'openclaw', kind:'openclaw', name:'OpenClaw', shortName:'CL', description:'OpenClaw AI 助手配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'hermes', kind:'hermes', name:'Hermes', shortName:'HE', description:'Nous Research Hermes Agent 配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
-  { id:'pi', kind:'pi', name:'Pi', shortName:'PI', description:'Pi 编码 Agent 配置入口', enabled:false, detection:'not-checked', persistence:'memory-only' },
+  { id:'claude-code', kind:'claude-code', name:'Claude Code', shortName:'CC', description:'当前默认支持的 Claude Code 配置环境', detection:'not-checked', persistence:'initial-demo' },
+  { id:'claude-desktop', kind:'claude-desktop', name:'Claude Desktop', shortName:'CD', description:'Claude 桌面工具配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'codex', kind:'codex', name:'Codex', shortName:'CX', description:'OpenAI 编码工具配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'gemini-cli', kind:'gemini-cli', name:'Gemini CLI', shortName:'GE', description:'Google Gemini 命令行工具配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'grok-build', kind:'grok-build', name:'Grok Build', shortName:'GB', description:'xAI Grok Build 工具配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'opencode', kind:'opencode', name:'OpenCode', shortName:'OC', description:'OpenCode 编码工具配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'openclaw', kind:'openclaw', name:'OpenClaw', shortName:'CL', description:'OpenClaw AI 助手配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'hermes', kind:'hermes', name:'Hermes', shortName:'HE', description:'Nous Research Hermes Agent 配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'pi', kind:'pi', name:'Pi', shortName:'PI', description:'Pi 编码 Agent 配置入口', detection:'not-checked', persistence:'memory-only' },
 ]
 
 export const agents: Agent[] = [
@@ -54,7 +52,7 @@ export const assets: Asset[] = [
   { id:'sop-delivery', name:'软件功能交付', kind:'SOP', owner:'产品与研发', scope:'部门级', refs:7, path:'.claude/sops/software-delivery.md', status:'已保存' },
   { id:'rule-common', name:'公共安全边界', kind:'Rules', owner:'星河科技', scope:'公司共享', refs:6, path:'~/.bandi/shared/rules/common.md', status:'已保存' },
   { id:'skill-review', name:'代码审查', kind:'Skill', owner:'研发部', scope:'公司共享', refs:4, path:'~/.bandi/shared/skills/code-review', status:'已保存' },
-  { id:'mcp-bandi', name:'Bandi MCP', kind:'MCP', owner:'系统', scope:'用户级', refs:13, path:'~/.claude/settings.json', status:'已配置' },
+  { id:'mcp-bandi', name:'Bandi MCP', kind:'MCP', owner:'系统', scope:'用户级', refs:13, path:'.claude.json', status:'已配置' },
 ]
 export const departments: Department[] = [
  { id:'office', name:'董事长办公室', manager:'知衡', mission:'公司目标协调、跨部门升级与决策摘要', members:1 },

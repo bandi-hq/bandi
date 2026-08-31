@@ -1,0 +1,163 @@
+- generic [ref=e4]:
+  - complementary "Bandi 配置管理" [ref=e5]:
+    - generic "Bandi" [ref=e6]
+    - navigation "配置管理" [ref=e8]:
+      - link "概览，4 项待处理" [ref=e10] [cursor=pointer]:
+        - /url: "#/"
+        - generic [ref=e14]: "4"
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: "#/agents"
+      - link "组织" [ref=e21] [cursor=pointer]:
+        - /url: "#/organization"
+      - link "工作区" [ref=e27] [cursor=pointer]:
+        - /url: "#/workspaces"
+      - link "资产" [ref=e39] [cursor=pointer]:
+        - /url: "#/assets"
+    - generic [ref=e44]:
+      - link "设置" [ref=e46] [cursor=pointer]:
+        - /url: "#/settings"
+      - button "切换暗色" [ref=e51] [cursor=pointer]
+  - generic [ref=e54]:
+    - banner [ref=e55]:
+      - generic [ref=e57]:
+        - heading "Agents" [level=1] [ref=e58]
+        - paragraph [ref=e59]: /Volumes/wwx/org/bandi
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - text: 工作区
+          - combobox "当前工作区" [ref=e62]:
+            - option "Bandi" [selected]
+            - option "名片岛 Web"
+            - option "独立研究"
+        - generic [ref=e63]: 演示模式 · 未探测本机 · 未写盘
+        - button "在 Claude Code 中继续" [ref=e64] [cursor=pointer]
+    - main [ref=e67]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - heading "Agents" [level=2] [ref=e71]
+          - paragraph [ref=e72]: 长期 AgentPackage 及其组织归属、服务授权和配置健康度；此处不是进程或会话列表。
+        - link "创建 Agent" [ref=e73] [cursor=pointer]:
+          - /url: "#/agents/new"
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - generic [ref=e78]: 搜索 Agents
+            - textbox "搜索 Agents" [ref=e82]:
+              - /placeholder: 搜索名称、岗位、部门或服务范围…
+          - generic [ref=e83]:
+            - generic [ref=e84]: 公司
+            - combobox "公司" [ref=e85]:
+              - option "全部公司" [selected]
+              - option "星河科技"
+              - option "独立工作室"
+          - generic [ref=e86]:
+            - generic [ref=e87]: 部门
+            - combobox "部门" [ref=e88]:
+              - option "全部部门" [selected]
+              - option "董事长办公室"
+              - option "产品与研发中心"
+              - option "产品部"
+              - option "研发部"
+              - option "测试部"
+              - option "研究组"
+          - generic [ref=e89]:
+            - generic [ref=e90]: 岗位
+            - combobox "岗位" [ref=e91]:
+              - option "全部岗位" [selected]
+              - option "董事长助理"
+              - option "软件开发部主管"
+              - option "Web 工程师"
+              - option "代码审查"
+          - generic [ref=e92]:
+            - generic [ref=e93]: 工作区
+            - combobox "工作区" [ref=e94]:
+              - option "全部工作区" [selected]
+              - option "Bandi"
+              - option "名片岛 Web"
+              - option "独立研究"
+          - generic [ref=e95]:
+            - generic [ref=e96]: 配置状态
+            - combobox "配置状态" [ref=e97]:
+              - option "全部配置状态" [selected]
+              - option "配置完整"
+              - option "外部变化"
+              - option "缺少 Rules"
+          - generic [ref=e98]:
+            - generic [ref=e99]: 生命周期
+            - combobox "生命周期" [ref=e100]:
+              - option "全部生命周期" [selected]
+              - option "启用"
+              - option "停用"
+              - option "归档"
+        - table [ref=e102]:
+          - rowgroup [ref=e103]:
+            - row [ref=e104]:
+              - columnheader "Agent" [ref=e105]
+              - columnheader "岗位" [ref=e106]
+              - columnheader "主属 / 服务" [ref=e107]
+              - columnheader "生命周期" [ref=e108]
+              - columnheader "工作区" [ref=e109]
+              - columnheader "配置状态" [ref=e110]
+              - columnheader "最近编辑" [ref=e111]
+          - rowgroup [ref=e112]:
+            - row [ref=e113]:
+              - cell "查看 知衡 Agent 详情 知 知衡" [ref=e114]:
+                - link "查看 知衡 Agent 详情" [ref=e115] [cursor=pointer]:
+                  - /url: "#/agents/zhiheng"
+                  - generic [ref=e116]: 知衡
+                - generic [ref=e117]:
+                  - generic [ref=e118]: 知
+                  - text: 知衡
+              - cell "董事长助理" [ref=e119]
+              - cell "董事长办公室" [ref=e120]
+              - cell "active" [ref=e121]
+              - cell "1" [ref=e123]
+              - cell "配置完整" [ref=e124]
+              - cell "2 小时前" [ref=e126]
+            - row [ref=e127]:
+              - cell "查看 周策 Agent 详情，定位到外部变化 周 周策" [ref=e128]:
+                - link "查看 周策 Agent 详情，定位到外部变化" [ref=e129] [cursor=pointer]:
+                  - /url: "#/agents/zhouce?tab=package&path=instructions.md&view=preview"
+                  - generic [ref=e130]: 周策
+                - generic [ref=e131]:
+                  - generic [ref=e132]: 周
+                  - text: 周策
+              - cell "软件开发部主管" [ref=e133]
+              - cell "研发部 显式服务 测试部" [ref=e134]:
+                - text: 研发部
+                - generic [ref=e135]: 显式服务 测试部
+              - cell "active" [ref=e136]
+              - cell "2" [ref=e138]
+              - cell "外部变化" [ref=e139]
+              - cell "8 分钟前" [ref=e141]
+            - row [ref=e142]:
+              - cell "查看 林序 Agent 详情，定位到缺少 Rules 林 林序" [ref=e143]:
+                - link "查看 林序 Agent 详情，定位到缺少 Rules" [ref=e144] [cursor=pointer]:
+                  - /url: "#/agents/linxu?tab=rules"
+                  - generic [ref=e145]: 林序
+                - generic [ref=e146]:
+                  - generic [ref=e147]: 林
+                  - text: 林序
+              - cell "Web 工程师" [ref=e148]
+              - cell "研发部 显式服务 市场部" [ref=e149]:
+                - text: 研发部
+                - generic [ref=e150]: 显式服务 市场部
+              - cell "active" [ref=e151]
+              - cell "1" [ref=e153]
+              - cell "缺少 Rules" [ref=e154]
+              - cell "昨天" [ref=e156]
+            - row [ref=e157]:
+              - cell "查看 宋研 Agent 详情 宋 宋研" [ref=e158]:
+                - link "查看 宋研 Agent 详情" [ref=e159] [cursor=pointer]:
+                  - /url: "#/agents/songyan"
+                  - generic [ref=e160]: 宋研
+                - generic [ref=e161]:
+                  - generic [ref=e162]: 宋
+                  - text: 宋研
+              - cell "代码审查" [ref=e163]
+              - cell "研发部" [ref=e164]
+              - cell "archived" [ref=e165]
+              - cell "0" [ref=e167]
+              - cell "配置完整" [ref=e168]
+              - cell "3 天前" [ref=e170]
+        - generic [ref=e171]: 4 / 4 个 Agent

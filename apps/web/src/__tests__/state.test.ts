@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { initialState, reducer } from '../state'
 import type { AiClient } from '../mock'
+import type { ConfigurationEnvironment } from '../domain'
 import { buildBackupPreview, createDemoSnapshot } from '../backup-policy'
 
 const customClient: AiClient = {
@@ -9,13 +10,21 @@ const customClient: AiClient = {
   name: 'Demo CLI',
   shortName: 'DE',
   description: '自定义演示客户端',
-  enabled: true,
   detection: 'not-checked',
   persistence: 'memory-only',
 }
 
+const customEnvironment: ConfigurationEnvironment = {
+  id: 'test-environment',
+  name: '测试环境',
+  clientIds: ['claude-code', 'codex'],
+  evidence: 'memory-only',
+}
+
 describe('演示状态', () => {
-  it('包含九个唯一内置客户端，且默认仅启用 Claude Code', () => {
+  it('包含九个唯一内置客户端和空的会话最近 Agent', () => {
+    expect(initialState.currentConfigurationEnvironmentId).toBe('personal')
+    expect(initialState.configurationEnvironments[0]).toMatchObject({ id: 'personal', name: '个人配置' })
     expect(initialState.aiClients.map((client) => client.id)).toEqual([
       'claude-code',
       'claude-desktop',
@@ -29,8 +38,34 @@ describe('演示状态', () => {
     ])
     expect(new Set(initialState.aiClients.map((client) => client.kind)).size).toBe(9)
     expect(initialState.aiClients.every((client) => client.detection === 'not-checked')).toBe(true)
-    expect(initialState.aiClients.filter((client) => client.enabled).map((client) => client.id)).toEqual(['claude-code'])
-    expect(initialState.activeAiClientId).toBe('claude-code')
+    expect(initialState.recentAgentIds).toEqual([])
+    expect(initialState.mainMenuLayoutPreference).toBe('follow-window')
+  })
+
+  it('使用官方 Claude Code 配置位置作为演示事实', () => {
+    expect(initialState.assets.find((asset) => asset.id === 'mcp-bandi')?.path).toBe('.claude.json')
+    expect(initialState.workspaces.find((workspace) => workspace.id === 'bandi')?.files.map((file) => file.path)).toEqual(expect.arrayContaining([
+      '.claude/settings.json',
+      '.claude/settings.local.json',
+      '.mcp.json',
+    ]))
+  })
+
+  it('主菜单布局只更新顶层界面偏好', () => {
+    const result = reducer(initialState, {
+      type: 'SET_MAIN_MENU_LAYOUT',
+      preference: 'compact',
+    })
+
+    expect(result.mainMenuLayoutPreference).toBe('compact')
+    expect(result.settings).toBe(initialState.settings)
+    expect(result.agents).toBe(initialState.agents)
+    expect(result.workspaces).toBe(initialState.workspaces)
+    expect(result.assets).toBe(initialState.assets)
+    expect(reducer(result, {
+      type: 'SET_MAIN_MENU_LAYOUT',
+      preference: 'compact',
+    })).toBe(result)
   })
 
   it('onboarding 初始启用，完成后只返回新内存状态', () => {
@@ -52,6 +87,48 @@ describe('演示状态', () => {
     expect(initialState.configRevisions[0].content).not.toBe('新的演示指令')
   })
 
+  it('普通配置保存原子更新 Agent、文件和版本', () => {
+    const result = reducer(initialState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'zhouce', kind: 'rules', value: ['rule-common', 'rule-new'] } })
+    const agent = result.agents.find((item) => item.id === 'zhouce')!
+    expect(agent.ruleRefs).toEqual(['rule-common', 'rule-new'])
+    expect(agent.files.find((file) => file.path === 'config/rules.yaml')).toMatchObject({ evidence: 'memory-only', revision: result.configRevisions[0].id })
+    expect(result.configRevisions[0]).toMatchObject({ ownerId: 'zhouce', path: 'config/rules.yaml', evidence: 'memory-only' })
+  })
+
+  it('上下文保存原子更新策略、文件和版本', () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const result = reducer(initialState, {
+      type: 'SAVE_AGENT_CONFIG',
+      input: {
+        agentId: source.id,
+        kind: 'context',
+        value: { policy: { ...source.contextPolicy, triggerRatio: 0.85 } },
+      },
+    })
+    const agent = result.agents.find((item) => item.id === source.id)!
+    expect(agent.contextPolicy.triggerRatio).toBe(0.85)
+    expect(agent.files.find((file) => file.path === 'config/context.yaml')).toMatchObject({ evidence: 'memory-only' })
+    expect(result.configRevisions[0]).toMatchObject({ ownerType: 'agent', ownerId: source.id, path: 'config/context.yaml' })
+  })
+
+  it('保存 WorkspaceBinding 时登记 config.yaml 且不虚构 memory.md', () => {
+    const result = reducer(initialState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'songyan', kind: 'workspace-binding', value: { workspaceId: 'card', instructions: '负责审查', ruleIds: ['rule-common'], skillIds: [], mcpIds: [], memoryRevision: '' } } })
+    const files = result.agents.find((item) => item.id === 'songyan')!.files
+    expect(files.some((file) => file.path === 'workspaces/card/config.yaml')).toBe(true)
+    expect(files.some((file) => file.path === 'workspaces/card/memory.md')).toBe(false)
+    expect(result.configRevisions[0].path).toBe('workspaces/card/config.yaml')
+  })
+
+  it('创建 Agent 时统一登记根配置与 WorkspaceBinding 版本', () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const agent = { ...source, id: 'new-agent', name: '新 Agent', files: [], workspaceBindings: [{ workspaceId: 'card', instructions: '负责验收', ruleIds: ['rule-common'], skillIds: [], mcpIds: [], memoryRevision: '' }] }
+    const result = reducer(initialState, { type: 'CREATE_AGENT', agent })
+    const created = result.agents.find((item) => item.id === agent.id)!
+    expect(created.files.map((file) => file.path)).toEqual(expect.arrayContaining(['agent.yaml', 'instructions.md', 'config/context.yaml', 'config/permissions.yaml', 'config/orchestration.yaml', 'workspaces/card/config.yaml']))
+    expect(created.files.some((file) => file.path === 'workspaces/card/memory.md')).toBe(false)
+    expect(result.configRevisions.filter((revision) => revision.ownerId === agent.id)).toHaveLength(6)
+  })
+
   it('未改变指令时不生成重复版本', () => {
     const agent = initialState.agents.find((item) => item.id === 'zhouce')!
     expect(reducer(initialState, { type: 'SAVE_INSTRUCTIONS', agentId: agent.id, text: agent.instructions })).toBe(initialState)
@@ -67,6 +144,24 @@ describe('演示状态', () => {
     expect(initialState.configRevisions.find((item) => item.id === target.id)).toEqual(target)
   })
 
+  it('拒绝恢复路径与结构化快照不匹配的版本', () => {
+    const target = initialState.configRevisions.find((item) => item.id === 'cfg-zhouce-instructions-r7')!
+    const invalid = { ...target, id: 'invalid-payload', payload: { kind: 'rules', value: ['rule-common'] } }
+    const state = { ...initialState, configRevisions: [invalid, ...initialState.configRevisions] }
+    const result = reducer(state, { type: 'RESTORE_CONFIG_REVISION', revisionId: invalid.id })
+    expect(result.configRevisions).toBe(state.configRevisions)
+    expect(result.notice?.tone).toBe('warning')
+  })
+
+  it('恢复与当前结构化配置相同时不误标记已有版本', () => {
+    const current = initialState.agents.find((item) => item.id === 'zhouce')!
+    const target = { ...initialState.configRevisions[0], id: 'same-current', content: current.instructions, payload: { kind: 'instructions', value: current.instructions } }
+    const state = { ...initialState, configRevisions: [target, ...initialState.configRevisions] }
+    const result = reducer(state, { type: 'RESTORE_CONFIG_REVISION', revisionId: target.id })
+    expect(result.configRevisions).toBe(state.configRevisions)
+    expect(result.configRevisions[0].restoredFromRevisionId).toBeUndefined()
+  })
+
   it('添加 Workspace 只更新集中状态并选中它', () => {
     const result = reducer(initialState, {
       type: 'ADD_WORKSPACE',
@@ -80,37 +175,91 @@ describe('演示状态', () => {
     expect(result.currentWorkspaceId).toBe('x')
   })
 
-  it('只能选择已启用客户端', () => {
-    expect(reducer(initialState, { type: 'SELECT_AI_CLIENT', clientId: 'codex' })).toBe(initialState)
-    const enabled = reducer(initialState, { type: 'ENABLE_AI_CLIENT', clientId: 'codex' })
-    expect(enabled.activeAiClientId).toBe('codex')
-    expect(enabled.notice?.description).toContain('当前页面内存')
-    expect(enabled.notice?.description).toContain('未写入磁盘')
+  it('创建配置环境并统一切换，切换本身不生成版本', () => {
+    const created = reducer(initialState, { type: 'CREATE_CONFIGURATION_ENVIRONMENT', environment: customEnvironment })
+    expect(created.configurationEnvironments.find((item) => item.id === customEnvironment.id)).toMatchObject(customEnvironment)
+    expect(created.currentConfigurationEnvironmentId).toBe(customEnvironment.id)
+    expect(created.configRevisions[0]).toMatchObject({ ownerType: 'configuration-environment', ownerId: customEnvironment.id, path: 'configuration-environments/test-environment.yaml' })
+    const switched = reducer(created, { type: 'SELECT_CONFIGURATION_ENVIRONMENT', environmentId: 'personal' })
+    expect(switched.currentConfigurationEnvironmentId).toBe('personal')
+    expect(switched.configRevisions).toBe(created.configRevisions)
   })
 
-  it.each(['claude-desktop', 'codex', 'gemini-cli', 'grok-build', 'opencode', 'openclaw', 'hermes', 'pi'])('可模拟启用内置客户端 %s', (clientId) => {
-    const enabled = reducer(initialState, { type: 'ENABLE_AI_CLIENT', clientId })
-    expect(enabled.activeAiClientId).toBe(clientId)
-    expect(enabled.aiClients.find((client) => client.id === clientId)?.enabled).toBe(true)
-    expect(enabled.notice?.description).toContain('未探测本机')
+  it('复制方案后可独立修改工具登记和启动配置', () => {
+    const source = initialState.configurationEnvironments.find((item) => item.id === 'team-demo')!
+    const configured = reducer(initialState, {
+      type: 'SAVE_CONFIGURATION_ENVIRONMENT',
+      environment: {
+        ...source,
+        clientLaunchProfiles: {
+          'claude-code': { version: 1, executable: 'claude', args: ['--dangerously-skip-permissions'], enterBandiOnStart: true },
+        },
+      },
+    })
+    const copied = reducer(configured, { type: 'CREATE_CONFIGURATION_ENVIRONMENT', environment: { ...customEnvironment, clientIds: [] }, sourceEnvironmentId: 'team-demo' })
+    const copy = copied.configurationEnvironments.find((item) => item.id === customEnvironment.id)!
+    expect(copy.clientIds).toEqual(['claude-code', 'codex'])
+    expect(copy.clientLaunchProfiles?.['claude-code']?.args).toEqual(['--dangerously-skip-permissions'])
+    const changed = reducer(copied, { type: 'SET_ENVIRONMENT_CLIENT_REGISTRATION', environmentId: customEnvironment.id, clientId: 'claude-code', registered: false })
+    expect(changed.configurationEnvironments.find((item) => item.id === customEnvironment.id)?.clientLaunchProfiles).toBeUndefined()
+    expect(changed.configurationEnvironments.find((item) => item.id === 'team-demo')?.clientLaunchProfiles?.['claude-code']).toBeDefined()
   })
 
-  it('默认 Claude Code 不可停用', () => {
-    expect(reducer(initialState, { type: 'DISABLE_AI_CLIENT', clientId: 'claude-code' })).toBe(initialState)
+  it('拒绝重名配置方案并保持现有方案不变', () => {
+    const personal = initialState.configurationEnvironments.find((item) => item.id === 'personal')!
+    const result = reducer(initialState, { type: 'SAVE_CONFIGURATION_ENVIRONMENT', environment: { ...personal, name: '  团队配置（演示）  ' } })
+    expect(result.configurationEnvironments).toBe(initialState.configurationEnvironments)
+    expect(result.configRevisions).toBe(initialState.configRevisions)
+    expect(result.notice?.title).toBe('无法记录配置方案')
   })
 
-  it('停用当前非默认客户端后回退 Claude Code', () => {
-    const enabled = reducer(initialState, { type: 'ENABLE_AI_CLIENT', clientId: 'codex' })
-    const disabled = reducer(enabled, { type: 'DISABLE_AI_CLIENT', clientId: 'codex' })
-    expect(disabled.activeAiClientId).toBe('claude-code')
-    expect(disabled.aiClients.find((client) => client.id === 'codex')?.enabled).toBe(false)
+  it('恢复配置环境历史时生成新版本并记录来源', () => {
+    const first = reducer(initialState, { type: 'SAVE_CONFIGURATION_ENVIRONMENT', environment: customEnvironment })
+    const changed = reducer(first, { type: 'SAVE_CONFIGURATION_ENVIRONMENT', environment: { ...customEnvironment, name: '已修改环境' } })
+    const target = first.configRevisions[0]
+    const restored = reducer(changed, { type: 'RESTORE_CONFIG_REVISION', revisionId: target.id })
+    expect(restored.configurationEnvironments.find((item) => item.id === customEnvironment.id)?.name).toBe(customEnvironment.name)
+    expect(restored.configRevisions[0].restoredFromRevisionId).toBe(target.id)
   })
 
-  it('添加自定义客户端不会重复', () => {
+  it('按首次访问顺序记录 Agent、重复访问保持排序并限制为六项', () => {
+    const extraAgents = Array.from({ length: 3 }, (_, index) => ({
+      ...initialState.agents[0], id: `extra-${index}`, name: `额外 ${index}`,
+    }))
+    let state = { ...initialState, agents: [...initialState.agents, ...extraAgents] }
+    for (const agent of state.agents) state = reducer(state, { type: 'RECORD_RECENT_AGENT', agentId: agent.id })
+    expect(state.recentAgentIds).toHaveLength(6)
+    expect(state.recentAgentIds[0]).toBe('extra-2')
+    const unchanged = reducer(state, { type: 'RECORD_RECENT_AGENT', agentId: state.recentAgentIds.at(-1)! })
+    expect(unchanged).toBe(state)
+    expect(reducer(unchanged, { type: 'RECORD_RECENT_AGENT', agentId: 'missing' })).toBe(unchanged)
+  })
+
+  it('移除和清空最近 Agent 只影响会话导航历史', () => {
+    const state = { ...initialState, recentAgentIds: ['zhouce', 'songyan', 'lumo'] }
+    const removed = reducer(state, { type: 'REMOVE_RECENT_AGENT', agentId: 'songyan' })
+    expect(removed.recentAgentIds).toEqual(['zhouce', 'lumo'])
+    expect(removed.uiPreferences).toBe(state.uiPreferences)
+    expect(removed.agents).toBe(state.agents)
+    expect(reducer(removed, { type: 'REMOVE_RECENT_AGENT', agentId: 'missing' })).toBe(removed)
+
+    const cleared = reducer(removed, { type: 'CLEAR_RECENT_AGENTS' })
+    expect(cleared.recentAgentIds).toEqual([])
+    expect(cleared.uiPreferences).toBe(state.uiPreferences)
+    expect(cleared.workspaces).toBe(state.workspaces)
+    expect(reducer(cleared, { type: 'CLEAR_RECENT_AGENTS' })).toBe(cleared)
+  })
+
+  it('添加自定义客户端只登记配置对象，且拒绝重复 ID 或名称', () => {
     const added = reducer(initialState, { type: 'ADD_CUSTOM_AI_CLIENT', client: customClient })
-    const duplicate = reducer(added, { type: 'ADD_CUSTOM_AI_CLIENT', client: customClient })
+    const duplicateId = reducer(added, { type: 'ADD_CUSTOM_AI_CLIENT', client: customClient })
+    const duplicateName = reducer(added, { type: 'ADD_CUSTOM_AI_CLIENT', client: { ...customClient, id: 'custom-other', name: '  demo cli  ' } })
     expect(added.aiClients).toHaveLength(initialState.aiClients.length + 1)
-    expect(duplicate).toBe(added)
+    expect(added.aiClients.at(-1)).toMatchObject({ id: customClient.id, name: customClient.name, persistence: 'memory-only' })
+    expect(added.recentAgentIds).toEqual([])
+    expect(added.notice?.description).toContain('当前页面内存')
+    expect(duplicateId).toBe(added)
+    expect(duplicateName).toBe(added)
   })
 
   it('只接受存在的 Workspace', () => {

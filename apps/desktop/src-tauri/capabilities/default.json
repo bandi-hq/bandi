@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "仅允许基础窗口能力的演示壳",
+  "description": "仅允许主窗口接收菜单事件、同步标题并打开目录选择器",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-title",
+    "dialog:allow-open"
+  ]
 }

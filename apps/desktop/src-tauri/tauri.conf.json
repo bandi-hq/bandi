@@ -11,7 +11,8 @@
   },
   "app": {
     "windows": [{
-      "title": "Bandi · 演示模式",
+      "label": "main",
+      "title": "Bandi · 配置管理",
       "width": 1280,
       "height": 800,
       "minWidth": 960,

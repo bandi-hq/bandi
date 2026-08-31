@@ -29,7 +29,7 @@ export function FieldRow({ label, children }: { label: string; children: ReactNo
   return <div className="grid gap-2 border-b border-border py-3 last:border-0 sm:grid-cols-[160px_1fr]"><div className="text-sm text-muted-foreground">{label}</div><div className="min-w-0 text-sm">{children}</div></div>
 }
 
-export function EntityTabs({ tabs, active, onChange }: { tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void }) {
+export function EntityTabs({ tabs, active, onChange, scope = 'detail', ariaLabel = '详情页签', variant = 'underline', className, tabListClassName }: { tabs: { id: string; label: string }[]; active: string; onChange: (id: string) => void; scope?: string; ariaLabel?: string; variant?: 'underline' | 'segmented'; className?: string; tabListClassName?: string }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({})
   const activate = (index: number) => { const tab = tabs[(index + tabs.length) % tabs.length]; onChange(tab.id); requestAnimationFrame(() => refs.current[tab.id]?.focus()) }
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -39,12 +39,12 @@ export function EntityTabs({ tabs, active, onChange }: { tabs: { id: string; lab
     else if (event.key === 'End') activate(tabs.length - 1)
     else activate(index + (event.key === 'ArrowRight' ? 1 : -1))
   }
-  return <div className="mb-5 overflow-x-auto border-b border-border"><div className="flex min-w-max" role="tablist" aria-label="详情页签">{tabs.map((tab, index) => <button ref={(node) => { refs.current[tab.id] = node }} id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} key={tab.id} type="button" role="tab" tabIndex={active === tab.id ? 0 : -1} aria-selected={active === tab.id} onKeyDown={(event) => onKeyDown(event, index)} onClick={() => onChange(tab.id)} className={cn('min-h-11 border-b-2 border-transparent px-3 py-3 text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', active === tab.id && 'border-foreground font-medium text-foreground')}>{tab.label}</button>)}</div></div>
+  return <div className={cn('overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden', variant === 'underline' && 'mb-5 border-b border-border', className)}><div className={cn('flex min-w-max', variant === 'segmented' && 'rounded-xl bg-muted/50 p-1', tabListClassName)} role="tablist" aria-label={ariaLabel}>{tabs.map((tab, index) => { const selected = active === tab.id; return <button ref={(node) => { refs.current[tab.id] = node }} id={`${scope}-tab-${tab.id}`} aria-controls={`${scope}-panel-${tab.id}`} key={tab.id} type="button" role="tab" tabIndex={selected ? 0 : -1} aria-selected={selected} onKeyDown={(event) => onKeyDown(event, index)} onClick={() => onChange(tab.id)} style={variant === 'segmented' ? { fontWeight: selected ? 600 : 400 } : undefined} className={cn('min-h-11 px-3 text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', variant === 'underline' ? 'border-b-2 border-transparent py-3 focus-visible:ring-inset' : 'shrink-0 whitespace-nowrap rounded-lg px-4', selected && (variant === 'underline' ? 'border-foreground font-medium text-foreground' : 'bg-background text-foreground shadow-sm'))}>{tab.label}</button> })}</div></div>
 }
 
-export function EntityTabPanel({ tabId, activeTab, children }: { tabId: string; activeTab: string; children: ReactNode }) {
+export function EntityTabPanel({ tabId, activeTab, children, scope = 'detail', className }: { tabId: string; activeTab: string; children: ReactNode; scope?: string; className?: string }) {
   if (tabId !== activeTab) return null
-  return <div id={`panel-${tabId}`} role="tabpanel" aria-labelledby={`tab-${tabId}`} tabIndex={0}>{children}</div>
+  return <div id={`${scope}-panel-${tabId}`} role="tabpanel" aria-labelledby={`${scope}-tab-${tabId}`} tabIndex={0} className={className}>{children}</div>
 }
 
 export function MockBoundaryNote({ children = '所有业务变更仅保存在当前页面内存；未访问系统、未执行命令、未写入磁盘。' }: { children?: ReactNode }) {
