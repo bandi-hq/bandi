@@ -22,6 +22,25 @@ const customEnvironment: ConfigurationEnvironment = {
 }
 
 describe('演示状态', () => {
+  it('只保留未完成的 Agent 恢复摘要并在完成后移除', () => {
+    const pending = {
+      id: 'operation-1',
+      agentId: 'worker',
+      operationKind: 'create' as const,
+      status: 'organization_pending' as const,
+      createdAt: '2026-09-02T00:00:00Z',
+    }
+    const hydrated = reducer(initialState, {
+      type: 'HYDRATE_AGENT_RECOVERY',
+      operations: [pending, { ...pending, id: 'operation-2', status: 'completed' }],
+    })
+    expect(hydrated.agentRecoveryOperations).toEqual([pending])
+    expect(reducer(hydrated, {
+      type: 'SYNC_AGENT_RECOVERY',
+      operation: { ...pending, status: 'completed' },
+    }).agentRecoveryOperations).toEqual([])
+  })
+
   it('静默恢复 Desktop 正式 Memory 候选并区分正式 Revision', () => {
     const hash = `sha256:${'a'.repeat(64)}` as const
     const bundle = {

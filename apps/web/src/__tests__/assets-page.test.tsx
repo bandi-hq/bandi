@@ -38,6 +38,8 @@ describe('资产索引', () => {
     expect(screen.getByText('config/skills.yaml')).toBeInTheDocument()
     expect(screen.getByText('Claude 用户根尚未检查')).toBeInTheDocument()
     expect(screen.getByText('1 条引用异常')).toBeInTheDocument()
+    expect(screen.getAllByText('技能')).toHaveLength(2)
+    expect(screen.getByText('允许受控写入')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '新建演示资产' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /管理.*Skills/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '刷新索引' }))
@@ -51,7 +53,8 @@ describe('资产索引', () => {
     renderPage()
 
     expect(screen.getByRole('button', { name: '新建演示资产' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '管理演示 Skills' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '管理演示技能' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '技能' })).toHaveValue('Skill')
     expect(discover).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { sandboxHome } from './paths.js'
+import { appDataPath, sandboxHome } from './paths.js'
+export { appDataPath } from './paths.js'
 
 export const workspaceId = 'workspace-first-project'
 export const workspaceName = '首次项目'
@@ -12,7 +13,6 @@ export const managerAgentId = 'manager'
 export const managerAgentName = '主管 Agent'
 export const workerAgentId = 'worker'
 export const workerAgentName = '执行 Agent'
-export const appDataPath = path.join(sandboxHome, 'Library', 'Application Support', 'com.bandi.desktop.e2e')
 export const managedAgentsPath = path.join(sandboxHome, '.bandi', 'agents')
 
 export const workspace = {

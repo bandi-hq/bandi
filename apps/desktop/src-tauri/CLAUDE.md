@@ -13,7 +13,7 @@
 
 - 新增 command、plugin、capability、Shell、进程或文件系统访问前，先确认其直接服务于配置管理，并采用最小权限、最小参数和最小暴露面。
 - capability 只授权明确需要的窗口、命令、路径和操作；不得使用宽泛通配符作为方便性兜底。
-- Shell 和外部进程默认禁止。当前唯一终端交接例外是：前端只提交 `clientId / adapterId / workspaceId / terminalId / intent`，后端从 Workspace Registry 重取 canonical cwd，并仅通过固定 `/usr/bin/open` 请求白名单终端打开目录。不得接受或回传 cwd、bundle ID、executable、argv、Shell、AppleScript、环境变量、stdin、脚本或通用进程请求；不得启动 Claude Code、追加 `/bandi:bandi`、读取输出、保存 PID 或管理 Session。
+- Shell 和外部进程默认禁止。当前唯一终端交接例外是：前端只提交 `clientId / adapterId / workspaceId / terminalId / intent`，后端从 Workspace Registry 重取 canonical cwd；macOS 仅通过固定 `/usr/bin/open` 请求白名单终端打开目录，Windows 不启动终端并返回手动继续。不得接受或回传 cwd、bundle ID、executable、argv、Shell、AppleScript、环境变量、stdin、脚本或通用进程请求；不得启动 Claude Code、追加 `/bandi:bandi`、读取输出、保存 PID 或管理 Session。
 - 文件操作必须限定到已确认的配置目标，规范化并校验路径，防止路径穿越、符号链接越界和意外覆盖。
 - 删除、覆盖、恢复、扩大权限、写入外部配置及启动外部进程属于高风险操作，必须在界面中展示真实影响并获得独立确认。
 - 普通配置保存应执行基线检查、外部变化检测和原子写入；失败时保留原文件并返回可理解的错误，不以备份替代安全写入。

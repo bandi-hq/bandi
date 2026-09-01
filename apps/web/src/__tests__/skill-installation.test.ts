@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applySkillAction, getSkillReferences } from '../skill-installation'
+import { applySkillAction, getSkillReferences, skillInstallationStatusLabels } from '../skill-installation'
 import { initialAgents } from '../domain'
 
 const available = { status: 'available' as const, availableVersion: '2.0.0', previousVersions: [] }
@@ -15,6 +15,14 @@ describe('Skill 安装生命周期', () => {
   })
 
   it('拒绝非法转换', () => expect(applySkillAction(available, 'update')).toBeUndefined())
+
+  it('定义完整的中文安装状态标签', () => {
+    expect(skillInstallationStatusLabels).toEqual({
+      available: '未安装',
+      installed: '已安装',
+      'update-available': '可更新',
+    })
+  })
 
   it('只读取显式引用而不修改 Agent 或 WorkspaceBinding', () => {
     const before = structuredClone(initialAgents)

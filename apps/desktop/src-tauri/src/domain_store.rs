@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const DATABASE_SCHEMA_VERSION: i64 = 7;
+const DATABASE_SCHEMA_VERSION: i64 = 9;
 const ORGANIZATION_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -146,7 +146,7 @@ pub(crate) struct RemoveWorkspaceRequest {
     pub(crate) workspace_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveServiceGrantsRequest {
     pub(crate) agent_id: String,
@@ -624,6 +624,51 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             )
             .map_err(|_| "正式 Memory 外键迁移失败".to_string())?;
     }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
+    if version == 7 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS external_agent_references (
+                   agent_id TEXT PRIMARY KEY,
+                   canonical_root TEXT NOT NULL UNIQUE,
+                   metadata_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 PRAGMA user_version = 8;
+                 COMMIT;",
+            )
+            .map_err(|_| "Agent 引用数据库迁移失败".to_string())?;
+    }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
+    if version == 8 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 DROP TABLE IF EXISTS agent_recovery_operations;
+                 CREATE TABLE agent_recovery_operations (
+                   id TEXT PRIMARY KEY,
+                   request_id TEXT NOT NULL UNIQUE,
+                   agent_id TEXT NOT NULL,
+                   operation_kind TEXT NOT NULL CHECK(operation_kind IN ('create', 'identity_update')),
+                   status TEXT NOT NULL CHECK(status IN ('prepared', 'filesystem_committed', 'revision_pending', 'organization_pending', 'blocked', 'completed')),
+                   expected_manifest_hash TEXT NOT NULL,
+                   fixed_revision_id TEXT,
+                   payload_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+                 );
+                 CREATE INDEX agent_recovery_operations_agent ON agent_recovery_operations(agent_id, created_at);
+                 PRAGMA user_version = 9;
+                 COMMIT;",
+            )
+            .map_err(|_| "Agent 恢复操作数据库迁移失败".to_string())?;
+    }
     Ok(())
 }
 
@@ -653,7 +698,38 @@ fn department_company(
         .map_err(|_| "无法校验部门引用".to_string())
 }
 
-fn agent_company_at(agents_root: &Path, agent_id: &str) -> Result<Option<String>, String> {
+fn agent_facts_at(
+    transaction: &Transaction<'_>,
+    agents_root: &Path,
+    agent_id: &str,
+) -> Result<(Option<String>, String), String> {
+    let external: Option<String> = transaction
+        .query_row(
+            "SELECT metadata_json FROM external_agent_references WHERE agent_id = ?1",
+            [agent_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| "无法读取外部 Agent metadata".to_string())?;
+    if let Some(encoded) = external {
+        let metadata: Value =
+            serde_json::from_str(&encoded).map_err(|_| "外部 Agent metadata 已损坏".to_string())?;
+        if metadata.get("id").and_then(Value::as_str) != Some(agent_id) {
+            return Err("外部 Agent metadata 稳定标识不一致".into());
+        }
+        return Ok((
+            metadata
+                .get("companyId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            metadata
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("inactive")
+                .to_string(),
+        ));
+    }
+
     let package = agents_root.join(format!("agt_{agent_id}"));
     let metadata = fs::symlink_metadata(&package).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -675,21 +751,42 @@ fn agent_company_at(agents_root: &Path, agent_id: &str) -> Result<Option<String>
         &fs::read_to_string(manifest_path).map_err(|_| "无法读取 Agent 事实".to_string())?,
     )
     .map_err(|_| "Agent 事实格式无效".to_string())?;
-    Ok(manifest
-        .get("companyId")
-        .and_then(Value::as_str)
-        .map(str::to_string))
+    Ok((
+        manifest
+            .get("companyId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        manifest
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("inactive")
+            .to_string(),
+    ))
 }
 
 fn validate_agent_company(
+    transaction: &Transaction<'_>,
+    agents_root: &Path,
+    agent_id: &str,
+    company_id: &str,
+) -> Result<String, String> {
+    let (actual_company_id, status) = agent_facts_at(transaction, agents_root, agent_id)?;
+    if actual_company_id.as_deref() != Some(company_id) {
+        return Err("Agent 必须属于同一公司".into());
+    }
+    Ok(status)
+}
+
+fn validate_active_agent_company(
+    transaction: &Transaction<'_>,
     agents_root: &Path,
     agent_id: &str,
     company_id: &str,
 ) -> Result<(), String> {
-    match agent_company_at(agents_root, agent_id)? {
-        Some(actual_company_id) if actual_company_id == company_id => Ok(()),
-        _ => Err("Agent 必须属于同一公司".into()),
+    if validate_agent_company(transaction, agents_root, agent_id, company_id)? != "active" {
+        return Err("Agent 必须处于 active 状态".into());
     }
+    Ok(())
 }
 
 fn validate_company(company: &CompanyDto) -> Result<(), String> {
@@ -808,6 +905,7 @@ fn validate_role(transaction: &Transaction<'_>, role: &RoleDto) -> Result<(), St
 
 fn validate_workspace(
     transaction: &Transaction<'_>,
+    agents_root: Option<&Path>,
     workspace: &WorkspaceDto,
 ) -> Result<(), String> {
     validate_id(&workspace.id, "工作区标识")?;
@@ -847,7 +945,14 @@ fn validate_workspace(
                     return Err("协作部门必须属于工作区公司".into());
                 }
             }
-            if let Some(agent_id) = workspace.project_lead_agent_id.as_deref() {
+            if let Some(agents_root) = agents_root {
+                let agent_id = workspace
+                    .project_lead_agent_id
+                    .as_deref()
+                    .ok_or_else(|| "已关联组织的工作区必须设置默认项目负责人".to_string())?;
+                validate_id(agent_id, "默认负责人标识")?;
+                validate_active_agent_company(transaction, agents_root, agent_id, company_id)?;
+            } else if let Some(agent_id) = workspace.project_lead_agent_id.as_deref() {
                 validate_id(agent_id, "默认负责人标识")?;
             }
         }
@@ -860,21 +965,22 @@ pub(crate) fn save_company_governed_at(
     agents_root: &Path,
     request: SaveCompanyRequest,
 ) -> Result<CompanyDto, String> {
-    if let Some(agent_id) = request.company.assistant_agent_id.as_deref() {
-        validate_agent_company(agents_root, agent_id, &request.company.id)?;
-    }
-    save_company_at(path, request)
-}
-
-pub(crate) fn save_company_at(
-    path: &Path,
-    request: SaveCompanyRequest,
-) -> Result<CompanyDto, String> {
     validate_company(&request.company)?;
     let mut connection = open_at(path)?;
     let transaction = connection
         .transaction()
         .map_err(|_| "无法开始公司保存事务".to_string())?;
+    if let Some(agent_id) = request.company.assistant_agent_id.as_deref() {
+        validate_active_agent_company(&transaction, agents_root, agent_id, &request.company.id)?;
+    }
+    save_company_in(&transaction, &request.company)?;
+    transaction
+        .commit()
+        .map_err(|_| "无法提交公司保存事务".to_string())?;
+    Ok(request.company)
+}
+
+fn save_company_in(transaction: &Transaction<'_>, company: &CompanyDto) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     transaction
         .execute(
@@ -884,18 +990,32 @@ pub(crate) fn save_company_at(
                assistant_agent_id=excluded.assistant_agent_id, department_ids_json=excluded.department_ids_json,
                workspace_ids_json=excluded.workspace_ids_json, shared_asset_ids_json=excluded.shared_asset_ids_json, updated_at=excluded.updated_at",
             params![
-                request.company.id,
-                request.company.name,
-                request.company.mission,
-                request.company.boundary,
-                request.company.assistant_agent_id,
-                json(&request.company.department_ids, "部门列表")?,
-                json(&request.company.workspace_ids, "工作区列表")?,
-                json(&request.company.shared_asset_ids, "共享资产列表")?,
+                company.id,
+                company.name,
+                company.mission,
+                company.boundary,
+                company.assistant_agent_id,
+                json(&company.department_ids, "部门列表")?,
+                json(&company.workspace_ids, "工作区列表")?,
+                json(&company.shared_asset_ids, "共享资产列表")?,
                 now,
             ],
         )
         .map_err(|error| if error.to_string().contains("companies_name_unique") { "公司名称重复".to_string() } else { "无法保存公司".to_string() })?;
+    Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn save_company_at(
+    path: &Path,
+    request: SaveCompanyRequest,
+) -> Result<CompanyDto, String> {
+    validate_company(&request.company)?;
+    let mut connection = open_at(path)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "无法开始公司保存事务".to_string())?;
+    save_company_in(&transaction, &request.company)?;
     transaction
         .commit()
         .map_err(|_| "无法提交公司保存事务".to_string())?;
@@ -907,22 +1027,34 @@ pub(crate) fn save_department_governed_at(
     agents_root: &Path,
     request: SaveDepartmentRequest,
 ) -> Result<DepartmentDto, String> {
-    for agent_id in &request.department.member_agent_ids {
-        validate_agent_company(agents_root, agent_id, &request.department.company_id)?;
-    }
-    save_department_at(path, request)
-}
-
-pub(crate) fn save_department_at(
-    path: &Path,
-    request: SaveDepartmentRequest,
-) -> Result<DepartmentDto, String> {
     validate_department_base(&request.department)?;
     let mut connection = open_at(path)?;
     let transaction = connection
         .transaction()
         .map_err(|_| "无法开始部门保存事务".to_string())?;
     validate_department_graph(&transaction, &request.department)?;
+    for agent_id in &request.department.member_agent_ids {
+        let status = validate_agent_company(
+            &transaction,
+            agents_root,
+            agent_id,
+            &request.department.company_id,
+        )?;
+        if request.department.manager_agent_id.as_deref() == Some(agent_id) && status != "active" {
+            return Err("部门主管必须处于 active 状态".into());
+        }
+    }
+    save_department_in(&transaction, &request.department)?;
+    transaction
+        .commit()
+        .map_err(|_| "无法提交部门保存事务".to_string())?;
+    Ok(request.department)
+}
+
+fn save_department_in(
+    transaction: &Transaction<'_>,
+    department: &DepartmentDto,
+) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     transaction
         .execute(
@@ -934,26 +1066,41 @@ pub(crate) fn save_department_at(
                boundaries_json=excluded.boundaries_json, delegation_depth=excluded.delegation_depth,
                member_agent_ids_json=excluded.member_agent_ids_json, owned_sop_ids_json=excluded.owned_sop_ids_json, updated_at=excluded.updated_at",
             params![
-                request.department.id,
-                request.department.company_id,
-                request.department.parent_department_id,
-                request.department.name,
-                request.department.parent,
-                request.department.manager_agent_id,
-                request.department.manager,
-                request.department.mission,
-                i64::try_from(request.department.members)
+                department.id,
+                department.company_id,
+                department.parent_department_id,
+                department.name,
+                department.parent,
+                department.manager_agent_id,
+                department.manager,
+                department.mission,
+                i64::try_from(department.members)
                     .map_err(|_| "部门成员数量无效".to_string())?,
-                json(&request.department.responsibilities, "部门职责")?,
-                json(&request.department.boundaries, "部门边界")?,
-                i64::try_from(request.department.delegation_depth)
+                json(&department.responsibilities, "部门职责")?,
+                json(&department.boundaries, "部门边界")?,
+                i64::try_from(department.delegation_depth)
                     .map_err(|_| "委派深度无效".to_string())?,
-                json(&request.department.member_agent_ids, "部门成员")?,
-                json(&request.department.owned_sop_ids, "部门 SOP")?,
+                json(&department.member_agent_ids, "部门成员")?,
+                json(&department.owned_sop_ids, "部门 SOP")?,
                 now,
             ],
         )
         .map_err(|error| if error.to_string().contains("departments_company_name_unique") { "同一公司内部门名称重复".to_string() } else { "无法保存部门".to_string() })?;
+    Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn save_department_at(
+    path: &Path,
+    request: SaveDepartmentRequest,
+) -> Result<DepartmentDto, String> {
+    validate_department_base(&request.department)?;
+    let mut connection = open_at(path)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "无法开始部门保存事务".to_string())?;
+    validate_department_graph(&transaction, &request.department)?;
+    save_department_in(&transaction, &request.department)?;
     transaction
         .commit()
         .map_err(|_| "无法提交部门保存事务".to_string())?;
@@ -999,15 +1146,31 @@ pub(crate) fn save_role_at(path: &Path, request: SaveRoleRequest) -> Result<Role
     Ok(request.role)
 }
 
+pub(crate) fn save_workspace_governed_at(
+    path: &Path,
+    agents_root: &Path,
+    request: SaveWorkspaceRequest,
+) -> Result<WorkspaceDto, String> {
+    save_workspace_with_agents_at(path, Some(agents_root), request)
+}
+
 pub(crate) fn save_workspace_at(
     path: &Path,
+    request: SaveWorkspaceRequest,
+) -> Result<WorkspaceDto, String> {
+    save_workspace_with_agents_at(path, None, request)
+}
+
+fn save_workspace_with_agents_at(
+    path: &Path,
+    agents_root: Option<&Path>,
     request: SaveWorkspaceRequest,
 ) -> Result<WorkspaceDto, String> {
     let mut connection = open_at(path)?;
     let transaction = connection
         .transaction()
         .map_err(|_| "无法开始工作区保存事务".to_string())?;
-    validate_workspace(&transaction, &request.workspace)?;
+    validate_workspace(&transaction, agents_root, &request.workspace)?;
     let current_path: Option<String> = transaction
         .query_row(
             "SELECT canonical_path FROM workspaces WHERE id = ?1",
@@ -1096,10 +1259,7 @@ pub(crate) fn remove_workspace_at(
         .map_err(|_| "无法提交移除工作区事务".to_string())
 }
 
-pub(crate) fn save_service_grants_at(
-    path: &Path,
-    request: SaveServiceGrantsRequest,
-) -> Result<Vec<ServiceGrantDto>, String> {
+fn validate_service_grant_input(request: &SaveServiceGrantsRequest) -> Result<(), String> {
     validate_id(&request.agent_id, "Agent 标识")?;
     let mut unique = HashSet::new();
     for grant in &request.grants {
@@ -1118,12 +1278,15 @@ pub(crate) fn save_service_grants_at(
             return Err("服务授权标识重复".into());
         }
     }
-    let mut connection = open_at(path)?;
-    let transaction = connection
-        .transaction()
-        .map_err(|_| "无法开始服务授权事务".to_string())?;
+    Ok(())
+}
+
+fn validate_service_grants(
+    transaction: &Transaction<'_>,
+    request: &SaveServiceGrantsRequest,
+) -> Result<(), String> {
     for grant in &request.grants {
-        if department_company(&transaction, &grant.department_id)?.is_none() {
+        if department_company(transaction, &grant.department_id)?.is_none() {
             return Err("服务授权目标部门不存在".into());
         }
         for workspace_id in &grant.workspace_ids {
@@ -1135,12 +1298,18 @@ pub(crate) fn save_service_grants_at(
                 )
                 .optional()
                 .map_err(|_| "无法校验服务授权工作区".to_string())?;
-            let department_company_id = department_company(&transaction, &grant.department_id)?;
-            if company_id.flatten() != department_company_id {
+            if company_id.flatten() != department_company(transaction, &grant.department_id)? {
                 return Err("服务授权工作区必须与目标部门属于同一公司".into());
             }
         }
     }
+    Ok(())
+}
+
+fn replace_service_grants_in(
+    transaction: &Transaction<'_>,
+    request: &SaveServiceGrantsRequest,
+) -> Result<(), String> {
     transaction
         .execute(
             "DELETE FROM service_grants WHERE agent_id = ?1",
@@ -1149,18 +1318,99 @@ pub(crate) fn save_service_grants_at(
         .map_err(|_| "无法替换服务授权".to_string())?;
     let now = Utc::now().to_rfc3339();
     for grant in &request.grants {
-        transaction
-            .execute(
-                "INSERT INTO service_grants (id, agent_id, department_id, capabilities_json, workspace_ids_json, prohibitions_json, status, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![grant.id, grant.agent_id, grant.department_id, json(&grant.capabilities, "服务能力")?, json(&grant.workspace_ids, "服务工作区")?, json(&grant.prohibitions, "服务禁止事项")?, grant.status, now],
-            )
-            .map_err(|_| "无法保存服务授权".to_string())?;
+        transaction.execute(
+            "INSERT INTO service_grants (id, agent_id, department_id, capabilities_json, workspace_ids_json, prohibitions_json, status, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![grant.id, grant.agent_id, grant.department_id, json(&grant.capabilities, "服务能力")?, json(&grant.workspace_ids, "服务工作区")?, json(&grant.prohibitions, "服务禁止事项")?, grant.status, now],
+        ).map_err(|_| "无法保存服务授权".to_string())?;
     }
+    Ok(())
+}
+
+pub(crate) fn save_service_grants_at(
+    path: &Path,
+    request: SaveServiceGrantsRequest,
+) -> Result<Vec<ServiceGrantDto>, String> {
+    validate_service_grant_input(&request)?;
+    let mut connection = open_at(path)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "无法开始服务授权事务".to_string())?;
+    validate_service_grants(&transaction, &request)?;
+    replace_service_grants_in(&transaction, &request)?;
     transaction
         .commit()
         .map_err(|_| "无法提交服务授权事务".to_string())?;
     Ok(request.grants)
+}
+
+pub(crate) fn reconcile_agent_organization_at(
+    path: &Path,
+    agents_root: &Path,
+    operation_id: &str,
+    agent_id: &str,
+    company_id: &str,
+    primary_department_id: &str,
+    grants: SaveServiceGrantsRequest,
+) -> Result<(), String> {
+    validate_id(operation_id, "Agent operation 标识")?;
+    validate_id(agent_id, "Agent 标识")?;
+    validate_id(company_id, "公司标识")?;
+    validate_id(primary_department_id, "主属部门标识")?;
+    if grants.agent_id != agent_id {
+        return Err("服务授权 Agent 标识不一致".into());
+    }
+    validate_service_grant_input(&grants)?;
+    let mut connection = open_at(path)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "无法开始 Agent 组织 reconcile 事务".to_string())?;
+    validate_active_agent_company(&transaction, agents_root, agent_id, company_id)?;
+    if department_company(&transaction, primary_department_id)?.as_deref() != Some(company_id) {
+        return Err("Agent 主属部门必须属于同一公司".into());
+    }
+    let mut statement = transaction
+        .prepare("SELECT id, member_agent_ids_json FROM departments WHERE company_id = ?1")
+        .map_err(|_| "无法读取 Agent 组织成员关系".to_string())?;
+    let rows = statement
+        .query_map([company_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|_| "无法查询 Agent 组织成员关系".to_string())?;
+    let mut departments = Vec::new();
+    for row in rows {
+        let (department_id, encoded) = row.map_err(|_| "Agent 组织成员关系损坏".to_string())?;
+        let mut members: Vec<String> =
+            parse_json(encoded).map_err(|_| "Agent 组织成员关系损坏".to_string())?;
+        members.retain(|id| id != agent_id);
+        if department_id == primary_department_id {
+            members.push(agent_id.to_string());
+        }
+        departments.push((department_id, members));
+    }
+    drop(statement);
+    if !departments
+        .iter()
+        .any(|(id, _)| id == primary_department_id)
+    {
+        return Err("Agent 主属部门不存在".into());
+    }
+    for (department_id, members) in departments {
+        transaction.execute(
+            "UPDATE departments SET member_agent_ids_json = ?1, members = ?2, updated_at = ?3 WHERE id = ?4",
+            params![json(&members, "部门成员")?, i64::try_from(members.len()).map_err(|_| "部门成员数量无效".to_string())?, Utc::now().to_rfc3339(), department_id],
+        ).map_err(|_| "无法 reconcile Agent 部门成员关系".to_string())?;
+    }
+    validate_service_grants(&transaction, &grants)?;
+    replace_service_grants_in(&transaction, &grants)?;
+    if transaction.execute(
+        "UPDATE agent_recovery_operations SET status = 'completed', payload_json = '{}', expected_manifest_hash = '', fixed_revision_id = NULL, completed_at = ?1 WHERE id = ?2 AND status = 'organization_pending'",
+        params![Utc::now().to_rfc3339(), operation_id],
+    ).map_err(|_| "无法完成 Agent commit operation".to_string())? != 1 {
+        return Err("Agent commit operation 状态不允许完成".into());
+    }
+    transaction
+        .commit()
+        .map_err(|_| "无法提交 Agent 组织 reconcile 事务".to_string())
 }
 
 pub(crate) fn load_snapshot_at(path: &Path) -> Result<OrganizationSnapshotDto, String> {
@@ -1422,7 +1672,7 @@ mod tests {
         .unwrap();
         fs::write(
             package.join("agent.yaml"),
-            format!("schemaVersion: 1\nid: {id}\ncompanyId: {company_id}\n"),
+            format!("schemaVersion: 1\nid: {id}\ncompanyId: {company_id}\nstatus: active\n"),
         )
         .unwrap();
         fs::write(package.join("instructions.md"), "# Instructions\n").unwrap();
@@ -1467,6 +1717,91 @@ mod tests {
     }
 
     #[test]
+    fn governed_workspace_requires_active_same_company_lead() {
+        let root = tempdir().unwrap();
+        let database = root.path().join("bandi.db");
+        let agents = root.path().join("agents");
+        save_company_at(
+            &database,
+            SaveCompanyRequest {
+                company: company("a"),
+            },
+        )
+        .unwrap();
+        save_department_at(
+            &database,
+            SaveDepartmentRequest {
+                department: department("owner", "a", None),
+            },
+        )
+        .unwrap();
+        managed_agent(&agents, "lead", "a");
+        let workspace = WorkspaceDto {
+            id: "ws".into(),
+            name: "Workspace".into(),
+            path: "/tmp/ws".into(),
+            company: Some("公司-a".into()),
+            department: Some("部门-owner".into()),
+            company_id: Some("a".into()),
+            primary_department_id: Some("owner".into()),
+            project_lead_agent_id: Some("lead".into()),
+            collaborator_department_ids: Vec::new(),
+            config: "未验证".into(),
+            health: "未验证".into(),
+            agent_ids: vec!["lead".into()],
+            asset_ids: Vec::new(),
+            public_memory_space_id: "mem-ws-ws".into(),
+            department_memory_space_ids: Vec::new(),
+            files: Vec::new(),
+            recent_edits: Vec::new(),
+        };
+        save_workspace_governed_at(
+            &database,
+            &agents,
+            SaveWorkspaceRequest {
+                workspace: workspace.clone(),
+            },
+        )
+        .unwrap();
+
+        let mut missing = workspace.clone();
+        missing.id = "missing-lead".into();
+        missing.path = "/tmp/missing-lead".into();
+        missing.project_lead_agent_id = None;
+        assert_eq!(
+            save_workspace_governed_at(
+                &database,
+                &agents,
+                SaveWorkspaceRequest { workspace: missing },
+            )
+            .unwrap_err(),
+            "已关联组织的工作区必须设置默认项目负责人"
+        );
+
+        managed_agent(&agents, "inactive", "a");
+        fs::write(
+            agents.join("agt_inactive/agent.yaml"),
+            "schemaVersion: 1\nid: inactive\ncompanyId: a\nstatus: inactive\n",
+        )
+        .unwrap();
+        let mut inactive = workspace;
+        inactive.id = "inactive-lead".into();
+        inactive.path = "/tmp/inactive-lead".into();
+        inactive.project_lead_agent_id = Some("inactive".into());
+        assert_eq!(
+            save_workspace_governed_at(
+                &database,
+                &agents,
+                SaveWorkspaceRequest {
+                    workspace: inactive,
+                },
+            )
+            .unwrap_err(),
+            "Agent 必须处于 active 状态"
+        );
+    }
+
+    #[test]
     fn new_database_migrates_to_latest_without_changing_wire_version() {
         let root = tempdir().unwrap();
         let path = root.path().join("bandi.db");
@@ -1488,6 +1823,46 @@ mod tests {
             load_snapshot_at(&path).unwrap().schema_version,
             ORGANIZATION_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn existing_v8_database_replaces_incompatible_agent_recovery_table() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("bandi.db");
+        let connection = open_at(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE agent_recovery_operations;
+                 CREATE TABLE agent_recovery_operations (
+                   id TEXT PRIMARY KEY,
+                   request_id TEXT NOT NULL UNIQUE,
+                   agent_id TEXT NOT NULL,
+                   operation_kind TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   recovery_ref TEXT,
+                   detail_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+                 );
+                 PRAGMA user_version = 8;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let connection = open_at(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let payload_column: String = connection
+            .query_row(
+                "SELECT name FROM pragma_table_info('agent_recovery_operations') WHERE name = 'payload_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(version, DATABASE_SCHEMA_VERSION);
+        assert_eq!(payload_column, "payload_json");
     }
 
     #[test]

@@ -61,6 +61,6 @@ export function EntityNotFound({ entity, backTo }: { entity: string; backTo: str
 
 export function PathActions({ path }: { path: string }) {
   const { dispatch } = useApp()
-  const feedback = (action: string) => dispatch({ type: 'TOAST', text: `${action}演示：${path} · 未访问系统或剪贴板` })
-  return <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => feedback('编辑器打开')}><ExternalLink size={14} />演示打开</Button><Button variant="outline" size="sm" onClick={() => feedback('Finder 显示')}><FolderOpen size={14} />演示显示</Button><Button variant="outline" size="sm" onClick={() => feedback('复制路径')}><Copy size={14} />演示复制</Button></div>
+  const feedback = (action: string) => dispatch({ type: 'TOAST', text: `${action}：${path} · 未访问本机文件或剪贴板` })
+  return <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => feedback('待在编辑器中打开的路径')}><ExternalLink size={14} />查看编辑器路径</Button><Button variant="outline" size="sm" onClick={() => feedback('待在 Finder 中显示的路径')}><FolderOpen size={14} />查看文件位置</Button><Button variant="outline" size="sm" onClick={() => feedback('待复制的路径')}><Copy size={14} />查看待复制路径</Button></div>
 }

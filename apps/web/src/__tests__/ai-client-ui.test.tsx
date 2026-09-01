@@ -54,7 +54,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 describe('AI 编程工具界面', () => {
   it('按当前方案工具数量展示添加、直接进入或选择入口', () => {
     const empty = renderHandoff([])
-    expect(screen.getByRole('button', { name: '添加 AI 编程工具' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '选择要管理的 AI 编程工具' })).toBeInTheDocument()
     empty.unmount()
     const single = renderHandoff(['claude-code'])
     expect(screen.getByRole('button', { name: '在 Claude Code 中继续' })).toBeInTheDocument()
@@ -108,7 +108,8 @@ describe('AI 编程工具界面', () => {
     render(<MemoryRouter><AppProvider initialState={initialState}><GuideHarness /></AppProvider></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
     fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中打开目录' }))
-    expect(await screen.findByText(/请在自己的终端中启动 Claude Code/)).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('已向系统请求打开工作区目录')
+    expect(screen.getByRole('status')).toHaveTextContent('是否成功打开取决于系统设置')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 

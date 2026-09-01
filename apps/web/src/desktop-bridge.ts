@@ -1,7 +1,7 @@
 import type { AppCommandId } from './app-commands'
 import type { RequestClientHandoff } from './client-adapters'
 import type { FullAgent } from './domain'
-import type { BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RegisterWorkspaceRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult, WorkspaceRegistrationResult } from './contracts'
+import type { AgentCommitResultDto, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RegisterWorkspaceRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult, WorkspaceRegistrationResult } from './contracts'
 import type { Company, FullDepartment, FullWorkspace, Role, ServiceGrant } from './domain'
 
 const commandEvent = 'bandi://app-command'
@@ -61,11 +61,13 @@ export async function requestClientHandoff(input: RequestClientHandoff): Promise
   return invokeDesktop<ClientHandoffResult>('request_client_handoff', { request: input })
 }
 
-export async function selectWorkspaceDirectory(): Promise<string | null> {
+export async function selectDirectory(): Promise<string | null> {
   if (!isDesktopRuntime()) throw new Error('该系统功能仅在 Bandi Desktop 中可用')
   const { open } = await import('@tauri-apps/plugin-dialog')
   return open({ directory: true, multiple: false })
 }
+
+export const selectWorkspaceDirectory = selectDirectory
 
 export async function registerWorkspace(input: RegisterWorkspaceRequest): Promise<WorkspaceRegistrationResult> {
   return invokeDesktop('register_workspace', { request: input })
@@ -226,6 +228,40 @@ export async function createManagedAgent(
   })
 }
 
+function persistedGrants(agentId: string, grants: ServiceGrant[]) {
+  return {
+    agentId,
+    grants: grants.map((grant) => ({ ...grant, agentId })),
+  }
+}
+
+export async function commitManagedAgentCreation(
+  requestId: string,
+  agent: FullAgent,
+  files: AgentPackageFileInput[],
+  grants: ServiceGrant[],
+  avatar?: File,
+): Promise<AgentCommitResultDto> {
+  return invokeDesktop('commit_managed_agent_creation', {
+    request: {
+      requestId,
+      create: {
+        agentId: agent.id,
+        agent,
+        files,
+        avatarBytes: avatar
+          ? Array.from(new Uint8Array(await avatar.arrayBuffer()))
+          : undefined,
+      },
+      organization: {
+        companyId: agent.companyId,
+        primaryDepartmentId: agent.primaryDepartmentId,
+        grants: persistedGrants(agent.id, grants),
+      },
+    },
+  })
+}
+
 export async function loadManagedAgentIdentity(agentId: string): Promise<ManagedAgentIdentityEditorResult> {
   return invokeDesktop('load_managed_agent_identity', { agentId })
 }
@@ -255,6 +291,48 @@ export async function saveManagedAgentIdentity(
   })
 }
 
+export async function commitManagedAgentIdentity(
+  requestId: string,
+  agent: FullAgent,
+  manifest: string,
+  expectedBaseline: BaselineRefDto,
+  baseContent: string,
+  grants: ServiceGrant[],
+  avatar: { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; file: File },
+): Promise<AgentCommitResultDto> {
+  return invokeDesktop('commit_managed_agent_identity', {
+    request: {
+      save: {
+        requestId,
+        agentId: agent.id,
+        agent,
+        manifest,
+        expectedBaseline,
+        baseContent,
+        avatar: avatar.kind === 'replace'
+          ? {
+              kind: 'replace',
+              bytes: Array.from(new Uint8Array(await avatar.file.arrayBuffer())),
+            }
+          : avatar,
+      },
+      organization: {
+        companyId: agent.companyId,
+        primaryDepartmentId: agent.primaryDepartmentId,
+        grants: persistedGrants(agent.id, grants),
+      },
+    },
+  })
+}
+
+export async function listAgentRecoveryOperations(): Promise<AgentRecoveryOperationSummaryDto[]> {
+  return invokeDesktop('list_agent_recovery_summaries', { agentId: null })
+}
+
+export async function continueAgentRecovery(operationId: string): Promise<AgentCommitResultDto> {
+  return invokeDesktop('continue_agent_recovery', { request: { operationId } })
+}
+
 export async function recoverManagedAgentIdentity(
   input: RecoverManagedAgentIdentityRequest,
 ): Promise<SaveManagedAgentIdentityResult> {
@@ -265,6 +343,16 @@ export async function restoreManagedAgentIdentity(
   input: RestoreManagedAgentIdentityRequest,
 ): Promise<SaveManagedAgentIdentityResult> {
   return invokeDesktop('restore_managed_agent_identity', { request: input })
+}
+
+export async function registerExternalAgent(agent: FullAgent, selectedRoot: string): Promise<ExternalAgentReferenceDto> {
+  return invokeDesktop('register_external_agent', {
+    request: { agentId: agent.id, selectedRoot, metadata: agent },
+  })
+}
+
+export async function listAgents(): Promise<FullAgent[]> {
+  return invokeDesktop('list_agents', {})
 }
 
 export async function listManagedAgents(): Promise<FullAgent[]> {

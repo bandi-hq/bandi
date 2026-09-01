@@ -1,0 +1,67 @@
+name: Desktop platforms
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify web
+        run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - name: Verify E2E types
+        run: pnpm e2e:typecheck
+      - name: Verify Rust
+        run: cargo fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo check --all-targets --features e2e --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo test --features e2e --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Run desktop E2E
+        run: pnpm e2e
+      - name: Build Windows NSIS installer
+        if: runner.os == 'Windows'
+        run: pnpm desktop:bundle:windows
+      - name: Smoke Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $installer) { throw '未生成 NSIS 安装器' }
+          ./e2e/helpers/windows-installer-smoke.ps1 -Installer $installer.FullName
+      - name: Upload unsigned Windows preview
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandi-windows-x64-unsigned-preview
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: warn
+      - name: Upload desktop logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-logs-${{ matrix.os }}
+          path: e2e/.logs/**
+          if-no-files-found: ignore

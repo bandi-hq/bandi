@@ -93,7 +93,7 @@ describe('组织页', () => {
     expect(within(dialog).getByText(initialState.companies.find((company) => company.id === child.companyId)!.name)).toBeInTheDocument()
     expect(within(dialog).queryByRole('combobox', { name: '所属公司' })).not.toBeInTheDocument()
     const manager = within(dialog).getByRole('combobox', { name: '部门主管' })
-    const memberNames = initialState.agents.filter((agent) => child.memberAgentIds.includes(agent.id) && agent.companyId === child.companyId).map((agent) => agent.name)
+    const memberNames = initialState.agents.filter((agent) => child.memberAgentIds.includes(agent.id) && agent.companyId === child.companyId && agent.status === 'active').map((agent) => agent.name)
     expect(within(manager).getAllByRole('option').map((option) => option.textContent)).toEqual(['未设置', ...memberNames])
     expect(within(dialog).getByText(/设置主管关系不会授予/)).toBeInTheDocument()
     expect(within(dialog).queryByText('Company')).not.toBeInTheDocument()
@@ -107,7 +107,7 @@ describe('组织页', () => {
 
     const dialog = screen.getByRole('dialog', { name: '编辑公司' })
     const assistant = within(dialog).getByRole('combobox', { name: '董事长助理' })
-    const companyAgentNames = initialState.agents.filter((agent) => agent.companyId === company.id).map((agent) => agent.name)
+    const companyAgentNames = initialState.agents.filter((agent) => agent.companyId === company.id && agent.status === 'active').map((agent) => agent.name)
     expect(within(assistant).getAllByRole('option').map((option) => option.textContent)).toEqual(['未设置', ...companyAgentNames])
     expect(within(dialog).getByText(/设置治理关系不会授予/)).toBeInTheDocument()
   })

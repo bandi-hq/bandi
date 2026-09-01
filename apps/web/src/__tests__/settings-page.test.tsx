@@ -129,14 +129,14 @@ describe('设置页', () => {
     fireEvent.click(screen.getByRole('tab', { name: '快照与恢复' }))
     expect(screen.getByText('快照历史')).toBeInTheDocument()
     expect(screen.getByText('自动快照')).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: '启用自动快照演示策略' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('switch', { name: '启用自动快照' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getAllByRole('button', { name: '预览恢复' }).length).toBeGreaterThan(0)
     expect(screen.queryByText('Private Git 约束')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '远程备份' }))
     expect(screen.getByText('Private Git 约束')).toBeInTheDocument()
-    expect(screen.getByText('远程备份包含正式 Memory')).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: '远程备份包含正式 Memory' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByText('远程备份包含正式记忆')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '远程备份包含正式记忆' })).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByText(/凭据、Token、钥匙串/)).toBeInTheDocument()
     expect(screen.queryByText('快照历史')).not.toBeInTheDocument()
   })
@@ -161,14 +161,14 @@ describe('设置页', () => {
     const agentRoot = screen.getByRole('textbox', { name: 'Agent 根目录' })
     fireEvent.change(agentRoot, { target: { value: '~/.bandi/custom-agents' } })
     fireEvent.click(remote)
-    fireEvent.change(screen.getByRole('textbox', { name: '演示仓库地址' }), { target: { value: 'github.com/org/demo' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '仓库地址' }), { target: { value: 'github.com/org/demo' } })
     fireEvent.click(profiles)
     fireEvent.click(storageTab)
     expect(screen.getByRole('textbox', { name: 'Agent 根目录' })).toHaveValue('~/.bandi/custom-agents')
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(screen.getByRole('textbox', { name: 'Agent 根目录' })).toHaveValue('~/.bandi/agents')
     fireEvent.click(remote)
-    expect(screen.getByRole('textbox', { name: '演示仓库地址' })).toHaveValue('github.com/org/demo')
+    expect(screen.getByRole('textbox', { name: '仓库地址' })).toHaveValue('github.com/org/demo')
   })
 
   it('保存存储位置并在关闭创建快照对话框后恢复焦点', async () => {
@@ -180,9 +180,9 @@ describe('设置页', () => {
     expect(screen.getByRole('textbox', { name: 'Agent 根目录' })).toHaveValue('~/.bandi/custom-agents')
 
     fireEvent.click(screen.getByRole('tab', { name: '快照与恢复' }))
-    const trigger = screen.getByRole('button', { name: '创建演示快照' })
+    const trigger = screen.getByRole('button', { name: '创建快照' })
     fireEvent.click(trigger)
-    expect(screen.getByRole('dialog', { name: '创建演示快照' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '创建快照' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
 
     await waitFor(() => expect(trigger).toHaveFocus())
@@ -192,17 +192,17 @@ describe('设置页', () => {
     renderSettings('/?section=ai-clients')
 
     expect(screen.getByRole('combobox', { name: '当前配置方案' })).toHaveValue('personal')
-    expect(screen.getByText(/当前方案只记录已加入的工具/)).toBeInTheDocument()
-    expect(screen.getAllByText('支持结构化终端交接 · 未探测安装状态')).toHaveLength(2)
-    expect(screen.getAllByText('仅配置 · 尚未定义启动适配').length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: '移出' })).toHaveLength(1)
-    expect(screen.getAllByRole('button', { name: '加入当前方案' }).length).toBeGreaterThan(0)
+    expect(screen.getByText(/这里只记录当前配置方案管理哪些工具/)).toBeInTheDocument()
+    expect(screen.getAllByText('可从工作区继续使用 · 尚未检查是否已安装')).toHaveLength(2)
+    expect(screen.getAllByText('仅管理配置 · 暂不支持直接打开').length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: '从方案移除' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: '加入配置方案' }).length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: '新建配置方案' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Gateway/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Profile/)).not.toBeInTheDocument()
   })
 
-  it('按官方作用域展示 Plugin 安装事实', () => {
+  it('以中文展示插件安装范围和状态', () => {
     const scopes = ['user', 'project', 'local', 'managed'] as const
     renderSettings('/?section=ai-clients', {
       ...initialState,
@@ -214,11 +214,11 @@ describe('设置页', () => {
       })),
     })
 
-    expect(screen.getByText('1.0.0 · 用户作用域')).toBeInTheDocument()
-    expect(screen.getByText('1.0.1 · 项目作用域')).toBeInTheDocument()
-    expect(screen.getByText('1.0.2 · 本地作用域')).toBeInTheDocument()
-    expect(screen.getByText('1.0.3 · 受管作用域')).toBeInTheDocument()
-    expect(screen.queryByText(/Company作用域/)).not.toBeInTheDocument()
+    expect(screen.getByText('1.0.0 · 用户级')).toBeInTheDocument()
+    expect(screen.getByText('1.0.1 · 项目级')).toBeInTheDocument()
+    expect(screen.getByText('1.0.2 · 本地级')).toBeInTheDocument()
+    expect(screen.getByText('1.0.3 · 受管级')).toBeInTheDocument()
+    expect(screen.getAllByText('已安装')).toHaveLength(4)
   })
 
   it('在配置与备份中新建空白方案并统一切换', async () => {

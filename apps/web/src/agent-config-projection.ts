@@ -160,7 +160,7 @@ export function projectAgentFilePreview(agent: FullAgent, context: AgentProjecti
         { label: '技术标识', value: agent.id },
         { label: '名称与岗位', value: `${agent.name} · ${role?.name ?? agent.roleId}` },
         { label: '生命周期', value: agent.status },
-        { label: '主属部门', value: agent.department },
+        { label: '所属部门', value: agent.department },
         { label: '使命', value: agent.mission },
       ],
       notice: externalNotice,
@@ -180,7 +180,7 @@ export function projectAgentFilePreview(agent: FullAgent, context: AgentProjecti
     ],
     notice: externalNotice ?? '这些规划值尚未应用，也不包含当前会话、Token 使用量、压缩次数或摘要正文。',
   }
-  if (normalized === 'config/skills.yaml') return { title: '技能引用', description: 'Agent 显式引用的技能；安装状态与引用关系分开记录。', fields: [{ label: '已引用', value: assetNames(agent.skillRefs, context) }], notice: externalNotice }
+  if (normalized === 'config/skills.yaml') return { title: '技能引用', description: 'Agent 使用的技能；安装状态与使用关系分开记录。', fields: [{ label: '已引用', value: assetNames(agent.skillRefs, context) }], notice: externalNotice }
   if (normalized === 'config/rules.yaml') return { title: '规则引用', description: 'Agent 显式引用的规则资产。', fields: [{ label: '已引用', value: assetNames(agent.ruleRefs, context) }], notice: externalNotice }
   if (normalized === 'config/orchestration.yaml') return { title: '长期协作与委派边界', description: '仅保存静态委派范围、必需条件、升级目标和禁止事项。', fields: [{ label: '委派状态', value: agent.orchestrationPolicy.enabled ? '允许（仍受权限和组织边界约束）' : '禁止' }, { label: '最大深度', value: String(agent.orchestrationPolicy.maxDelegationDepth) }, { label: '允许 Agent', value: agent.orchestrationPolicy.allowedAgentIds }, { label: '允许岗位', value: agent.orchestrationPolicy.allowedRoleIds }, { label: '允许部门', value: agent.orchestrationPolicy.allowedDepartmentIds }, { label: '升级条件', value: agent.orchestrationPolicy.escalationConditions }, { label: '禁止事项', value: agent.orchestrationPolicy.prohibitions }], notice: externalNotice ?? '不包含当前任务、参与者、进度、审批或运行记录。' }
   if (normalized === 'config/hooks.yaml') return { title: 'Hook 引用', description: '仅管理可信 HookDefinition 的显式引用与非敏感参数；不会执行 Hook。', fields: [{ label: '已引用', value: agent.hookRefs.map((item) => context.assets.find((asset) => asset.id === item.assetId)?.name ?? item.assetId) }, { label: '参数绑定', value: agent.hookRefs.flatMap((item) => item.parameterBindings.map((binding) => `${item.assetId}.${binding.parameterId}`)) }], notice: externalNotice ?? '存在引用不表示 Hook 已触发或已在当前会话中加载。' }

@@ -27,7 +27,7 @@ Bandi Desktop 管理“下次及以后如何工作”的长期配置：
 - 任务冲突、任务审批、逐级汇报与最终验收；
 - 聊天、工具调用、Todo、日志、Agent View、Session 和执行状态。
 
-Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。界面中的**工作区**是一个本地项目及其长期配置作用域，**本地目录**是该工作区登记的路径，只有进入外部 CLI 的指引才将这个路径称为**工作目录（cwd）**。当前工作区交接契约只接受 `clientId / adapterId / workspaceId / terminalId / intent`，由后端从 Workspace Registry 重取 canonical cwd，并仅通过固定 `/usr/bin/open` 请求白名单终端打开目录。通用 `executable`、`argv`、Shell、自动执行 `/bandi:bandi` 和 fallback 命令回传均不属于产品能力。交接被系统接受也不代表客户端已安装、连接、运行或创建了 Session。
+Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。界面中的**工作区**是一个本地项目及其长期配置作用域，**本地目录**是该工作区登记的路径，只有进入外部 CLI 的指引才将这个路径称为**工作目录（cwd）**。当前工作区交接契约只接受 `clientId / adapterId / workspaceId / terminalId / intent`，由后端从 Workspace Registry 重取 canonical cwd。macOS 仅通过固定 `/usr/bin/open` 请求白名单终端打开目录；Windows 首版不启动终端，明确降级为复制路径后手动继续。通用 `executable`、`argv`、Shell、自动执行 `/bandi:bandi` 和 fallback 命令回传均不属于产品能力。交接被系统接受也不代表客户端已安装、连接、运行或创建了 Session。
 
 首版内置 AI 编程工具目录固定为 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 和 Pi；完整稳定 ID 与逐项能力状态见[首版能力矩阵](./docs/首版能力矩阵.md)。目录身份只表示 Bandi 能稳定识别该工具，不证明本机安装、配置、连接、交接或 Bandi 集成可用。用户可以同时在 Claude Code、Codex、OpenClaw 等宿主工具中打开多个终端；DeepSeek 等通常是宿主工具中的 Model / Provider，不单独视为终端客户端。Bandi 不跟踪这些终端或会话，多个外部程序对配置文件的影响统一通过“编辑基线 → 保存前复核 → 三方 Diff → 解决冲突后重新保存”处理，也不猜测修改来自哪个终端。
 
@@ -73,6 +73,14 @@ SOP 是供 Claude Code 中的董事长助理和部门主管解析的长期配置
 - **本机个性化窄能力**：固定 `logo` / `background` 槽位和受管 Agent PNG 头像；不接受任意目标路径或远程 URL。
 - **正交状态证据**：数据来源使用 `real / memory-only / demo-fixture / read-only`，系统能力使用 `supported / degraded / unavailable / not_checked`。配置目录项、客户端条目、文件存在或按钮可见性都不能证明已安装、已连接、已保存、已启动或已加载 Session。
 
+### 平台状态
+
+- **macOS**：继续使用既有数据目录和白名单终端交接；本机 Rust 测试已通过，完整 Web/E2E 回归当前被工作树中另行进行的前端改动阻断。
+- **Windows 10/11 x64**：跨平台路径、安全写入、手动终端交接、真实 Desktop E2E 沙箱、NSIS 配置、安装/卸载 smoke 脚本和双平台 CI 已接入代码。
+- **尚未形成的证据**：Windows runner、真实 NSIS 首装/启动/卸载、覆盖升级、文件占用、reparse point、SmartScreen 与代码签名均尚未执行验收。因此当前 Windows 安装能力为 `not_checked`，不能宣称已可稳定安装使用。
+- Windows 安装器采用 WebView2 Evergreen 在线 bootstrapper；缺少 WebView2 Runtime 时安装过程可能需要联网。CI 预览产物未签名，只用于内部验证；公开发布前必须完成 Authenticode 签名。
+- 数据位置：Windows 应用数据为 `%APPDATA%/com.bandi.desktop`，受管 Agent 为 `%USERPROFILE%/.bandi/agents`；标准卸载设计为保留这些配置资产和用户 Workspace。
+
 共享资产本体当前只提供受限根内的可信只读 discovery、组织归属校验和反向引用诊断，不提供创建、编辑、删除、安装或执行事务。跨 Company 独立共享授权尚未建模，越界引用明确标记为 `out_of_scope`。
 
 ## 系统组成
@@ -111,7 +119,7 @@ Local Service 是本机领域服务和唯一受控配置写入边界；SQLite/WA
 - Rust Local Service + SQLite/WAL；
 - Tailwind CSS v4 + Radix + Lucide；
 - Bandi Claude Code Plugin、MCP 与 `bandi` CLI；
-- macOS 首发，Windows 后续；
+- macOS 保持现有支持；Windows 10/11 x64 适配与 NSIS 验证流水线已接入，真实 Windows 验收与签名待完成；
 - 本地优先，远程能力按真实需求渐进演进。
 
 ## License

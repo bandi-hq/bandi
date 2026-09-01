@@ -34,10 +34,10 @@ import { validateOrchestrationOverride } from './orchestration-policy'
 import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, serializeAgentConfig, snapshotAgentConfig, type AgentConfigPayload, type SaveAgentConfigInput } from './agent-config-model'
 import { appendConfigRevision } from './config-revisions'
 import { configurationEnvironmentPath, isConfigurationEnvironment, normalizeConfigurationEnvironment, serializeConfigurationEnvironment, validateConfigurationEnvironment } from './configuration-environment-model'
-import type { MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
+import type { AgentRecoveryOperationSummaryDto, MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
 import type { TerminalId } from './terminal-model'
 import type { MainMenuLayoutPreference } from './navigation-layout'
-import { isDesktopRuntime, listManagedAgents, loadOrganizationSnapshot } from './desktop-bridge'
+import { isDesktopRuntime, listAgentRecoveryOperations, listAgents, loadOrganizationSnapshot } from './desktop-bridge'
 import {
   DEFAULT_UI_PREFERENCES,
   getAccessibleAccent,
@@ -113,7 +113,8 @@ type OrganizationServiceGrant = {
 
 export type State = {
   runtime: 'web' | 'desktop'
-  hydration: { managedAgents: HydrationStatus; organization: HydrationStatus }
+  hydration: { managedAgents: HydrationStatus; organization: HydrationStatus; agentRecovery: HydrationStatus }
+  agentRecoveryOperations: AgentRecoveryOperationSummaryDto[]
   organizationServiceGrants: OrganizationServiceGrant[]
   onboarding: OnboardingState
   agents: FullAgent[]
@@ -154,6 +155,9 @@ export type Action =
   | { type: 'UPSERT_MANAGED_AGENT'; agent: FullAgent; message?: string }
   | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[] }
   | { type: 'FAIL_MANAGED_AGENTS_HYDRATION'; message: string }
+  | { type: 'HYDRATE_AGENT_RECOVERY'; operations: AgentRecoveryOperationSummaryDto[] }
+  | { type: 'SYNC_AGENT_RECOVERY'; operation: AgentRecoveryOperationSummaryDto; agent?: FullAgent }
+  | { type: 'FAIL_AGENT_RECOVERY_HYDRATION'; message: string }
   | { type: 'HYDRATE_ORGANIZATION'; companies: Company[]; departments: FullDepartment[]; roles: Role[]; workspaces: FullWorkspace[]; serviceGrants: OrganizationServiceGrant[] }
   | { type: 'FAIL_ORGANIZATION_HYDRATION'; message: string }
   | { type: 'SYNC_PERSISTED_COMPANIES'; companies: Company[] }
@@ -212,7 +216,8 @@ const initialUiPreferences = getInitialUiPreferences()
 
 export const initialState: State = {
   runtime: 'web',
-  hydration: { managedAgents: 'idle', organization: 'idle' },
+  hydration: { managedAgents: 'idle', organization: 'idle', agentRecovery: 'idle' },
+  agentRecoveryOperations: [],
   organizationServiceGrants: [],
   onboarding: { status: 'active' },
   agents: initialAgents,
@@ -250,7 +255,8 @@ function createDesktopInitialState(): State {
   return {
     ...initialState,
     runtime: 'desktop',
-    hydration: { managedAgents: 'loading', organization: 'loading' },
+    hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading' },
+    agentRecoveryOperations: [],
     agents: [],
     companies: [],
     departments: [],
@@ -290,10 +296,10 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
   const reviewer = state.agents.find((item) => item.id === bundle.space.reviewerAgentId)?.name ?? bundle.space.reviewerAgentId
   const formalStatus = bundle.candidate.status
   const scopeType = {
-    agent_long_term: 'Agent 长期',
-    agent_workspace: 'Agent × Workspace',
-    workspace_shared: 'Workspace 公共',
-    department_workspace: 'Department × Workspace',
+    agent_long_term: 'Agent 长期记忆',
+    agent_workspace: 'Agent 工作区记忆',
+    workspace_shared: '工作区公共记忆',
+    department_workspace: '部门工作区记忆',
   }[bundle.space.scopeType] as MemorySpace['scopeType']
   const relativePath = bundle.space.storageLocator.relativePath ?? bundle.space.storageLocator.displayPath
   const path = bundle.space.storageLocator.rootKind === 'managed' && 'agentId' in bundle.space.scopeKey
@@ -451,7 +457,7 @@ export function reducer(state: State, action: Action): State {
     case 'CREATE_AGENT': {
       if (state.agents.some((item) => item.id === action.agent.id || item.name === action.agent.name)) return state
       const initialized = initializeAgentConfigRecords(action.agent, state.configRevisions)
-      return { ...state, agents: [...state.agents, initialized.agent], configRevisions: initialized.revisions, notice: notice('success', `${action.agent.name} 已添加到演示配置`, action.agent.packageSource.kind === 'external-reference' ? '只登记外部只读引用 · 未读取或创建真实 AgentPackage' : '已记录页面内存 ConfigRevision · 未创建真实 AgentPackage') }
+      return { ...state, agents: [...state.agents, initialized.agent], configRevisions: initialized.revisions, notice: notice('success', `${action.agent.name} 已添加到演示配置`, action.agent.packageSource.kind === 'external-reference' ? '只登记外部只读引用 · 未读取或创建真实 AgentPackage' : '已记录当前页面配置版本 · 未创建真实 AgentPackage') }
     }
     case 'UPSERT_MANAGED_AGENT': {
       const exists = state.agents.some((item) => item.id === action.agent.id)
@@ -480,6 +486,29 @@ export function reducer(state: State, action: Action): State {
         ...state,
         hydration: { ...state.hydration, managedAgents: 'failed' },
         notice: notice('error', '无法恢复本机 Agent 配置事实', action.message),
+      }
+    case 'HYDRATE_AGENT_RECOVERY':
+      return {
+        ...state,
+        hydration: { ...state.hydration, agentRecovery: 'succeeded' },
+        agentRecoveryOperations: action.operations.filter((item) => item.status !== 'completed'),
+      }
+    case 'SYNC_AGENT_RECOVERY': {
+      const operations = action.operation.status === 'completed'
+        ? state.agentRecoveryOperations.filter((item) => item.id !== action.operation.id)
+        : [...state.agentRecoveryOperations.filter((item) => item.id !== action.operation.id), action.operation]
+      const agents = action.agent
+        ? state.agents.some((item) => item.id === action.agent!.id)
+          ? state.agents.map((item) => item.id === action.agent!.id ? action.agent! : item)
+          : [...state.agents, action.agent]
+        : state.agents
+      return { ...state, agents, agentRecoveryOperations: operations }
+    }
+    case 'FAIL_AGENT_RECOVERY_HYDRATION':
+      return {
+        ...state,
+        hydration: { ...state.hydration, agentRecovery: 'failed' },
+        notice: notice('error', '无法读取待恢复的 Agent 配置', action.message),
       }
     case 'HYDRATE_ORGANIZATION': {
       const grantsByAgent = new Map<string, FullAgent['serviceGrants']>()
@@ -549,7 +578,7 @@ export function reducer(state: State, action: Action): State {
       return saveAgentConfig(state, agent.id, { ...manifest, value: { ...manifest.value, status: action.status } }, `更新生命周期为 ${action.status}`)
     }
     case 'SAVE_INSTRUCTIONS':
-      return saveAgentConfig(state, action.agentId ?? 'zhouce', { kind: 'instructions', value: action.text }, '保存 Instructions 演示配置')
+      return saveAgentConfig(state, action.agentId ?? 'zhouce', { kind: 'instructions', value: action.text }, '保存主指令演示配置')
     case 'SAVE_AGENT_CONFIG': {
       const { agentId, ...payload } = action.input
       return saveAgentConfig(state, agentId, payload, action.summary ?? `保存 ${payload.kind} 演示配置`)
@@ -662,19 +691,19 @@ export function reducer(state: State, action: Action): State {
       return { ...state, assets: [...state.assets, action.asset], notice: notice('success', '资产已创建在演示内存中', '未创建真实文件') }
     case 'APPLY_SKILL_ACTION': {
       const asset = state.assets.find((item) => item.id === action.skillId)
-      if (!asset?.skill) return { ...state, notice: notice('warning', '无法更新 Skill 演示状态', '目标不存在或不是可管理的 Skill') }
+      if (!asset?.skill) return { ...state, notice: notice('warning', '无法更新技能演示状态', '目标不存在或不是可管理的技能') }
       const installation = applySkillAction(asset.skill.installation, action.action, action.version)
-      if (!installation) return { ...state, notice: notice('warning', '当前 Skill 状态不支持此操作', '未修改安装事实或 Agent 引用') }
+      if (!installation) return { ...state, notice: notice('warning', '当前技能状态不支持此操作', '未修改安装记录或使用位置') }
       const labels: Record<SkillAction, string> = { install: '安装', update: '更新', rollback: '回滚', uninstall: '卸载' }
-      return { ...state, assets: state.assets.map((item) => item.id === asset.id && item.skill ? { ...item, status: action.action === 'uninstall' ? '可演示安装' : '演示已安装', skill: { ...item.skill, installation } } : item), notice: notice('success', `Skill 已模拟${labels[action.action]}`, '仅更新当前页面内存 · 未下载、复制或删除文件 · 未执行安装脚本 · 未自动分配给 Agent') }
+      return { ...state, assets: state.assets.map((item) => item.id === asset.id && item.skill ? { ...item, status: action.action === 'uninstall' ? '可演示安装' : '演示已安装', skill: { ...item.skill, installation } } : item), notice: notice('success', `技能已模拟${labels[action.action]}`, '仅更新当前页面内存 · 未下载、复制或删除文件 · 未执行安装脚本 · 未自动分配给 Agent') }
     }
     case 'APPLY_PLUGIN_ACTION': {
       const installation = state.pluginInstallations.find((item) => item.pluginId === action.pluginId)
-      if (!installation) return { ...state, notice: notice('warning', '无法更新 Plugin 演示状态', '目标没有独立的插件安装记录') }
+      if (!installation) return { ...state, notice: notice('warning', '无法更新插件演示状态', '目标没有独立的插件安装记录') }
       const next = applyPluginAction(installation, action.action, action.version)
-      if (!next) return { ...state, notice: notice('warning', '当前 Plugin 状态不支持此操作', '未修改安装事实或 Agent 组件引用') }
+      if (!next) return { ...state, notice: notice('warning', '当前插件状态不支持此操作', '未修改安装记录或 Agent 组件使用位置') }
       const labels: Record<PluginAction, string> = { install: '安装', update: '更新', rollback: '回滚', uninstall: '卸载' }
-      return { ...state, pluginInstallations: state.pluginInstallations.map((item) => item.pluginId === action.pluginId ? next : item), notice: notice('success', `Plugin 已模拟${labels[action.action]}`, '仅更新 PluginInstallation 页面内存事实 · 未探测、下载、执行安装脚本或写入文件 · 未自动增删 Agent 引用') }
+      return { ...state, pluginInstallations: state.pluginInstallations.map((item) => item.pluginId === action.pluginId ? next : item), notice: notice('success', `插件已模拟${labels[action.action]}`, '仅更新当前页面中的插件安装记录 · 未探测、下载、执行安装脚本或写入文件 · 未自动增删 Agent 组件使用位置') }
     }
     case 'UPDATE_BACKUP_SETTINGS':
       return { ...state, backupSettings: { ...state.backupSettings, ...action.changes }, notice: notice('info', '备份演示策略已更新', '仅在当前页面有效 · 未连接 Git、上传文件或读取凭据') }
@@ -843,12 +872,15 @@ export function AppProvider({ children, initialState: providedState }: { childre
   useEffect(() => {
     if (providedState || !isDesktopRuntime()) return
     const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
-    void listManagedAgents()
+    void listAgents()
       .then((agents) => dispatch({ type: 'HYDRATE_MANAGED_AGENTS', agents }))
       .catch((error) => dispatch({ type: 'FAIL_MANAGED_AGENTS_HYDRATION', message: errorMessage(error) }))
     void loadOrganizationSnapshot()
       .then((snapshot) => dispatch({ type: 'HYDRATE_ORGANIZATION', ...snapshot }))
       .catch((error) => dispatch({ type: 'FAIL_ORGANIZATION_HYDRATION', message: errorMessage(error) }))
+    void listAgentRecoveryOperations()
+      .then((operations) => dispatch({ type: 'HYDRATE_AGENT_RECOVERY', operations }))
+      .catch((error) => dispatch({ type: 'FAIL_AGENT_RECOVERY_HYDRATION', message: errorMessage(error) }))
   }, [providedState])
 
   useEffect(() => {

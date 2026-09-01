@@ -80,9 +80,10 @@ describe('Agent 双模式配置工作台', () => {
     const hash = `sha256:${'d'.repeat(64)}` as const
     const baselineRef = { id: 'identity-baseline', assetId: 'identity-asset', containerId: 'identity-container', assetContentHash: hash, containerContentHash: hash }
     vi.spyOn(desktopBridge, 'loadManagedAgentIdentity').mockResolvedValue({ assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, canonicalContent: 'schemaVersion: 1\nid: zhouce\n', baselineRef })
-    const save = vi.spyOn(desktopBridge, 'saveManagedAgentIdentity').mockResolvedValue({ kind: 'unchanged', requestId: 'save-identity-zhouce', agent: source, baselineRef })
-    vi.spyOn(desktopBridge, 'saveDepartment').mockImplementation((department) => Promise.resolve(department))
-    vi.spyOn(desktopBridge, 'saveServiceGrants').mockImplementation((agentId, grants) => Promise.resolve(grants.map((grant) => ({ ...grant, agentId }))))
+    const save = vi.spyOn(desktopBridge, 'commitManagedAgentIdentity').mockImplementation(async (_requestId, agent) => ({
+      operation: { id: 'identity-operation', agentId: agent.id, operationKind: 'identity_update', status: 'completed', createdAt: '2026-09-02T00:00:00Z' },
+      agent,
+    }))
 
     renderAgent('/agents/zhouce?tab=identity', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
@@ -91,10 +92,12 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.click(await screen.findByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(save).toHaveBeenCalledWith(
+      expect.stringMatching(/^save-identity-zhouce-/),
       expect.objectContaining({ id: 'zhouce', name: '周策更新' }),
       expect.stringContaining('name: "周策更新"'),
       baselineRef,
       'schemaVersion: 1\nid: zhouce\n',
+      source.serviceGrants,
       { kind: 'keep' },
     ))
     await waitFor(() => expect(screen.queryByDisplayValue('周策更新')).not.toBeInTheDocument())
@@ -111,27 +114,34 @@ describe('Agent 双模式配置工作台', () => {
     const hash = `sha256:${'1'.repeat(64)}` as const
     const baselineRef = { id: 'identity-org-base', assetId: 'identity-asset', containerId: 'identity-container', assetContentHash: hash, containerContentHash: hash }
     vi.spyOn(desktopBridge, 'loadManagedAgentIdentity').mockResolvedValue({ assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, canonicalContent: 'schemaVersion: 1\nid: zhouce\n', baselineRef })
-    vi.spyOn(desktopBridge, 'saveManagedAgentIdentity').mockImplementation(async (agent) => ({ kind: 'saved', requestId: 'save-identity-org', agent, baselineRef, revision: {} as never, writeReceipt: {} as never }))
-    const saveDepartment = vi.spyOn(desktopBridge, 'saveDepartment').mockImplementation((department) => Promise.resolve(department))
-    const saveGrants = vi.spyOn(desktopBridge, 'saveServiceGrants').mockImplementation((agentId, grants) => Promise.resolve(grants.map((grant) => ({ ...grant, agentId }))))
+    const commit = vi.spyOn(desktopBridge, 'commitManagedAgentIdentity').mockImplementation(async (_requestId, agent) => ({
+      operation: { id: 'identity-org-operation', agentId: agent.id, operationKind: 'identity_update', status: 'completed', createdAt: '2026-09-02T00:00:00Z' },
+      agent,
+    }))
 
     renderAgent('/agents/zhouce?tab=identity', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     await screen.findByDisplayValue('周策')
-    fireEvent.change(screen.getByLabelText('主属部门'), { target: { value: targetDepartment.id } })
+    fireEvent.change(screen.getByLabelText('所属部门'), { target: { value: targetDepartment.id } })
     fireEvent.click(screen.getByRole('button', { name: '添加授权' }))
     const capabilityInputs = screen.getAllByLabelText('允许能力')
     fireEvent.change(capabilityInputs.at(-1)!, { target: { value: '配置审查、发布复核' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await waitFor(() => expect(saveDepartment).toHaveBeenCalledTimes(2))
-    expect(saveDepartment).toHaveBeenCalledWith(expect.objectContaining({ id: source.primaryDepartmentId, memberAgentIds: expect.not.arrayContaining([source.id]) }))
-    expect(saveDepartment).toHaveBeenCalledWith(expect.objectContaining({ id: targetDepartment.id, memberAgentIds: expect.arrayContaining([source.id]) }))
-    expect(saveGrants).toHaveBeenCalledWith(source.id, expect.arrayContaining([expect.objectContaining({ capabilities: ['配置审查', '发布复核'] })]))
+    await waitFor(() => expect(commit).toHaveBeenCalledTimes(1))
+    expect(commit).toHaveBeenCalledWith(
+      expect.stringMatching(/^save-identity-zhouce-/),
+      expect.objectContaining({ id: source.id, primaryDepartmentId: targetDepartment.id }),
+      expect.any(String),
+      baselineRef,
+      expect.any(String),
+      expect.arrayContaining([expect.objectContaining({ capabilities: ['配置审查', '发布复核'] })]),
+      { kind: 'keep' },
+    )
     await waitFor(() => expect(screen.getByText(/发布复核/)).toBeInTheDocument())
   })
 
-  it('Desktop 身份文件保存后组织失败只重试组织写入', async () => {
+  it('Desktop 身份半成功立即进入全局待处理并复用同一请求 ID', async () => {
     const source = initialState.agents.find((item) => item.id === 'zhouce')!
     const state: State = {
       ...initialState,
@@ -144,11 +154,9 @@ describe('Agent 双模式配置工作台', () => {
     const hash = `sha256:${'2'.repeat(64)}` as const
     const baselineRef = { id: 'identity-retry-base', assetId: 'identity-asset', containerId: 'identity-container', assetContentHash: hash, containerContentHash: hash }
     vi.spyOn(desktopBridge, 'loadManagedAgentIdentity').mockResolvedValue({ assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, canonicalContent: 'schemaVersion: 1\nid: zhouce\n', baselineRef })
-    const saveIdentity = vi.spyOn(desktopBridge, 'saveManagedAgentIdentity').mockImplementation(async (agent) => ({ kind: 'saved', requestId: 'save-identity-retry', agent, baselineRef, revision: {} as never, writeReceipt: {} as never }))
-    const saveDepartment = vi.spyOn(desktopBridge, 'saveDepartment')
-      .mockRejectedValueOnce(new Error('database busy'))
-      .mockImplementation((department) => Promise.resolve(department))
-    const saveGrants = vi.spyOn(desktopBridge, 'saveServiceGrants').mockImplementation((agentId, grants) => Promise.resolve(grants.map((grant) => ({ ...grant, agentId }))))
+    const commit = vi.spyOn(desktopBridge, 'commitManagedAgentIdentity').mockImplementation(async (_requestId, agent) => ({
+      operation: { id: 'identity-retry-operation', agentId: agent.id, operationKind: 'identity_update', status: 'organization_pending', createdAt: '2026-09-02T00:00:00Z' },
+    }))
 
     renderAgent('/agents/zhouce?tab=identity', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
@@ -156,13 +164,11 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(name, { target: { value: '周策更新' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('不会重复写入 agent.yaml')
+    expect(await screen.findByRole('alert')).toHaveTextContent('首页待处理项继续修复')
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await waitFor(() => expect(screen.queryByDisplayValue('周策更新')).not.toBeInTheDocument())
-    expect(saveIdentity).toHaveBeenCalledTimes(1)
-    expect(saveDepartment).toHaveBeenCalledTimes(2)
-    expect(saveGrants).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(commit).toHaveBeenCalledTimes(2))
+    expect(commit.mock.calls[0][0]).toBe(commit.mock.calls[1][0])
   })
 
   it('Desktop 受管身份外部变化保留草稿并展示三方 manifest', async () => {
@@ -172,7 +178,10 @@ describe('Agent 双模式配置工作台', () => {
     const hash = `sha256:${'e'.repeat(64)}` as const
     const baselineRef = { id: 'identity-base', assetId: 'identity-asset', containerId: 'identity-container', assetContentHash: hash, containerContentHash: hash }
     vi.spyOn(desktopBridge, 'loadManagedAgentIdentity').mockResolvedValue({ assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, canonicalContent: 'name: "周策"\n', baselineRef })
-    vi.spyOn(desktopBridge, 'saveManagedAgentIdentity').mockResolvedValue({ kind: 'baseline_changed', requestId: 'save-identity-zhouce', assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, base: { content: 'name: "周策"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, current: { content: 'name: "磁盘更新"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, proposed: { content: 'name: "周策更新"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, diagnostics: [{ code: 'baseline_changed', severity: 'warning', message: '已发生外部变化' }] })
+    vi.spyOn(desktopBridge, 'commitManagedAgentIdentity').mockResolvedValue({
+      operation: { id: 'identity-conflict-operation', agentId: source.id, operationKind: 'identity_update', status: 'prepared', createdAt: '2026-09-02T00:00:00Z' },
+      identityResult: { kind: 'baseline_changed', requestId: 'save-identity-zhouce', assetId: 'identity-asset', containerId: 'identity-container', locator: { rootKind: 'managed', displayPath: '/tmp/agent.yaml' }, base: { content: 'name: "周策"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, current: { content: 'name: "磁盘更新"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, proposed: { content: 'name: "周策更新"\n', assetContentHash: hash, containerContentHash: hash, redacted: false }, diagnostics: [{ code: 'baseline_changed', severity: 'warning', message: '已发生外部变化' }] },
+    })
 
     renderAgent('/agents/zhouce?tab=identity', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
@@ -232,9 +241,9 @@ describe('Agent 双模式配置工作台', () => {
     })
 
     renderAgent('/agents/zhouce?tab=memory', state)
-    fireEvent.change(await screen.findByLabelText('唯一目标 MemorySpace'), { target: { value: 'memory-agent-zhouce' } })
+    fireEvent.change(await screen.findByLabelText('目标记忆范围'), { target: { value: 'memory-agent-zhouce' } })
     fireEvent.change(screen.getByLabelText('建议写回的完整内容'), { target: { value: '新的正式内容' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建正式候选' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交修改建议' }))
 
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', proposedContent: '新的正式内容' })))
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('reviewerAgentId')
@@ -296,9 +305,9 @@ describe('Agent 双模式配置工作台', () => {
 
     expect((await screen.findAllByRole('button', { name: '正式版本历史' }))).toHaveLength(4)
     expect(screen.getByText('只读历史')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('唯一目标 MemorySpace'), { target: { value: 'mem-dev-bandi' } })
+    fireEvent.change(screen.getByLabelText('目标记忆范围'), { target: { value: 'mem-dev-bandi' } })
     expect(screen.getByLabelText('建议写回的完整内容')).toBeDisabled()
-    expect(screen.getByRole('button', { name: '创建正式候选' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '提交修改建议' })).toBeDisabled()
     expect(screen.getByText(/关系已失效/)).toBeInTheDocument()
   })
 
@@ -399,11 +408,11 @@ describe('Agent 双模式配置工作台', () => {
   it('Instructions 编辑态注册草稿并保留未保存内容', () => {
     renderAgent('/agents/zhouce?tab=instructions')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    const editor = screen.getByRole('textbox', { name: 'Instructions 正文' })
+    const editor = screen.getByRole('textbox', { name: '主指令正文' })
     fireEvent.change(editor, { target: { value: '尚未保存的新正文' } })
 
     expect(editor).toHaveValue('尚未保存的新正文')
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '取消' })).toBeEnabled()
   })
 
@@ -426,12 +435,12 @@ describe('Agent 双模式配置工作台', () => {
 
     renderAgent('/agents/zhouce?tab=instructions', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(await screen.findByRole('textbox', { name: 'Instructions 正文' })).toHaveValue('# Disk\n')
-    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions 正文' }), { target: { value: '# Updated\n' } })
+    expect(await screen.findByRole('textbox', { name: '主指令正文' })).toHaveValue('# Disk\n')
+    fireEvent.change(screen.getByRole('textbox', { name: '主指令正文' }), { target: { value: '# Updated\n' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: 'asset-1', baseContent: '# Disk\n', change: { kind: 'instructions', value: '# Updated\n' } })))
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Instructions 正文' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: '主指令正文' })).not.toBeInTheDocument())
   })
 
   it('Desktop Instructions 读取真实历史并恢复为新版本', async () => {
@@ -449,13 +458,13 @@ describe('Agent 双模式配置工作台', () => {
 
     renderAgent('/agents/zhouce?tab=instructions', state)
     fireEvent.click(screen.getByRole('button', { name: '版本历史' }))
-    expect(await screen.findByRole('dialog', { name: 'Instructions 版本历史' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: '主指令版本历史' })).toBeInTheDocument()
     expect(screen.getByText('# Historical')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: '恢复为新版本' }))
 
     await waitFor(() => expect(restore).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, revisionId: 'revision-old', baseContent: '# Current\n', confirmed: true })))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Instructions 版本历史' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '主指令版本历史' })).not.toBeInTheDocument())
   })
 
   it('Desktop Instructions 外部变化保留草稿并展示三方内容', async () => {
@@ -470,22 +479,22 @@ describe('Agent 双模式配置工作台', () => {
 
     renderAgent('/agents/zhouce?tab=instructions', state)
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    const editor = await screen.findByRole('textbox', { name: 'Instructions 正文' })
+    const editor = await screen.findByRole('textbox', { name: '主指令正文' })
     fireEvent.change(editor, { target: { value: '# Proposed\n' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('编辑期间发生变化')
-    expect(screen.getByRole('textbox', { name: 'Instructions 正文' })).toHaveValue('# Proposed\n')
+    expect(screen.getByRole('textbox', { name: '主指令正文' })).toHaveValue('# Proposed\n')
     expect(screen.getByText('# Base')).toBeInTheDocument()
     expect(screen.getByText('# Current')).toBeInTheDocument()
     expect(screen.getAllByText('# Proposed')).toHaveLength(2)
     expect(screen.getByRole('button', { name: '基于当前内容重新编辑' })).toBeEnabled()
   })
 
-  it('纯 Web Context 保持页面内存模拟保存边界', async () => {
+  it('纯 Web Context 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     renderAgent('/agents/zhouce?tab=context')
-    expect(screen.getByText(/演示保存目标/)).toBeInTheDocument()
+    expect(screen.getByText(/当前页面保存位置/)).toBeInTheDocument()
     expect(screen.getByText('200,000 Token')).toBeInTheDocument()
     expect(screen.getByText(/约 160,000 Token/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
@@ -493,7 +502,7 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(screen.getByDisplayValue(80), { target: { value: '95' } })
     expect(screen.getByText(/约在 243,200 Token/)).toBeInTheDocument()
     expect(screen.getByText(/当前未应用/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
   })
 
   it('Desktop 受管 Context 通过发现、加载与真实保存闭环', async () => {
@@ -519,12 +528,12 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(screen.queryByLabelText('触发比例（%）')).not.toBeInTheDocument())
   })
 
-  it('纯 Web Rules 保持页面内存模拟保存边界', async () => {
+  it('纯 Web Rules 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     renderAgent('/agents/zhouce?tab=rules')
-    expect(screen.getByText(/演示保存目标/)).toBeInTheDocument()
+    expect(screen.getByText(/当前页面保存位置/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
   })
 
   it('Desktop 受管 Rules 通过发现、加载与真实保存闭环', async () => {
@@ -548,12 +557,12 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, baseContent: base, change: expect.objectContaining({ kind: 'rules', value: expect.stringContaining('rules:') }) })))
   })
 
-  it('纯 Web Skills 保持页面内存模拟保存边界', async () => {
+  it('纯 Web Skills 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     renderAgent('/agents/zhouce?tab=skills')
-    expect(screen.getByText(/演示保存目标/)).toHaveTextContent('config/skills.yaml')
+    expect(screen.getByText(/当前页面保存位置/)).toHaveTextContent('config/skills.yaml')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
   })
 
   it('Desktop 受管 Skills 通过发现、加载与真实保存闭环', async () => {
@@ -577,12 +586,12 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, baseContent: base, change: expect.objectContaining({ kind: 'skills', value: expect.stringContaining('skills:') }) })))
   })
 
-  it('纯 Web MCP 保持页面内存模拟保存边界', async () => {
+  it('纯 Web MCP 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     renderAgent('/agents/zhouce?tab=mcp')
-    expect(screen.getByText(/演示保存目标/)).toHaveTextContent('config/mcp.yaml')
+    expect(screen.getByText(/当前页面保存位置/)).toHaveTextContent('config/mcp.yaml')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
   })
 
   it('Desktop 受管 MCP 通过发现、加载与真实保存闭环', async () => {
@@ -606,13 +615,13 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, baseContent: base, change: expect.objectContaining({ kind: 'mcp', value: expect.stringContaining('mcp:') }) })))
   })
 
-  it('纯 Web SOP 保持页面内存模拟保存边界', async () => {
+  it('纯 Web SOP 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     const save = vi.spyOn(desktopBridge, 'saveConfig')
     renderAgent('/agents/zhouce?tab=sop')
-    expect(screen.getByText(/演示保存目标/)).toHaveTextContent('config/sop.yaml')
+    expect(screen.getByText(/当前页面保存位置/)).toHaveTextContent('config/sop.yaml')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
     expect(save).not.toHaveBeenCalled()
   })
 
@@ -636,12 +645,12 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, baseContent: base, change: expect.objectContaining({ kind: 'sop', value: expect.stringContaining('sop:') }) })))
   })
 
-  it('纯 Web Orchestration 与 Hook/Command 保持页面内存模拟保存边界', async () => {
+  it('纯 Web Orchestration 与 Hook/Command 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     const save = vi.spyOn(desktopBridge, 'saveConfig')
     renderAgent('/agents/zhouce?tab=collaboration')
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByRole('button', { name: '模拟保存' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
     expect(save).not.toHaveBeenCalled()
   })
 
@@ -680,7 +689,7 @@ describe('Agent 双模式配置工作台', () => {
     const save = vi.spyOn(desktopBridge, 'saveConfig').mockResolvedValue({ kind: 'saved', requestId: 'save-hooks-zhouce', asset, revision: { id: 'revision-hooks', assetId: asset.id, containerId: asset.containerId, locator: { rootKind: 'managed', displayPath: '/tmp/hooks.yaml' }, assetContentHash: hash, containerContentHash: hash, sourceAssetBaselineHash: hash, sourceContainerBaselineHash: hash, redacted: false, writeReceiptId: 'receipt-hooks', savedAt: '2026-09-01T00:00:00Z', summary: '保存 Hook 引用', confirmationRefs: [] }, writeReceipt: { id: 'receipt-hooks', containerId: asset.containerId, previousContainerHash: hash, writtenContainerHash: hash, verifiedAt: '2026-09-01T00:00:00Z', atomicReplace: true } })
 
     renderAgent('/agents/zhouce?tab=collaboration', state)
-    const hookPanel = screen.getByText('Hook 引用', { selector: 'b' }).closest('section')!
+    const hookPanel = screen.getByText('钩子引用', { selector: 'b' }).closest('section')!
     fireEvent.click(within(hookPanel).getByRole('button', { name: '编辑' }))
     const hook = await within(hookPanel).findByRole('checkbox', { name: '配置保存声明' })
     fireEvent.click(hook)
@@ -704,7 +713,7 @@ describe('Agent 双模式配置工作台', () => {
     const save = vi.spyOn(desktopBridge, 'saveConfig').mockResolvedValue({ kind: 'saved', requestId: 'save-commands-zhouce', asset, revision: { id: 'revision-commands', assetId: asset.id, containerId: asset.containerId, locator: { rootKind: 'managed', displayPath: '/tmp/commands.yaml' }, assetContentHash: hash, containerContentHash: hash, sourceAssetBaselineHash: hash, sourceContainerBaselineHash: hash, redacted: false, writeReceiptId: 'receipt-commands', savedAt: '2026-09-01T00:00:00Z', summary: '保存 Command 引用', confirmationRefs: [] }, writeReceipt: { id: 'receipt-commands', containerId: asset.containerId, previousContainerHash: hash, writtenContainerHash: hash, verifiedAt: '2026-09-01T00:00:00Z', atomicReplace: true } })
 
     renderAgent('/agents/zhouce?tab=collaboration', state)
-    const commandPanel = screen.getByText('Command 引用', { selector: 'b' }).closest('section')!
+    const commandPanel = screen.getByText('命令引用', { selector: 'b' }).closest('section')!
     fireEvent.click(within(commandPanel).getByRole('button', { name: '编辑' }))
     const command = await within(commandPanel).findByRole('checkbox', { name: '配置审计命令' })
     fireEvent.click(command)
@@ -715,16 +724,16 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, baseContent: base, change: expect.objectContaining({ kind: 'commands', value: expect.stringContaining('"parameterId":"scope"') }) })))
   })
 
-  it('纯 Web WorkspaceBinding 保持页面内存模拟保存边界', async () => {
+  it('纯 Web WorkspaceBinding 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     const save = vi.spyOn(desktopBridge, 'saveConfig')
     const create = vi.spyOn(desktopBridge, 'createWorkspaceBinding')
 
     renderAgent('/agents/zhouce?tab=workspaces')
     fireEvent.click(screen.getAllByRole('button', { name: '编辑' })[0])
-    const instructions = screen.getByLabelText('专属 Instructions')
+    const instructions = screen.getByLabelText('专属主指令')
     fireEvent.change(instructions, { target: { value: '页面内存更新' } })
-    fireEvent.click(screen.getByRole('button', { name: '模拟保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到当前页面' }))
 
     expect(save).not.toHaveBeenCalled()
     expect(create).not.toHaveBeenCalled()
@@ -746,7 +755,7 @@ describe('Agent 双模式配置工作台', () => {
 
     renderAgent('/agents/zhouce?tab=workspaces', state)
     fireEvent.click(screen.getAllByRole('button', { name: '编辑' })[0])
-    const instructions = await screen.findByLabelText('专属 Instructions')
+    const instructions = await screen.findByLabelText('专属主指令')
     fireEvent.change(instructions, { target: { value: '真实 WorkspaceBinding 更新' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -754,7 +763,7 @@ describe('Agent 双模式配置工作台', () => {
     expect(save.mock.calls[0][0].change.value).not.toContain('memoryRevision')
   })
 
-  it('Desktop 新建 WorkspaceBinding 只提交稳定身份与规范正文', async () => {
+  it('Desktop 添加工作区配置 只提交稳定身份与规范正文', async () => {
     const source = initialState.agents.find((item) => item.id === 'zhouce')!
     const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' } } : item) }
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
@@ -763,12 +772,12 @@ describe('Agent 双模式配置工作台', () => {
     const create = vi.spyOn(desktopBridge, 'createWorkspaceBinding').mockResolvedValue({ kind: 'unchanged', requestId: 'create-workspace-binding-zhouce-lab', asset })
 
     renderAgent('/agents/zhouce?tab=workspaces', state)
-    fireEvent.click(screen.getByRole('button', { name: '新建 Binding' }))
-    const dialog = screen.getByRole('dialog', { name: '新建 WorkspaceBinding' })
-    fireEvent.change(within(dialog).getByLabelText('Workspace'), { target: { value: 'lab' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加工作区配置' }))
+    const dialog = screen.getByRole('dialog', { name: '添加工作区配置' })
+    fireEvent.change(within(dialog).getByLabelText('工作区'), { target: { value: 'lab' } })
     fireEvent.click(within(dialog).getByRole('button', { name: '确认选择' }))
     expect(screen.getByText('lab', { selector: 'b' })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('专属 Instructions'), { target: { value: '独立研究专属配置' } })
+    fireEvent.change(screen.getByLabelText('专属主指令'), { target: { value: '独立研究专属配置' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
@@ -778,22 +787,22 @@ describe('Agent 双模式配置工作台', () => {
     expect(request.value).not.toContain('memoryRevision')
   })
 
-  it('新建 WorkspaceBinding 必须明确选择，取消保持零写入', async () => {
+  it('添加工作区配置 必须明确选择，取消保持零写入', async () => {
     const source = initialState.agents.find((item) => item.id === 'zhouce')!
     const extraWorkspace = { ...initialState.workspaces[0], id: 'sandbox', name: '沙盒工作区', path: '/tmp/sandbox' }
     const state: State = { ...initialState, workspaces: [...initialState.workspaces, extraWorkspace] }
     const create = vi.spyOn(desktopBridge, 'createWorkspaceBinding')
 
     renderAgent('/agents/zhouce?tab=workspaces', state)
-    fireEvent.click(screen.getByRole('button', { name: '新建 Binding' }))
-    const dialog = screen.getByRole('dialog', { name: '新建 WorkspaceBinding' })
-    const select = within(dialog).getByLabelText('Workspace')
+    fireEvent.click(screen.getByRole('button', { name: '添加工作区配置' }))
+    const dialog = screen.getByRole('dialog', { name: '添加工作区配置' })
+    const select = within(dialog).getByLabelText('工作区')
     expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(expect.arrayContaining(['独立研究（lab）', '沙盒工作区（sandbox）']))
     expect(within(dialog).getByRole('button', { name: '确认选择' })).toBeDisabled()
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
 
-    expect(screen.queryByRole('dialog', { name: '新建 WorkspaceBinding' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('专属 Instructions')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '添加工作区配置' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('专属主指令')).not.toBeInTheDocument()
     expect(create).not.toHaveBeenCalled()
     expect(source.workspaceBindings).toHaveLength(initialState.agents.find((item) => item.id === source.id)!.workspaceBindings.length)
   })
@@ -837,22 +846,22 @@ describe('Agent 双模式配置工作台', () => {
     expect(load).not.toHaveBeenCalled()
   })
 
-  it('纯 Web Permissions 保持页面内存模拟保存边界', async () => {
+  it('纯 Web Permissions 保持页面内存保存到当前页面边界', async () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(false)
     const save = vi.spyOn(desktopBridge, 'saveConfig')
 
     renderAgent('/agents/zhouce?tab=permissions')
     fireEvent.click(screen.getByRole('button', { name: '调整权限' }))
     fireEvent.change(screen.getByLabelText('文件写入'), { target: { value: '任意目录' } })
-    fireEvent.click(screen.getByRole('button', { name: '模拟保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存到当前页面' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '确认扩大长期 Agent 权限' })
+    const dialog = await screen.findByRole('dialog', { name: '确认扩大 Agent 长期权限' })
     expect(within(dialog).getByText(/仅在当前页面更新/)).toBeInTheDocument()
     fireEvent.change(within(dialog).getByLabelText(/输入 Agent 名称/), { target: { value: '周策' } })
     fireEvent.click(within(dialog).getByRole('checkbox'))
     fireEvent.click(within(dialog).getByRole('button', { name: '确认扩大权限' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认扩大长期 Agent 权限' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认扩大 Agent 长期权限' })).not.toBeInTheDocument())
     expect(save).not.toHaveBeenCalled()
     expect(screen.getByText('任意目录')).toBeInTheDocument()
   })
@@ -877,7 +886,7 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(await screen.findByLabelText('文件写入'), { target: { value: '任意目录' } })
     fireEvent.click(screen.getByRole('button', { name: '保存边界' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '确认扩大长期 Agent 权限' })
+    const dialog = await screen.findByRole('dialog', { name: '确认扩大 Agent 长期权限' })
     fireEvent.change(within(dialog).getByLabelText(/输入 Agent 名称/), { target: { value: '周策' } })
     fireEvent.click(within(dialog).getByRole('checkbox'))
     fireEvent.click(within(dialog).getByRole('button', { name: '确认扩大权限' }))
@@ -885,7 +894,7 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
     expect(save).toHaveBeenNthCalledWith(1, expect.objectContaining({ assetId: asset.id, confirmationRef: undefined, change: expect.objectContaining({ kind: 'permissions', value: expect.stringContaining('files: "任意目录"') }) }))
     expect(save).toHaveBeenNthCalledWith(2, expect.objectContaining({ assetId: asset.id, confirmationRef: 'confirmation-permissions' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认扩大长期 Agent 权限' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认扩大 Agent 长期权限' })).not.toBeInTheDocument())
   })
 
   it('Desktop Permissions 恢复到更宽边界时再次要求 challenge', async () => {
@@ -914,7 +923,7 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.click(within(history).getByRole('checkbox'))
     fireEvent.click(within(history).getByRole('button', { name: '恢复为新版本' }))
 
-    const confirmation = await screen.findByRole('dialog', { name: '确认扩大长期 Agent 权限' })
+    const confirmation = await screen.findByRole('dialog', { name: '确认扩大 Agent 长期权限' })
     fireEvent.change(within(confirmation).getByLabelText(/输入 Agent 名称/), { target: { value: '周策' } })
     fireEvent.click(within(confirmation).getByRole('checkbox'))
     fireEvent.click(within(confirmation).getByRole('button', { name: '确认扩大权限' }))

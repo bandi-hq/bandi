@@ -63,8 +63,8 @@ describe('Skills 视图 Tab', () => {
     renderSkills('/assets/skills?view=unknown&q=发布&source=git')
 
     expect(screen.getByRole('tab', { name: '浏览' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('textbox', { name: '搜索 Skills' })).toHaveValue('发布')
-    expect(screen.getByRole('combobox', { name: 'Skill 来源' })).toHaveValue('git')
+    expect(screen.getByRole('textbox', { name: '搜索技能' })).toHaveValue('发布')
+    expect(screen.getByRole('combobox', { name: '技能来源' })).toHaveValue('git')
     expect(screen.getByText('发布检查')).toBeInTheDocument()
   })
 })

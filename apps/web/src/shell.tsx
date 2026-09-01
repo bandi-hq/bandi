@@ -35,7 +35,7 @@ import { resolveMainMenuLayout } from './navigation-layout'
 
 const nav = [
   ['/', '概览', Home],
-  ['/agents', 'Agents', Bot],
+  ['/agents', 'Agent', Bot],
   ['/organization', '组织', Building2],
   ['/workspaces', '工作区', Boxes],
   ['/assets', '资产', Workflow],

@@ -13,6 +13,13 @@ export const pluginScopeLabels: Record<PluginScope, string> = {
   managed: '受管',
 }
 
+export const pluginInstallationStatusLabels: Record<PluginInstallationStatus, string> = {
+  available: '未安装',
+  installed: '已安装',
+  'update-available': '可更新',
+  incompatible: '不兼容',
+}
+
 export type PluginInstallation = {
   pluginId: string
   scope: PluginScope

@@ -115,7 +115,7 @@ describe('应用壳导航布局', () => {
     const { container } = renderShell('expanded')
     const rail = screen.getByLabelText('Bandi 配置管理')
 
-    for (const name of ['Agents', '组织', '工作区', '资产', '设置']) {
+    for (const name of ['Agent', '组织', '工作区', '资产', '设置']) {
       expect(within(rail).getByRole('link', { name })).toBeInTheDocument()
     }
     expect(within(rail).getByRole('link', { name: /概览/ })).toBeInTheDocument()
@@ -137,7 +137,7 @@ describe('应用壳导航布局', () => {
 
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', expected)
     expect(screen.getByRole('complementary', { name: '最近访问' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: '查看全部 Agents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '查看全部 Agent' })).not.toBeInTheDocument()
     if (expected === 'expanded') {
       expect(screen.getByText('最近访问')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: '收起最近访问' })).toBeInTheDocument()
@@ -205,7 +205,7 @@ describe('应用壳导航布局', () => {
     expect(screen.queryByLabelText('最近访问')).not.toBeInTheDocument()
     expect(screen.getByText('Agent 详情')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('link', { name: 'Agents' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Agent' }))
     fireEvent.click(screen.getByRole('link', { name: '进入周策' }))
 
     await waitFor(() => expect(screen.getByRole('complementary', { name: '最近访问' })).toBeInTheDocument())

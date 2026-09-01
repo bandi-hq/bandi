@@ -43,7 +43,7 @@ export function resolveRouteMetadata(
     const agent = context.agents?.find((item) => item.id === agentId)
     return { section: 'agents', title: agent?.name ?? 'Agent 配置', agentId: agent?.id }
   }
-  if (pathname === '/agents') return { section: 'agents', title: 'Agents' }
+  if (pathname === '/agents') return { section: 'agents', title: 'Agent' }
   if (pathname.startsWith('/organization/companies/')) return { section: 'organization', title: entityName(pathname, '/organization/companies/', context.companies) ?? '公司详情' }
   if (pathname.startsWith('/organization/departments/')) return { section: 'organization', title: entityName(pathname, '/organization/departments/', context.departments) ?? '部门详情' }
   if (pathname === '/organization') {

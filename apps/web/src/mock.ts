@@ -18,15 +18,15 @@ export type AiClient = {
 }
 
 export const aiClients: AiClient[] = [
-  { id:'claude-code', kind:'claude-code', name:'Claude Code', shortName:'CC', description:'当前默认支持的 Claude Code 配置环境', detection:'not-checked', persistence:'initial-demo' },
-  { id:'claude-desktop', kind:'claude-desktop', name:'Claude Desktop', shortName:'CD', description:'Claude 桌面工具配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'codex', kind:'codex', name:'Codex', shortName:'CX', description:'OpenAI 编码工具配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'gemini-cli', kind:'gemini-cli', name:'Gemini CLI', shortName:'GE', description:'Google Gemini 命令行工具配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'grok-build', kind:'grok-build', name:'Grok Build', shortName:'GB', description:'xAI Grok Build 工具配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'opencode', kind:'opencode', name:'OpenCode', shortName:'OC', description:'OpenCode 编码工具配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'openclaw', kind:'openclaw', name:'OpenClaw', shortName:'CL', description:'OpenClaw AI 助手配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'hermes', kind:'hermes', name:'Hermes', shortName:'HE', description:'Nous Research Hermes Agent 配置入口', detection:'not-checked', persistence:'memory-only' },
-  { id:'pi', kind:'pi', name:'Pi', shortName:'PI', description:'Pi 编码 Agent 配置入口', detection:'not-checked', persistence:'memory-only' },
+  { id:'claude-code', kind:'claude-code', name:'Claude Code', shortName:'CC', description:'Anthropic 的命令行 AI 编程工具', detection:'not-checked', persistence:'initial-demo' },
+  { id:'claude-desktop', kind:'claude-desktop', name:'Claude Desktop', shortName:'CD', description:'Anthropic 的桌面 AI 助手', detection:'not-checked', persistence:'memory-only' },
+  { id:'codex', kind:'codex', name:'Codex', shortName:'CX', description:'OpenAI 的 AI 编程工具', detection:'not-checked', persistence:'memory-only' },
+  { id:'gemini-cli', kind:'gemini-cli', name:'Gemini CLI', shortName:'GE', description:'Google 的命令行 AI 编程工具', detection:'not-checked', persistence:'memory-only' },
+  { id:'grok-build', kind:'grok-build', name:'Grok Build', shortName:'GB', description:'xAI 的 AI 编程工具', detection:'not-checked', persistence:'memory-only' },
+  { id:'opencode', kind:'opencode', name:'OpenCode', shortName:'OC', description:'开源 AI 编程工具', detection:'not-checked', persistence:'memory-only' },
+  { id:'openclaw', kind:'openclaw', name:'OpenClaw', shortName:'CL', description:'开源 AI 助手', detection:'not-checked', persistence:'memory-only' },
+  { id:'hermes', kind:'hermes', name:'Hermes', shortName:'HE', description:'Nous Research 的 AI Agent', detection:'not-checked', persistence:'memory-only' },
+  { id:'pi', kind:'pi', name:'Pi', shortName:'PI', description:'命令行 AI 编程 Agent', detection:'not-checked', persistence:'memory-only' },
 ]
 
 export const agents: Agent[] = [

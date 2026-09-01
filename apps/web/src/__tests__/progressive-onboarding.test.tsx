@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HomePage } from '../pages/home-page'
@@ -16,15 +16,20 @@ const desktopBridge = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   generateEntityId: vi.fn(),
   loadOrganizationSnapshot: vi.fn(),
+  listAgentRecoveryOperations: vi.fn(),
+  continueAgentRecovery: vi.fn(),
 }))
 
 vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => desktopBridge.desktop,
+  listAgents: () => Promise.resolve([]),
   listManagedAgents: () => Promise.resolve([]),
   loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
   selectWorkspaceDirectory: desktopBridge.selectWorkspaceDirectory,
   createWorkspace: desktopBridge.createWorkspace,
   generateEntityId: desktopBridge.generateEntityId,
+  listAgentRecoveryOperations: desktopBridge.listAgentRecoveryOperations,
+  continueAgentRecovery: desktopBridge.continueAgentRecovery,
 }))
 
 const storage = new Map<string, string>()
@@ -37,6 +42,9 @@ beforeEach(() => {
   desktopBridge.createWorkspace.mockReset()
   desktopBridge.generateEntityId.mockReset()
   desktopBridge.loadOrganizationSnapshot.mockReset()
+  desktopBridge.listAgentRecoveryOperations.mockReset()
+  desktopBridge.continueAgentRecovery.mockReset()
+  desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
   desktopBridge.loadOrganizationSnapshot.mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
   desktopBridge.generateEntityId.mockResolvedValue('workspace-generated')
   desktopBridge.createWorkspace.mockImplementation((_requestId: string, selectedPath: string, workspace) => Promise.resolve({ ...workspace, path: selectedPath }))
@@ -99,11 +107,37 @@ describe('渐进式首次体验', () => {
     expect(screen.queryByRole('heading', { name: '先建立你的个人工作区' })).not.toBeInTheDocument()
   })
 
+  it('首页可继续未完成 Agent 配置，blocked 状态只允许查看', async () => {
+    const pending = {
+      id: 'operation-pending',
+      agentId: initialState.agents[0].id,
+      operationKind: 'create' as const,
+      status: 'organization_pending' as const,
+      createdAt: '2026-09-02T00:00:00Z',
+    }
+    desktopBridge.continueAgentRecovery.mockResolvedValue({
+      operation: { ...pending, status: 'completed' },
+      agent: initialState.agents[0],
+    })
+    renderRoutes('/', {
+      ...initialState,
+      onboarding: { status: 'completed' },
+      agentRecoveryOperations: [pending, { ...pending, id: 'operation-blocked', agentId: initialState.agents[1].id, status: 'blocked' }],
+    })
+
+    expect(screen.getAllByText('Agent 配置尚未完整保存')).toHaveLength(2)
+    expect(screen.getByRole('link', { name: '查看 Agent' })).toHaveAttribute('href', `/agents/${initialState.agents[1].id}`)
+    fireEvent.click(screen.getByRole('button', { name: '继续修复' }))
+
+    await waitFor(() => expect(screen.getAllByText('Agent 配置尚未完整保存')).toHaveLength(1))
+    expect(desktopBridge.continueAgentRecovery).toHaveBeenCalledWith('operation-pending')
+  })
+
   it('允许从现有项目目录开始', () => {
     renderRoutes('/', emptyState)
 
     expect(screen.getByRole('heading', { name: '先建立你的个人工作区' })).toBeInTheDocument()
-    expect(screen.getByText('无需先创建 AgentPackage、安装 Bandi Plugin 或建立公司。')).toBeInTheDocument()
+    expect(screen.getByText('无需预先创建 Agent 或设置组织。')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '选择目录开始' })).toHaveAttribute('href', '/workspaces/new?onboarding=1')
   })
 
@@ -131,6 +165,7 @@ describe('渐进式首次体验', () => {
     expect(screen.getAllByText('未关联组织').length).toBeGreaterThan(0)
 
     expect(screen.getByRole('button', { name: '在 Claude Code 中继续' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '添加外部 AgentPackage 页面引用' })).toHaveAttribute('href', '/agents/new?mode=import&workspace=workspace-1')
     fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
     expect(screen.getByRole('dialog', { name: '让 AI 帮我规划协作方式' })).toBeInTheDocument()
     expect(screen.getByLabelText('你的场景与目标')).toBeInTheDocument()

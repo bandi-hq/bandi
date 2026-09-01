@@ -8,6 +8,7 @@ use tauri::{
     Emitter, Manager,
 };
 
+mod agent_service;
 mod ai_adapters;
 mod backup_service;
 pub mod cli_service;
@@ -25,14 +26,14 @@ struct UiAsset {
     bytes: Vec<u8>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentPackageFile {
     path: String,
     content: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateManagedAgentRequest {
     agent_id: String,
@@ -41,7 +42,70 @@ struct CreateManagedAgentRequest {
     avatar_bytes: Option<Vec<u8>>,
 }
 
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentOrganizationReconcileRequest {
+    company_id: String,
+    primary_department_id: String,
+    grants: domain_store::SaveServiceGrantsRequest,
+}
+
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommitManagedAgentCreationRequest {
+    request_id: String,
+    create: CreateManagedAgentRequest,
+    organization: AgentOrganizationReconcileRequest,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommitManagedAgentIdentityRequest {
+    save: SaveManagedAgentIdentityRequest,
+    organization: AgentOrganizationReconcileRequest,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContinueAgentRecoveryRequest {
+    operation_id: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentCommitResult {
+    operation: agent_service::AgentRecoverySummaryDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_result: Option<SaveManagedAgentIdentityResult>,
+}
+
+impl AgentCommitResult {
+    fn new(
+        operation: agent_service::AgentRecoveryOperation,
+        agent: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            operation: (&operation).into(),
+            agent,
+            identity_result: None,
+        }
+    }
+
+    fn identity(
+        operation: agent_service::AgentRecoveryOperation,
+        result: SaveManagedAgentIdentityResult,
+    ) -> Self {
+        Self {
+            operation: (&operation).into(),
+            agent: None,
+            identity_result: Some(result),
+        }
+    }
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum AvatarChange {
     Keep,
@@ -49,7 +113,7 @@ enum AvatarChange {
     Remove,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SaveManagedAgentIdentityRequest {
     request_id: String,
@@ -286,8 +350,9 @@ fn create_workspace(
     )?;
     let mut workspace = request.workspace;
     workspace.path = outcome.result.canonical_path;
-    match domain_store::save_workspace_at(
+    match domain_store::save_workspace_governed_at(
         &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
         domain_store::SaveWorkspaceRequest { workspace },
     ) {
         Ok(workspace) => Ok(workspace),
@@ -349,7 +414,11 @@ fn save_workspace(
     if canonical.as_os_str() != request.workspace.path.as_str() {
         return Err("工作区路径与 Registry 记录不一致".into());
     }
-    domain_store::save_workspace_at(&domain_database_path(&app)?, request)
+    domain_store::save_workspace_governed_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        request,
+    )
 }
 
 #[tauri::command]
@@ -600,7 +669,7 @@ fn request_client_handoff(
         request,
         |workspace_id| workspace_path_from_registry(&app, workspace_id),
         cfg!(target_os = "macos"),
-        |terminal_id, cwd| open_workspace_directory(terminal_id, cwd),
+        open_workspace_directory,
     )
 }
 
@@ -923,7 +992,7 @@ fn save_managed_agent_identity_at(
     revisions_root: &Path,
     request: SaveManagedAgentIdentityRequest,
 ) -> SaveManagedAgentIdentityResult {
-    save_managed_agent_identity_with_revision_source(root, revisions_root, request, None)
+    save_managed_agent_identity_with_revision_source(root, revisions_root, request, None, None)
 }
 
 fn save_managed_agent_identity_with_revision_source(
@@ -931,6 +1000,7 @@ fn save_managed_agent_identity_with_revision_source(
     revisions_root: &Path,
     request: SaveManagedAgentIdentityRequest,
     restored_from_revision_id: Option<String>,
+    fixed_revision_id: Option<String>,
 ) -> SaveManagedAgentIdentityResult {
     let request_id = request.request_id.clone();
     if !validate_identifier(&request.request_id)
@@ -1116,13 +1186,15 @@ fn save_managed_agent_identity_with_revision_source(
             baseline_ref.container_content_hash
         ),
     );
-    let revision_id = local_service::stable_id(
-        "revision",
-        &format!(
-            "{asset_id}:{previous_hash}:{}:{saved_at}",
-            baseline_ref.container_content_hash
-        ),
-    );
+    let revision_id = fixed_revision_id.unwrap_or_else(|| {
+        local_service::stable_id(
+            "revision",
+            &format!(
+                "{asset_id}:{previous_hash}:{}:{saved_at}",
+                baseline_ref.container_content_hash
+            ),
+        )
+    });
     let receipt = local_service::WriteReceiptDto {
         id: receipt_id.clone(),
         container_id: container_id.clone(),
@@ -1408,6 +1480,7 @@ fn restore_managed_agent_identity_at(
             avatar: AvatarChange::Keep,
         },
         Some(revision_id),
+        None,
     )
 }
 
@@ -1485,6 +1558,469 @@ fn list_managed_agents_at(root: &Path) -> Result<Vec<serde_json::Value>, String>
 #[tauri::command]
 fn list_managed_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
     list_managed_agents_at(&managed_agents_root(&app)?)
+}
+
+#[tauri::command]
+fn register_external_agent(
+    app: tauri::AppHandle,
+    request: agent_service::RegisterExternalAgentRequest,
+) -> Result<agent_service::ExternalAgentReferenceDto, String> {
+    agent_service::register_external_agent_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn remove_external_agent(
+    app: tauri::AppHandle,
+    request: agent_service::RemoveExternalAgentRequest,
+) -> Result<(), String> {
+    agent_service::remove_external_agent_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn list_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let mut agents = list_managed_agents_at(&managed_agents_root(&app)?)?;
+    agents.extend(
+        agent_service::list_external_agents_at(&domain_database_path(&app)?)?
+            .into_iter()
+            .map(|reference| {
+                let mut metadata = reference.metadata;
+                if let Some(object) = metadata.as_object_mut() {
+                    object.insert(
+                        "packagePath".into(),
+                        serde_json::Value::String(reference.canonical_root.clone()),
+                    );
+                    object.insert(
+                        "packageSource".into(),
+                        serde_json::json!({
+                            "kind": "external-reference",
+                            "externalPath": reference.canonical_root,
+                            "strategy": "reference-only"
+                        }),
+                    );
+                }
+                metadata
+            }),
+    );
+    agents.sort_by(|left, right| {
+        left.get("id")
+            .and_then(serde_json::Value::as_str)
+            .cmp(&right.get("id").and_then(serde_json::Value::as_str))
+    });
+    Ok(agents)
+}
+
+fn finish_agent_organization(
+    database: &Path,
+    agents_root: &Path,
+    operation: &agent_service::AgentRecoveryOperation,
+) -> Result<agent_service::AgentRecoveryOperation, String> {
+    let organization: AgentOrganizationReconcileRequest = serde_json::from_value(
+        operation
+            .payload
+            .get("organization")
+            .cloned()
+            .ok_or_else(|| "Agent commit payload 缺少 organization".to_string())?,
+    )
+    .map_err(|_| "Agent commit organization payload 已损坏".to_string())?;
+    domain_store::reconcile_agent_organization_at(
+        database,
+        agents_root,
+        &operation.id,
+        &operation.agent_id,
+        &organization.company_id,
+        &organization.primary_department_id,
+        organization.grants,
+    )?;
+    agent_service::get_operation_at(database, &operation.id)
+}
+
+fn append_agent_commit_revision(
+    agents_root: &Path,
+    revisions_root: &Path,
+    operation: &agent_service::AgentRecoveryOperation,
+    summary: &str,
+) -> Result<(), String> {
+    let fixed_revision_id = operation
+        .fixed_revision_id
+        .as_ref()
+        .ok_or_else(|| "Agent commit 缺少 fixed revision".to_string())?;
+    let root = agents_root.join(format!("agt_{}", operation.agent_id));
+    let loaded = load_managed_agent_identity_at(&root, &operation.agent_id)?;
+    if local_service::list_revisions_at(revisions_root, &loaded.asset_id)?
+        .iter()
+        .any(|revision| revision.id == *fixed_revision_id)
+    {
+        return Ok(());
+    }
+    let saved_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let revision = local_service::ConfigRevisionDto {
+        id: fixed_revision_id.clone(),
+        asset_id: loaded.asset_id,
+        container_id: loaded.container_id,
+        locator: loaded.locator,
+        asset_content_hash: loaded.baseline_ref.asset_content_hash.clone(),
+        container_content_hash: loaded.baseline_ref.container_content_hash.clone(),
+        source_asset_baseline_hash: loaded.baseline_ref.asset_content_hash,
+        source_container_baseline_hash: loaded.baseline_ref.container_content_hash,
+        redacted: false,
+        write_receipt_id: local_service::stable_id("agent-commit-receipt", fixed_revision_id),
+        saved_at,
+        summary: summary.into(),
+        confirmation_refs: Vec::new(),
+        restored_from_revision_id: None,
+    };
+    local_service::append_revision(revisions_root, &revision, &loaded.canonical_content)
+        .map_err(|_| "Agent commit revision 无法记录".to_string())
+}
+
+fn load_committed_agent(agents_root: &Path, agent_id: &str) -> Result<serde_json::Value, String> {
+    local_service::project_managed_agent_at(&agents_root.join(format!("agt_{agent_id}")), agent_id)
+}
+
+fn block_if_manifest_changed(
+    database: &Path,
+    agents_root: &Path,
+    operation: &agent_service::AgentRecoveryOperation,
+) -> Result<bool, String> {
+    let manifest = agents_root
+        .join(format!("agt_{}", operation.agent_id))
+        .join("agent.yaml");
+    let current = match fs::read(&manifest) {
+        Ok(bytes) => local_service::hash_bytes(&bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err("无法核验 Agent commit manifest".into()),
+    };
+    if current != operation.expected_manifest_hash {
+        agent_service::set_operation_status_at(database, &operation.id, "blocked", None)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+fn commit_managed_agent_creation(
+    app: tauri::AppHandle,
+    request: CommitManagedAgentCreationRequest,
+) -> Result<AgentCommitResult, String> {
+    let database = domain_database_path(&app)?;
+    let agents_root = managed_agents_root(&app)?;
+    let manifest = request
+        .create
+        .files
+        .iter()
+        .find(|file| file.path == "agent.yaml")
+        .ok_or_else(|| "INVALID_AGENT_PACKAGE: 缺少 agent.yaml".to_string())?;
+    let agent_id = request.create.agent_id.clone();
+    let fixed_revision_id = local_service::stable_id("agent-create-revision", &request.request_id);
+    let payload =
+        serde_json::json!({ "create": request.create, "organization": request.organization });
+    let mut operation = agent_service::prepare_operation_at(
+        &database,
+        &request.request_id,
+        &agent_id,
+        "create",
+        &local_service::hash_bytes(manifest.content.as_bytes()),
+        Some(&fixed_revision_id),
+        &payload,
+    )?;
+    let mut agent = None;
+    if operation.status == "prepared" {
+        let manifest_path = agents_root
+            .join(format!("agt_{agent_id}"))
+            .join("agent.yaml");
+        if manifest_path.exists() {
+            if block_if_manifest_changed(&database, &agents_root, &operation)? {
+                return Ok(AgentCommitResult::new(
+                    agent_service::get_operation_at(&database, &operation.id)?,
+                    None,
+                ));
+            }
+        } else {
+            let create: CreateManagedAgentRequest =
+                serde_json::from_value(payload["create"].clone())
+                    .map_err(|_| "Agent create payload 已损坏".to_string())?;
+            agent = Some(create_managed_agent_at(&agents_root, create)?.agent);
+        }
+        operation = agent_service::set_operation_status_at(
+            &database,
+            &operation.id,
+            "filesystem_committed",
+            None,
+        )?;
+    }
+    if operation.status == "filesystem_committed" {
+        operation = agent_service::set_operation_status_at(
+            &database,
+            &operation.id,
+            "revision_pending",
+            None,
+        )?;
+    }
+    if operation.status == "revision_pending" {
+        append_agent_commit_revision(
+            &agents_root,
+            &revisions_root(&app)?,
+            &operation,
+            "创建 AgentPackage",
+        )?;
+        operation = agent_service::set_operation_status_at(
+            &database,
+            &operation.id,
+            "organization_pending",
+            None,
+        )?;
+    }
+    if operation.status == "organization_pending" {
+        operation = finish_agent_organization(&database, &agents_root, &operation)?;
+    }
+    if agent.is_none() && operation.status == "completed" {
+        agent = Some(load_committed_agent(&agents_root, &agent_id)?);
+    }
+    Ok(AgentCommitResult::new(operation, agent))
+}
+
+#[tauri::command]
+fn commit_managed_agent_identity(
+    app: tauri::AppHandle,
+    request: CommitManagedAgentIdentityRequest,
+) -> Result<AgentCommitResult, String> {
+    let database = domain_database_path(&app)?;
+    let agents_root = managed_agents_root(&app)?;
+    let expected_hash = local_service::hash_bytes(request.save.manifest.as_bytes());
+    let payload = serde_json::json!({ "save": request.save, "organization": request.organization });
+    let save: SaveManagedAgentIdentityRequest = serde_json::from_value(payload["save"].clone())
+        .map_err(|_| "Agent identity payload 已损坏".to_string())?;
+    let fixed_revision_id = local_service::stable_id("agent-identity-revision", &save.request_id);
+    let mut operation = agent_service::prepare_operation_at(
+        &database,
+        &save.request_id,
+        &save.agent_id,
+        "identity_update",
+        &expected_hash,
+        Some(&fixed_revision_id),
+        &payload,
+    )?;
+    if operation.status != "prepared"
+        && block_if_manifest_changed(&database, &agents_root, &operation)?
+    {
+        return Ok(AgentCommitResult::new(
+            agent_service::get_operation_at(&database, &operation.id)?,
+            None,
+        ));
+    }
+    let mut agent = None;
+    if operation.status == "prepared" {
+        match save_managed_agent_identity_with_revision_source(
+            &agents_root.join(format!("agt_{}", save.agent_id)),
+            &revisions_root(&app)?,
+            save,
+            None,
+            Some(fixed_revision_id),
+        ) {
+            SaveManagedAgentIdentityResult::Saved {
+                agent: value,
+                revision,
+                ..
+            } => {
+                agent = Some(value);
+                operation = agent_service::set_operation_status_at(
+                    &database,
+                    &operation.id,
+                    "filesystem_committed",
+                    Some(&revision.id),
+                )?;
+            }
+            SaveManagedAgentIdentityResult::Unchanged { agent: value, .. } => {
+                agent = Some(value);
+                operation = agent_service::set_operation_status_at(
+                    &database,
+                    &operation.id,
+                    "filesystem_committed",
+                    None,
+                )?;
+            }
+            result => {
+                if matches!(
+                    &result,
+                    SaveManagedAgentIdentityResult::SaveFailed {
+                        recovery_ref: Some(_),
+                        file_state,
+                        ..
+                    } if file_state == "verified_written_revision_pending"
+                ) {
+                    operation = agent_service::set_operation_status_at(
+                        &database,
+                        &operation.id,
+                        "revision_pending",
+                        None,
+                    )?;
+                }
+                return Ok(AgentCommitResult::identity(operation, result));
+            }
+        }
+    }
+    if operation.status == "filesystem_committed" {
+        operation = agent_service::set_operation_status_at(
+            &database,
+            &operation.id,
+            "organization_pending",
+            None,
+        )?;
+    }
+    if operation.status == "organization_pending" {
+        operation = finish_agent_organization(&database, &agents_root, &operation)?;
+    }
+    Ok(AgentCommitResult::new(operation, agent))
+}
+
+#[tauri::command]
+fn list_agent_recovery_summaries(
+    app: tauri::AppHandle,
+    agent_id: Option<String>,
+) -> Result<Vec<agent_service::AgentRecoverySummaryDto>, String> {
+    agent_service::list_recovery_summaries_at(&domain_database_path(&app)?, agent_id.as_deref())
+}
+
+#[tauri::command]
+fn continue_agent_recovery(
+    app: tauri::AppHandle,
+    request: ContinueAgentRecoveryRequest,
+) -> Result<AgentCommitResult, String> {
+    let database = domain_database_path(&app)?;
+    let agents_root = managed_agents_root(&app)?;
+    let operation = agent_service::get_operation_at(&database, &request.operation_id)?;
+    if matches!(operation.status.as_str(), "completed" | "blocked") {
+        let agent = if operation.status == "completed" {
+            Some(load_committed_agent(&agents_root, &operation.agent_id)?)
+        } else {
+            None
+        };
+        return Ok(AgentCommitResult::new(operation, agent));
+    }
+    if operation.status != "prepared"
+        && block_if_manifest_changed(&database, &agents_root, &operation)?
+    {
+        return Ok(AgentCommitResult::new(
+            agent_service::get_operation_at(&database, &request.operation_id)?,
+            None,
+        ));
+    }
+    match operation.operation_kind.as_str() {
+        "create" => {
+            if operation.status == "prepared" {
+                let request_id = operation.request_id.clone();
+                let create = serde_json::from_value(operation.payload["create"].clone())
+                    .map_err(|_| "Agent create recovery payload 已损坏".to_string())?;
+                let organization =
+                    serde_json::from_value(operation.payload["organization"].clone())
+                        .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
+                commit_managed_agent_creation(
+                    app,
+                    CommitManagedAgentCreationRequest {
+                        request_id,
+                        create,
+                        organization,
+                    },
+                )
+            } else {
+                let mut current = operation;
+                if current.status == "filesystem_committed" {
+                    current = agent_service::set_operation_status_at(
+                        &database,
+                        &current.id,
+                        "revision_pending",
+                        None,
+                    )?;
+                }
+                if current.status == "revision_pending" {
+                    append_agent_commit_revision(
+                        &agents_root,
+                        &revisions_root(&app)?,
+                        &current,
+                        "创建 AgentPackage",
+                    )?;
+                    current = agent_service::set_operation_status_at(
+                        &database,
+                        &current.id,
+                        "organization_pending",
+                        None,
+                    )?;
+                }
+                Ok(AgentCommitResult::new(
+                    finish_agent_organization(&database, &agents_root, &current)?,
+                    None,
+                ))
+            }
+        }
+        "identity_update" => {
+            if operation.status == "revision_pending" {
+                let save: SaveManagedAgentIdentityRequest =
+                    serde_json::from_value(operation.payload["save"].clone())
+                        .map_err(|_| "Agent identity recovery payload 已损坏".to_string())?;
+                let recovery_ref = operation
+                    .fixed_revision_id
+                    .clone()
+                    .ok_or_else(|| "revision_pending operation 缺少 fixed revision".to_string())?;
+                let loaded = load_managed_agent_identity_at(
+                    &agents_root.join(format!("agt_{}", save.agent_id)),
+                    &save.agent_id,
+                )?;
+                let recovered = recover_managed_agent_identity_at(
+                    &agents_root.join(format!("agt_{}", save.agent_id)),
+                    &revisions_root(&app)?,
+                    RecoverManagedAgentIdentityRequest {
+                        request_id: format!("recover-{}", operation.request_id),
+                        agent_id: save.agent_id,
+                        asset_id: loaded.asset_id,
+                        recovery_ref,
+                    },
+                );
+                if !matches!(
+                    recovered,
+                    SaveManagedAgentIdentityResult::Saved { .. }
+                        | SaveManagedAgentIdentityResult::Unchanged { .. }
+                ) {
+                    return Err("Agent identity revision 仍无法补记".into());
+                }
+                let current = agent_service::set_operation_status_at(
+                    &database,
+                    &operation.id,
+                    "organization_pending",
+                    None,
+                )?;
+                return Ok(AgentCommitResult::new(
+                    finish_agent_organization(&database, &agents_root, &current)?,
+                    None,
+                ));
+            }
+            if operation.status == "prepared" {
+                let save = serde_json::from_value(operation.payload["save"].clone())
+                    .map_err(|_| "Agent identity recovery payload 已损坏".to_string())?;
+                let organization =
+                    serde_json::from_value(operation.payload["organization"].clone())
+                        .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
+                commit_managed_agent_identity(
+                    app,
+                    CommitManagedAgentIdentityRequest { save, organization },
+                )
+            } else {
+                let mut current = operation;
+                if current.status == "filesystem_committed" {
+                    current = agent_service::set_operation_status_at(
+                        &database,
+                        &current.id,
+                        "organization_pending",
+                        None,
+                    )?;
+                }
+                Ok(AgentCommitResult::new(
+                    finish_agent_organization(&database, &agents_root, &current)?,
+                    None,
+                ))
+            }
+        }
+        _ => Err("Agent commit operation kind 无效".into()),
+    }
 }
 
 #[tauri::command]
@@ -1654,7 +2190,14 @@ pub fn run() {
             save_managed_agent_identity,
             recover_managed_agent_identity,
             restore_managed_agent_identity,
-            list_managed_agents
+            list_managed_agents,
+            register_external_agent,
+            remove_external_agent,
+            list_agents,
+            commit_managed_agent_creation,
+            commit_managed_agent_identity,
+            continue_agent_recovery,
+            list_agent_recovery_summaries
         ])
         .menu(|app| {
             let application = SubmenuBuilder::new(app, "Bandi")

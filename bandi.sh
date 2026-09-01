@@ -126,7 +126,7 @@ start_web() {
   printf "${FG_BLUE}正在启动 Web 开发服务...${RESET}\n"
   (
     cd "$ROOT"
-    nohup pnpm dev >"$LOG_FILE" 2>&1 &
+    nohup pnpm web:dev >"$LOG_FILE" 2>&1 &
     printf '%s\n' "$!" >"$PID_FILE"
   )
   pid="$(read_pid)"
@@ -289,6 +289,35 @@ run_project_command() {
   cd "$ROOT" && pnpm "$command"
 }
 
+current_platform() {
+  case "$(uname -s)" in
+    Darwin) printf 'macOS' ;;
+    Linux) printf 'Linux' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'Windows' ;;
+    *) uname -s ;;
+  esac
+}
+
+build_desktop() {
+  printf "${FG_BLUE}当前系统：%s；正在构建本机 Desktop。${RESET}\n" "$(current_platform)"
+  run_project_command desktop:build
+}
+
+build_windows_installer() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) run_project_command desktop:bundle:windows ;;
+    *)
+      printf "${FG_YELLOW}Windows NSIS 必须在 Windows 开发机或 Windows CI runner 上构建。${RESET}\n"
+      return 1
+      ;;
+  esac
+}
+
+run_cli_command() {
+  command -v cargo >/dev/null 2>&1 || { printf "${FG_RED}未找到 cargo${RESET}\n"; return 1; }
+  cd "$ROOT" && pnpm cli "$@"
+}
+
 run_action() {
   case "${1:-}" in
     start) start_web ;;
@@ -297,6 +326,16 @@ run_action() {
     status) status_web ;;
     logs) attach_logs ;;
     desktop) start_desktop ;;
+    verify-web) run_project_command verify:web ;;
+    verify-rust) run_project_command verify:rust ;;
+    verify-e2e) run_project_command verify:e2e ;;
+    verify) run_project_command verify ;;
+    build-web) run_project_command build ;;
+    build-desktop) build_desktop ;;
+    bundle-windows) build_windows_installer ;;
+    doctor) run_cli_command doctor ;;
+    cli-status) run_cli_command status ;;
+    config-check) run_cli_command config check ;;
     lint|typecheck|test|build) run_project_command "$1" ;;
     help|-h|--help) show_help ;;
     *) printf "${FG_RED}未知操作：%s${RESET}\n" "${1:-}"; show_help; return 1 ;;
@@ -317,7 +356,7 @@ print_menu() {
   clear_screen
   echo ""
   printf "  ${BOLD}${FG_CYAN}┌────────────────────────────────────────────────────┐${RESET}\n"
-  printf "  ${BOLD}${FG_CYAN}│                Bandi 统一管理面板                  │${RESET}\n"
+  printf "  ${BOLD}${FG_CYAN}│                Bandi 本地开发面板                  │${RESET}\n"
   printf "  ${BOLD}${FG_CYAN}└────────────────────────────────────────────────────┘${RESET}\n"
   echo ""
   printf "  ${FG_CYAN}[当前状态]${RESET}\n"
@@ -331,13 +370,23 @@ print_menu() {
   printf "  ${FG_GREEN}5.${RESET} 跟随 Web 日志   ${FG_GRAY}./bandi.sh logs${RESET}\n"
   echo ""
   printf "  ${FG_CYAN}[Desktop]${RESET}\n"
-  printf "  ${FG_GREEN}6.${RESET} 启动 Desktop（前台，Ctrl+C 退出）\n"
+  printf "  ${FG_GREEN}6.${RESET} 启动本机 Desktop（前台，Ctrl+C 退出）\n"
   echo ""
-  printf "  ${FG_CYAN}[代码质量]${RESET}\n"
-  printf "  ${FG_GREEN}7.${RESET} ESLint 检查\n"
-  printf "  ${FG_GREEN}8.${RESET} TypeScript 类型检查\n"
-  printf "  ${FG_GREEN}9.${RESET} 运行测试\n"
-  printf "  ${FG_GREEN}10.${RESET} 构建 Web\n"
+  printf "  ${FG_CYAN}[验证]${RESET}\n"
+  printf "  ${FG_GREEN}7.${RESET} 验证 Web\n"
+  printf "  ${FG_GREEN}8.${RESET} 验证 Rust\n"
+  printf "  ${FG_GREEN}9.${RESET} 验证 Desktop E2E\n"
+  printf "  ${FG_GREEN}10.${RESET} 运行全部验证\n"
+  echo ""
+  printf "  ${FG_CYAN}[构建]${RESET}\n"
+  printf "  ${FG_GREEN}11.${RESET} 构建 Web\n"
+  printf "  ${FG_GREEN}12.${RESET} 构建本机 Desktop\n"
+  printf "  ${FG_GREEN}13.${RESET} 构建 Windows NSIS（仅 Windows）\n"
+  echo ""
+  printf "  ${FG_CYAN}[CLI 诊断]${RESET}\n"
+  printf "  ${FG_GREEN}14.${RESET} bandi doctor\n"
+  printf "  ${FG_GREEN}15.${RESET} bandi status\n"
+  printf "  ${FG_GREEN}16.${RESET} bandi config check\n"
   echo ""
   printf "  ${FG_GRAY}0. 退出${RESET}\n"
   echo ""
@@ -351,10 +400,16 @@ menu_action() {
     4) run_action status ;;
     5) run_action logs ;;
     6) run_action desktop ;;
-    7) run_action lint ;;
-    8) run_action typecheck ;;
-    9) run_action test ;;
-    10) run_action build ;;
+    7) run_action verify-web ;;
+    8) run_action verify-rust ;;
+    9) run_action verify-e2e ;;
+    10) run_action verify ;;
+    11) run_action build-web ;;
+    12) run_action build-desktop ;;
+    13) run_action bundle-windows ;;
+    14) run_action doctor ;;
+    15) run_action cli-status ;;
+    16) run_action config-check ;;
     0|q|Q) return 2 ;;
     *) printf "${FG_YELLOW}无效选项，请重新输入${RESET}\n"; return 1 ;;
   esac
@@ -380,17 +435,27 @@ show_help() {
 用法: ./bandi.sh [操作]
 
 操作:
-  start       后台启动 Web 开发服务
-  stop        停止 bandi.sh 托管的 Web 服务
-  restart     重启 Web 开发服务
-  status      查看 Web 服务状态
-  logs        查看 Web 实时日志
-  desktop     前台启动 Tauri Desktop
-  lint        运行 ESLint 检查
-  typecheck   运行 TypeScript 类型检查
-  test        运行测试
-  build       构建 Web
-  help        显示帮助
+  start           后台启动 Web 开发服务
+  stop            停止 bandi.sh 托管的 Web 服务
+  restart         重启 Web 开发服务
+  status          查看 Web 服务状态
+  logs            查看 Web 实时日志
+  desktop         前台启动本机 Tauri Desktop
+  verify-web       验证 Web（lint、类型、测试、构建）
+  verify-rust      验证 Rust（格式、检查、测试）
+  verify-e2e       验证 Desktop E2E 类型并运行 E2E
+  verify           运行全部验证和 diff 格式检查
+  build-web        构建 Web
+  build-desktop    构建本机 Desktop
+  bundle-windows   构建 Windows NSIS（仅 Windows）
+  doctor           运行 bandi doctor
+  cli-status       运行 bandi status
+  config-check     运行 bandi config check
+  lint             兼容入口：运行 ESLint 检查
+  typecheck        兼容入口：运行 TypeScript 类型检查
+  test             兼容入口：运行 Web 测试
+  build            兼容入口：构建 Web
+  help             显示帮助
 
 不带参数运行将打开交互管理面板。
 EOF

@@ -204,6 +204,38 @@ export type WorkspaceRegistrationResult = {
   }
 }
 
+export type ExternalAgentReferenceDto = {
+  agentId: Id
+  canonicalRoot: string
+  metadata: import('./domain').FullAgent
+  createdAt: Timestamp
+  updatedAt: Timestamp
+}
+
+export type AgentRecoveryStatus =
+  | 'prepared'
+  | 'filesystem_committed'
+  | 'revision_pending'
+  | 'organization_pending'
+  | 'blocked'
+  | 'completed'
+
+export type AgentRecoveryOperationSummaryDto = {
+  id: Id
+  agentId: Id
+  operationKind: 'create' | 'identity_update'
+  status: AgentRecoveryStatus
+  createdAt: Timestamp
+  completedAt?: Timestamp
+  safeReason?: string
+}
+
+export type AgentCommitResultDto = {
+  operation: AgentRecoveryOperationSummaryDto
+  agent?: import('./domain').FullAgent
+  identityResult?: SaveManagedAgentIdentityResult
+}
+
 export type PersistedServiceGrant = {
   id: Id
   agentId: Id

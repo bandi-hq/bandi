@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyPluginAction, pluginScopeLabels, type PluginInstallation, type PluginScope } from '../plugin-installation'
+import { applyPluginAction, pluginInstallationStatusLabels, pluginScopeLabels, type PluginInstallation, type PluginScope } from '../plugin-installation'
 
 const available: PluginInstallation = {
   pluginId: 'plugin-demo',
@@ -27,8 +27,14 @@ describe('PluginInstallation', () => {
     expect(applyPluginAction(rolledBack, 'uninstall')).toMatchObject({ scope, status: 'available', installedVersion: undefined })
   })
 
-  it('只定义 Claude Code 官方安装作用域标签', () => {
+  it('定义完整的中文安装范围和状态标签', () => {
     expect(pluginScopeLabels).toEqual({ user: '用户', project: '项目', local: '本地', managed: '受管' })
+    expect(pluginInstallationStatusLabels).toEqual({
+      available: '未安装',
+      installed: '已安装',
+      'update-available': '可更新',
+      incompatible: '不兼容',
+    })
   })
 
   it('拒绝不兼容、不完整和不适用的动作', () => {

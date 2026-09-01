@@ -2,6 +2,12 @@ import type { FullAgent, FullAsset, SkillInstallation } from './domain'
 
 export type SkillAction = 'install' | 'update' | 'rollback' | 'uninstall'
 
+export const skillInstallationStatusLabels: Record<SkillInstallation['status'], string> = {
+  available: '未安装',
+  installed: '已安装',
+  'update-available': '可更新',
+}
+
 export function isSkillAsset(asset: FullAsset): asset is FullAsset & { skill: NonNullable<FullAsset['skill']> } {
   return asset.kind === 'Skill' && Boolean(asset.skill)
 }

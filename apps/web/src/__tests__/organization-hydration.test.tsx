@@ -10,12 +10,15 @@ import { initialAgents, initialWorkspaces } from '../domain'
 const desktopBridge = vi.hoisted(() => ({
   listManagedAgents: vi.fn(),
   loadOrganizationSnapshot: vi.fn(),
+  listAgentRecoveryOperations: vi.fn(),
 }))
 
 vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => true,
+  listAgents: desktopBridge.listManagedAgents,
   listManagedAgents: desktopBridge.listManagedAgents,
   loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
+  listAgentRecoveryOperations: desktopBridge.listAgentRecoveryOperations,
 }))
 
 function SnapshotProbe() {
@@ -33,6 +36,8 @@ function SnapshotProbe() {
 beforeEach(() => {
   desktopBridge.listManagedAgents.mockReset()
   desktopBridge.loadOrganizationSnapshot.mockReset()
+  desktopBridge.listAgentRecoveryOperations.mockReset()
+  desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
   vi.stubGlobal('localStorage', {
     getItem: () => null,
     setItem: () => undefined,
