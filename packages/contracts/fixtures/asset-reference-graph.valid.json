@@ -1,0 +1,36 @@
+{
+  "sharedAssets": [
+    {
+      "id": "skill-review",
+      "kind": "skill",
+      "companyId": "xinghe",
+      "locator": {
+        "rootKind": "bandi",
+        "displayPath": "skill-review/SKILL.md",
+        "relativePath": "skill-review/SKILL.md"
+      },
+      "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parseStatus": "parsed",
+      "diagnostics": []
+    }
+  ],
+  "references": [
+    {
+      "sourceAssetId": "asset-source",
+      "sourceContainerId": "container-source",
+      "referrerKind": "agent",
+      "referrerId": "zhouce",
+      "workspaceId": "bandi",
+      "targetAssetId": "skill-review",
+      "targetKind": "skill",
+      "state": "resolved",
+      "targetLocator": {
+        "rootKind": "bandi",
+        "displayPath": "skill-review/SKILL.md",
+        "relativePath": "skill-review/SKILL.md"
+      },
+      "targetCompanyId": "xinghe",
+      "sourcePath": "agt_zhouce/workspaces/bandi/config.yaml"
+    }
+  ]
+}

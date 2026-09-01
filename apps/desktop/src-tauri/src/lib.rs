@@ -1,15 +1,22 @@
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     Emitter, Manager,
 };
+
+mod ai_adapters;
+mod backup_service;
+pub mod cli_service;
+mod config_fs;
+mod domain_store;
+mod local_service;
+mod memory_service;
+mod memory_target;
+mod shared_assets;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,69 +50,149 @@ enum AvatarChange {
 }
 
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SaveManagedAgentIdentityRequest {
+    request_id: String,
     agent_id: String,
     agent: serde_json::Value,
     manifest: String,
-    expected_manifest: String,
+    expected_baseline: local_service::BaselineRefDto,
+    base_content: String,
     avatar: AvatarChange,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoverManagedAgentIdentityRequest {
+    request_id: String,
+    agent_id: String,
+    asset_id: String,
+    recovery_ref: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RestoreManagedAgentIdentityRequest {
+    request_id: String,
+    agent_id: String,
+    asset_id: String,
+    revision_id: String,
+    expected_baseline: local_service::BaselineRefDto,
+    base_content: String,
+    confirmed: bool,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagedAgentResult {
     agent: serde_json::Value,
-    baseline: String,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LaunchWorkspaceRequest {
-    request_id: String,
-    workspace_id: String,
-    cwd: String,
-    terminal_id: String,
-    executable: String,
-    args: Vec<String>,
-    enter_bandi_on_start: bool,
+    baseline_ref: local_service::BaselineRefDto,
 }
 
 #[derive(serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-enum LaunchWorkspaceResult {
-    Accepted {
+#[serde(rename_all = "camelCase")]
+struct ManagedAgentIdentityEditorResult {
+    #[serde(rename = "assetId")]
+    asset_id: String,
+    #[serde(rename = "containerId")]
+    container_id: String,
+    locator: local_service::AssetLocatorDto,
+    #[serde(rename = "canonicalContent")]
+    canonical_content: String,
+    #[serde(rename = "baselineRef")]
+    baseline_ref: local_service::BaselineRefDto,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SaveManagedAgentIdentityResult {
+    Saved {
         #[serde(rename = "requestId")]
         request_id: String,
-        #[serde(rename = "acceptedAt")]
-        accepted_at: String,
+        agent: serde_json::Value,
+        #[serde(rename = "baselineRef")]
+        baseline_ref: local_service::BaselineRefDto,
+        revision: Box<local_service::ConfigRevisionDto>,
+        #[serde(rename = "writeReceipt")]
+        write_receipt: local_service::WriteReceiptDto,
     },
-    FallbackRequired {
+    Unchanged {
         #[serde(rename = "requestId")]
         request_id: String,
-        executable: String,
-        args: Vec<String>,
-        message: String,
+        agent: serde_json::Value,
+        #[serde(rename = "baselineRef")]
+        baseline_ref: local_service::BaselineRefDto,
     },
-    Rejected {
+    BaselineChanged {
         #[serde(rename = "requestId")]
         request_id: String,
-        code: String,
-        message: String,
+        #[serde(rename = "assetId")]
+        asset_id: String,
+        #[serde(rename = "containerId")]
+        container_id: String,
+        locator: local_service::AssetLocatorDto,
+        base: local_service::ConfigSideDto,
+        current: local_service::ConfigSideDto,
+        proposed: local_service::ConfigSideDto,
+        diagnostics: Vec<local_service::DiagnosticDto>,
+    },
+    ValidationFailed {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        diagnostics: Vec<local_service::DiagnosticDto>,
+    },
+    SaveFailed {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        diagnostics: Vec<local_service::DiagnosticDto>,
+        retryable: bool,
+        #[serde(rename = "fileState")]
+        file_state: String,
+        #[serde(rename = "recoveryRef", skip_serializing_if = "Option::is_none")]
+        recovery_ref: Option<String>,
     },
 }
 
-fn terminal_bundle_id(id: &str) -> Result<&'static str, String> {
-    match id {
-        "system" | "terminal" => Ok("com.apple.Terminal"),
-        "iterm2" => Ok("com.googlecode.iterm2"),
-        "warp" => Ok("dev.warp.Warp-Stable"),
-        "ghostty" => Ok("com.mitchellh.ghostty"),
-        "wezterm" => Ok("com.github.wez.wezterm"),
-        "kitty" => Ok("net.kovidgoyal.kitty"),
-        "alacritty" => Ok("org.alacritty"),
-        _ => Err("UNSUPPORTED_TERMINAL: 当前终端尚未加入安全白名单".into()),
-    }
+#[cfg(test)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiagnosticDto {
+    code: String,
+    severity: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<DiagnosticRangeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<String>,
+}
+
+#[cfg(test)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiagnosticRangeDto {
+    start_line: u32,
+    start_column: u32,
+    end_line: u32,
+    end_column: u32,
+}
+
+#[cfg(test)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LocalServiceEventDto {
+    ConfigInvalidated {
+        #[serde(rename = "eventId")]
+        event_id: String,
+        #[serde(rename = "occurredAt")]
+        occurred_at: String,
+        #[serde(rename = "assetIds")]
+        asset_ids: Vec<String>,
+        reason: String,
+    },
 }
 
 fn validate_identifier(value: &str) -> bool {
@@ -116,186 +203,405 @@ fn validate_identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
-fn validated_workspace_path(cwd: &str) -> Result<PathBuf, String> {
-    let path = Path::new(cwd);
-    if !path.is_absolute() {
-        return Err("INVALID_WORKSPACE_PATH: 工作区必须使用绝对路径".into());
-    }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| "WORKSPACE_UNAVAILABLE: 工作区目录不存在或不可访问".to_string())?;
-    if !canonical.is_dir() {
-        return Err("INVALID_WORKSPACE_PATH: 工作区路径不是目录".into());
-    }
-    Ok(canonical)
+fn workspace_registry_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("workspaces"))
+        .map_err(|_| "无法访问 Workspace Registry".into())
 }
 
-fn open_terminal_app(bundle_id: &str, cwd: &Path) -> Result<(), String> {
-    let status = Command::new("/usr/bin/open")
-        .arg("-b")
-        .arg(bundle_id)
-        .arg(cwd)
-        .status()
-        .map_err(|_| "TERMINAL_OPEN_FAILED: 无法请求 macOS 打开终端".to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("TERMINAL_OPEN_FAILED: 终端未安装或未接受目录打开请求".into())
-    }
+fn domain_database_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("bandi.db"))
+        .map_err(|_| "无法访问本地领域数据库".into())
 }
 
-fn validate_launch(executable: &str, args: &[String]) -> Result<Vec<String>, String> {
-    if executable.is_empty() || executable.len() > 512 || executable.contains(['\0', '\r', '\n']) {
-        return Err("INVALID_EXECUTABLE: 启动程序无效".into());
-    }
-    if executable.contains('/') {
-        let path = Path::new(executable);
-        if !path.is_absolute() || executable.split('/').any(|segment| segment == "..") {
-            return Err("INVALID_EXECUTABLE: 自定义程序必须使用无路径穿越的绝对路径".into());
-        }
-        let metadata = fs::metadata(path)
-            .map_err(|_| "EXECUTABLE_UNAVAILABLE: 自定义启动程序不存在或不可访问".to_string())?;
-        if !metadata.is_file() {
-            return Err("INVALID_EXECUTABLE: 自定义启动程序不是普通文件".into());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o111 == 0 {
-                return Err("INVALID_EXECUTABLE: 自定义启动程序不可执行".into());
-            }
-        }
-    } else if !executable
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
-    {
-        return Err("INVALID_EXECUTABLE: 启动程序只能是普通命令名或绝对路径".into());
-    }
-    if args.len() > 32
-        || args
-            .iter()
-            .any(|arg| arg.is_empty() || arg.len() > 512 || arg.contains(['\0', '\r', '\n']))
-        || args.iter().map(String::len).sum::<usize>() > 4096
-    {
-        return Err("INVALID_ARGUMENTS: 启动参数无效或超过限制".into());
-    }
-    Ok(args.to_vec())
+fn shared_assets_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("shared-assets"))
+        .map_err(|_| "无法访问 Bandi 共享资产根".into())
 }
 
-fn launch_args(request: &LaunchWorkspaceRequest) -> Result<Vec<String>, String> {
-    let mut args = validate_launch(&request.executable, &request.args)?;
-    if request.enter_bandi_on_start && !args.iter().any(|arg| arg == "/bandi:bandi") {
-        args.push("/bandi:bandi".into());
+fn workspace_path_from_registry(
+    app: &tauri::AppHandle,
+    workspace_id: &str,
+) -> Result<PathBuf, String> {
+    let database_path = domain_store::workspace_path_at(&domain_database_path(app)?, workspace_id)?;
+    let registry_path = local_service::workspace_path_from_registry_at(
+        &workspace_registry_root(app)?,
+        workspace_id,
+    )?;
+    if database_path != registry_path {
+        return Err("工作区 Registry 与本地数据库路径不一致".into());
     }
-    Ok(args)
+    Ok(registry_path)
 }
 
-fn direct_terminal_command(terminal_id: &str) -> Option<(&'static str, Vec<&'static str>)> {
-    match terminal_id {
-        "ghostty" => Some((
-            "/Applications/Ghostty.app/Contents/MacOS/ghostty",
-            vec!["--working-directory"],
-        )),
-        "wezterm" => Some((
-            "/Applications/WezTerm.app/Contents/MacOS/wezterm",
-            vec!["start", "--cwd"],
-        )),
-        "kitty" => Some((
-            "/Applications/kitty.app/Contents/MacOS/kitty",
-            vec!["--directory"],
-        )),
-        "alacritty" => Some((
-            "/Applications/Alacritty.app/Contents/MacOS/alacritty",
-            vec!["--working-directory"],
-        )),
-        _ => None,
-    }
-}
-
-fn launch_direct_terminal(
-    terminal_id: &str,
-    cwd: &Path,
-    executable: &str,
-    args: &[String],
-) -> Result<bool, String> {
-    let Some((program, prefix)) = direct_terminal_command(terminal_id) else {
-        return Ok(false);
-    };
-    if !Path::new(program).is_file() {
-        return Ok(false);
-    }
-    let mut command = Command::new(program);
-    command.args(prefix).arg(cwd);
-    match terminal_id {
-        "ghostty" => {
-            command.arg("-e");
-        }
-        "wezterm" => {
-            command.arg("--");
-        }
-        "alacritty" => {
-            command.arg("-e");
-        }
-        _ => {}
-    }
-    command.arg(executable).args(args);
-    command
-        .spawn()
-        .map(|_| true)
-        .map_err(|_| "TERMINAL_LAUNCH_FAILED: 无法请求终端执行启动命令".into())
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateWorkspaceRequest {
+    request_id: String,
+    selected_path: String,
+    workspace: domain_store::WorkspaceDto,
 }
 
 #[tauri::command]
-fn launch_workspace_terminal(request: LaunchWorkspaceRequest) -> LaunchWorkspaceResult {
-    let reject = |error: String| {
-        let (code, message) = error
-            .split_once(": ")
-            .unwrap_or(("LAUNCH_REJECTED", &error));
-        LaunchWorkspaceResult::Rejected {
-            request_id: request.request_id.clone(),
-            code: code.into(),
-            message: message.into(),
+fn register_workspace(
+    app: tauri::AppHandle,
+    request: local_service::RegisterWorkspaceRequest,
+) -> Result<local_service::WorkspaceRegistrationResult, String> {
+    let registry = workspace_registry_root(&app)?;
+    let outcome = local_service::register_workspace_with_status_at(&registry, request)?;
+    if let Err(error) = domain_store::import_workspace_record_at(
+        &domain_database_path(&app)?,
+        &outcome.result.workspace_id,
+        Path::new(&outcome.result.canonical_path),
+    ) {
+        if outcome.created {
+            let _ = local_service::unregister_workspace_at(&registry, &outcome.result.workspace_id);
         }
-    };
-    if !validate_identifier(&request.request_id) || !validate_identifier(&request.workspace_id) {
-        return reject("INVALID_REQUEST: 请求或工作区标识无效".into());
+        return Err(error);
     }
-    let bundle_id = match terminal_bundle_id(&request.terminal_id) {
-        Ok(value) => value,
-        Err(error) => return reject(error),
-    };
-    let cwd = match validated_workspace_path(&request.cwd) {
-        Ok(value) => value,
-        Err(error) => return reject(error),
-    };
-    let args = match launch_args(&request) {
-        Ok(value) => value,
-        Err(error) => return reject(error),
-    };
-    match launch_direct_terminal(&request.terminal_id, &cwd, &request.executable, &args) {
-        Ok(true) => LaunchWorkspaceResult::Accepted {
+    Ok(outcome.result)
+}
+
+#[tauri::command]
+fn create_workspace(
+    app: tauri::AppHandle,
+    request: CreateWorkspaceRequest,
+) -> Result<domain_store::WorkspaceDto, String> {
+    if request.workspace.path != request.selected_path {
+        return Err("工作区创建请求路径不一致".into());
+    }
+    let registry = workspace_registry_root(&app)?;
+    let outcome = local_service::register_workspace_with_status_at(
+        &registry,
+        local_service::RegisterWorkspaceRequest {
             request_id: request.request_id,
-            accepted_at: accepted_at(),
+            workspace_id: request.workspace.id.clone(),
+            selected_path: request.selected_path,
         },
-        Err(error) => reject(error),
-        Ok(false) => {
-            if let Err(error) = open_terminal_app(bundle_id, &cwd) {
-                return reject(error);
+    )?;
+    let mut workspace = request.workspace;
+    workspace.path = outcome.result.canonical_path;
+    match domain_store::save_workspace_at(
+        &domain_database_path(&app)?,
+        domain_store::SaveWorkspaceRequest { workspace },
+    ) {
+        Ok(workspace) => Ok(workspace),
+        Err(error) => {
+            if outcome.created {
+                let _ =
+                    local_service::unregister_workspace_at(&registry, &outcome.result.workspace_id);
             }
-            LaunchWorkspaceResult::FallbackRequired {
-                request_id: request.request_id,
-                executable: request.executable,
-                args,
-                message: "当前终端尚未通过自动执行验证；已打开工作目录，请复制命令运行。".into(),
-            }
+            Err(error)
         }
     }
 }
 
-fn accepted_at() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis().to_string())
-        .unwrap_or_else(|_| "0".into())
+#[tauri::command]
+fn load_organization_snapshot(
+    app: tauri::AppHandle,
+) -> Result<domain_store::OrganizationSnapshotDto, String> {
+    domain_store::load_snapshot_at(&domain_database_path(&app)?)
+}
+
+#[tauri::command]
+fn save_company(
+    app: tauri::AppHandle,
+    request: domain_store::SaveCompanyRequest,
+) -> Result<domain_store::CompanyDto, String> {
+    domain_store::save_company_governed_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn save_department(
+    app: tauri::AppHandle,
+    request: domain_store::SaveDepartmentRequest,
+) -> Result<domain_store::DepartmentDto, String> {
+    domain_store::save_department_governed_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn save_role(
+    app: tauri::AppHandle,
+    request: domain_store::SaveRoleRequest,
+) -> Result<domain_store::RoleDto, String> {
+    domain_store::save_role_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn save_workspace(
+    app: tauri::AppHandle,
+    request: domain_store::SaveWorkspaceRequest,
+) -> Result<domain_store::WorkspaceDto, String> {
+    let canonical = workspace_path_from_registry(&app, &request.workspace.id)?;
+    if canonical.as_os_str() != request.workspace.path.as_str() {
+        return Err("工作区路径与 Registry 记录不一致".into());
+    }
+    domain_store::save_workspace_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn remove_workspace(
+    app: tauri::AppHandle,
+    request: domain_store::RemoveWorkspaceRequest,
+) -> Result<(), String> {
+    let registry = workspace_registry_root(&app)?;
+    let database = domain_database_path(&app)?;
+    let workspace_id = request.workspace_id.clone();
+    let canonical = local_service::workspace_path_from_registry_at(&registry, &workspace_id)?;
+    domain_store::remove_workspace_at(&database, request)?;
+    if let Err(error) = local_service::unregister_workspace_at(&registry, &workspace_id) {
+        if domain_store::import_workspace_record_at(&database, &workspace_id, &canonical).is_err() {
+            return Err(format!("{error}；本地数据库补偿失败"));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn save_service_grants(
+    app: tauri::AppHandle,
+    request: domain_store::SaveServiceGrantsRequest,
+) -> Result<Vec<domain_store::ServiceGrantDto>, String> {
+    domain_store::save_service_grants_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn generate_entity_id(prefix: String, name: String) -> Result<String, String> {
+    if !matches!(
+        prefix.as_str(),
+        "company" | "department" | "role" | "workspace"
+    ) || name.trim().is_empty()
+    {
+        return Err("实体标识请求无效".into());
+    }
+    Ok(domain_store::stable_entity_id(&prefix, &name))
+}
+
+#[tauri::command]
+fn discover_config(
+    app: tauri::AppHandle,
+    request: local_service::DiscoveryRequest,
+) -> Result<local_service::DiscoveryResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    let snapshot = domain_store::load_snapshot_at(&domain_database_path(&app)?)?;
+    Ok(local_service::discover_with_shared_at(
+        &workspace_registry_root(&app)?,
+        &managed,
+        &shared_assets_root(&app)?,
+        &snapshot,
+        true,
+        request,
+    ))
+}
+
+#[tauri::command]
+fn load_config_editor(
+    app: tauri::AppHandle,
+    request: local_service::LoadEditorRequest,
+) -> Result<local_service::LoadEditorResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    local_service::load_editor_at(&managed, request)
+}
+
+fn backup_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("backups"))
+        .map_err(|_| "BACKUP_STORAGE_UNAVAILABLE: 无法访问本地快照目录".to_string())
+}
+
+fn revisions_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("revisions"))
+        .map_err(|_| "REVISION_STORAGE_UNAVAILABLE: 无法访问配置版本目录".to_string())
+}
+
+#[tauri::command]
+fn create_backup_snapshot(
+    app: tauri::AppHandle,
+    request: backup_service::CreateBackupSnapshotRequest,
+) -> Result<backup_service::BackupSnapshotDto, String> {
+    backup_service::create_snapshot_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &backup_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn list_backup_snapshots(
+    app: tauri::AppHandle,
+) -> Result<Vec<backup_service::BackupSnapshotDto>, String> {
+    backup_service::list_snapshots_at(&domain_database_path(&app)?)
+}
+
+#[tauri::command]
+fn preview_backup_restore(
+    app: tauri::AppHandle,
+    request: backup_service::PreviewBackupRestoreRequest,
+) -> Result<backup_service::BackupRestorePreviewDto, String> {
+    backup_service::preview_restore_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &backup_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn restore_backup_snapshot(
+    app: tauri::AppHandle,
+    request: backup_service::RestoreBackupSnapshotRequest,
+) -> Result<backup_service::BackupRestoreResultDto, String> {
+    backup_service::restore_snapshot_at(
+        &domain_database_path(&app)?,
+        &workspace_registry_root(&app)?,
+        &managed_agents_root(&app)?,
+        &revisions_root(&app)?,
+        &backup_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn list_config_revisions(
+    app: tauri::AppHandle,
+    asset_id: String,
+) -> Result<Vec<local_service::ConfigRevisionDto>, String> {
+    local_service::list_revisions_at(&revisions_root(&app)?, &asset_id)
+}
+
+#[tauri::command]
+fn read_config_revision_content(
+    app: tauri::AppHandle,
+    revision_id: String,
+) -> Result<String, String> {
+    local_service::read_revision_content_at(&revisions_root(&app)?, &revision_id)
+}
+
+#[tauri::command]
+fn create_workspace_binding(
+    app: tauri::AppHandle,
+    request: local_service::CreateWorkspaceBindingRequest,
+) -> Result<local_service::SaveConfigResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    Ok(local_service::create_workspace_binding_at(
+        &workspace_registry_root(&app)?,
+        &managed,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+#[tauri::command]
+fn save_config(
+    app: tauri::AppHandle,
+    request: local_service::SaveConfigRequest,
+) -> Result<local_service::SaveConfigResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    Ok(local_service::save_config_registered_at(
+        &workspace_registry_root(&app)?,
+        &managed,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+#[tauri::command]
+fn recover_config_revision(
+    app: tauri::AppHandle,
+    request: local_service::RecoverConfigRevisionRequest,
+) -> Result<local_service::SaveConfigResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    Ok(local_service::recover_config_revision_registered_at(
+        &workspace_registry_root(&app)?,
+        &managed,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+#[tauri::command]
+fn restore_config_revision(
+    app: tauri::AppHandle,
+    request: local_service::RestoreConfigRevisionRequest,
+) -> Result<local_service::SaveConfigResult, String> {
+    let managed = managed_agent_dir(&app, "probe")?
+        .parent()
+        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
+        .to_path_buf();
+    Ok(local_service::restore_config_revision_registered_at(
+        &workspace_registry_root(&app)?,
+        &managed,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn open_workspace_directory(
+    terminal_id: ai_adapters::TerminalId,
+    cwd: &Path,
+) -> Result<bool, String> {
+    std::process::Command::new("/usr/bin/open")
+        .arg("-b")
+        .arg(terminal_id.bundle_id())
+        .arg(cwd)
+        .status()
+        .map(|status| status.success())
+        .map_err(|_| "无法调用固定目录打开程序".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_workspace_directory(
+    _terminal_id: ai_adapters::TerminalId,
+    _cwd: &Path,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[tauri::command]
+fn request_client_handoff(
+    app: tauri::AppHandle,
+    request: ai_adapters::ClientHandoffRequest,
+) -> ai_adapters::ClientHandoffResult {
+    ai_adapters::request_handoff_at(
+        request,
+        |workspace_id| workspace_path_from_registry(&app, workspace_id),
+        cfg!(target_os = "macos"),
+        |terminal_id, cwd| open_workspace_directory(terminal_id, cwd),
+    )
 }
 
 fn asset_name(slot: &str) -> Result<(&'static str, usize), String> {
@@ -352,26 +658,18 @@ fn import_ui_asset(app: tauri::AppHandle, slot: String, bytes: Vec<u8>) -> Resul
     }
     image_mime(&bytes)?;
     let target = asset_path(&app, &slot)?;
-    let parent = target
-        .parent()
-        .ok_or_else(|| "ASSET_STORAGE_UNAVAILABLE: 个性化资源目录无效".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|_| "ASSET_WRITE_FAILED: 无法创建个性化资源目录".to_string())?;
-    let temporary = parent.join(format!(".{slot}.tmp"));
-    let mut file = fs::File::create(&temporary)
-        .map_err(|_| "ASSET_WRITE_FAILED: 无法写入个性化图片".to_string())?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "ASSET_WRITE_FAILED: 无法完整写入个性化图片".to_string())?;
-    fs::rename(&temporary, &target).map_err(|_| {
-        let _ = fs::remove_file(&temporary);
-        "ASSET_WRITE_FAILED: 无法安全替换个性化图片".to_string()
-    })
+    let require_existing = target.exists();
+    config_fs::restricted_atomic_write(&target, &bytes, require_existing, "个性化图片")
+        .map_err(|message| format!("ASSET_WRITE_FAILED: {message}"))
 }
 
 #[tauri::command]
 fn read_ui_asset(app: tauri::AppHandle, slot: String) -> Result<Option<UiAsset>, String> {
     let target = asset_path(&app, &slot)?;
+    if target.exists() {
+        config_fs::ensure_regular_file(&target, "个性化图片")
+            .map_err(|message| format!("ASSET_READ_FAILED: {message}"))?;
+    }
     let bytes = match fs::read(target) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -383,47 +681,28 @@ fn read_ui_asset(app: tauri::AppHandle, slot: String) -> Result<Option<UiAsset>,
 
 #[tauri::command]
 fn delete_ui_asset(app: tauri::AppHandle, slot: String) -> Result<(), String> {
-    match fs::remove_file(asset_path(&app, &slot)?) {
+    let target = asset_path(&app, &slot)?;
+    if target.exists() {
+        config_fs::ensure_regular_file(&target, "个性化图片")
+            .map_err(|message| format!("ASSET_DELETE_FAILED: {message}"))?;
+    }
+    match fs::remove_file(target) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err("ASSET_DELETE_FAILED: 无法移除个性化图片".into()),
     }
 }
 
-fn managed_agent_dir(app: &tauri::AppHandle, agent_id: &str) -> Result<PathBuf, String> {
-    validate_agent_id(agent_id)?;
+fn managed_agents_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .home_dir()
-        .map(|path| {
-            path.join(".bandi")
-                .join("agents")
-                .join(format!("agt_{agent_id}"))
-        })
+        .map(|path| path.join(".bandi").join("agents"))
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE: 无法访问受管 Agent 目录".into())
 }
 
-fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 目录无效".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|_| "AGENT_WRITE_FAILED: 无法创建受管 Agent 目录".to_string())?;
-    let temporary = parent.join(format!(
-        ".{}.tmp",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("agent")
-    ));
-    let mut file = fs::File::create(&temporary)
-        .map_err(|_| "AGENT_WRITE_FAILED: 无法写入临时文件".to_string())?;
-    file.write_all(bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "AGENT_WRITE_FAILED: 无法完整写入文件".to_string())?;
-    fs::rename(&temporary, target).map_err(|_| {
-        let _ = fs::remove_file(&temporary);
-        "AGENT_WRITE_FAILED: 无法安全替换文件".to_string()
-    })
+fn managed_agent_dir(app: &tauri::AppHandle, agent_id: &str) -> Result<PathBuf, String> {
+    validate_agent_id(agent_id)?;
+    managed_agents_root(app).map(|path| path.join(format!("agt_{agent_id}")))
 }
 
 fn validate_package_path(path: &str) -> Result<(), String> {
@@ -439,18 +718,14 @@ fn validate_package_path(path: &str) -> Result<(), String> {
     }
 }
 
-fn baseline(content: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in content.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
 fn write_package_file(root: &Path, file: &AgentPackageFile) -> Result<(), String> {
     validate_package_path(&file.path)?;
-    write_atomic(&root.join(&file.path), file.content.as_bytes())
+    config_fs::restricted_atomic_write(
+        &root.join(&file.path),
+        file.content.as_bytes(),
+        false,
+        "AgentPackage 文件",
+    )
 }
 
 fn validate_agent_record(
@@ -476,7 +751,12 @@ fn validate_agent_record(
 fn write_agent_record(root: &Path, agent: &serde_json::Value) -> Result<(), String> {
     let bytes = serde_json::to_vec(agent)
         .map_err(|_| "INVALID_AGENT_RECORD: Agent 记录无法序列化".to_string())?;
-    write_atomic(&root.join(".bandi-agent.json"), &bytes)
+    config_fs::restricted_atomic_write(
+        &root.join(".bandi-agent.json"),
+        &bytes,
+        false,
+        "Agent 索引记录",
+    )
 }
 
 fn create_managed_agent_at(
@@ -513,14 +793,20 @@ fn create_managed_agent_at(
             write_package_file(&staging, file)?;
         }
         if let Some(bytes) = request.avatar_bytes.as_deref() {
-            write_atomic(&staging.join("avatar.png"), bytes)?;
+            config_fs::restricted_atomic_write(
+                &staging.join("avatar.png"),
+                bytes,
+                false,
+                "Agent 头像",
+            )?;
         }
         write_agent_record(&staging, &request.agent)?;
         fs::rename(&staging, &target)
             .map_err(|_| "AGENT_WRITE_FAILED: 无法提交 AgentPackage".to_string())?;
+        let (_, _, _, baseline_ref) = identity_asset_facts(&target, &request.agent_id, &manifest);
         Ok(ManagedAgentResult {
             agent: request.agent,
-            baseline: baseline(&manifest),
+            baseline_ref,
         })
     })();
     if result.is_err() {
@@ -541,22 +827,177 @@ fn create_managed_agent(
     create_managed_agent_at(agents_root, request)
 }
 
-fn save_managed_agent_identity_at(
+fn identity_asset_facts(
     root: &Path,
-    request: SaveManagedAgentIdentityRequest,
-) -> Result<ManagedAgentResult, String> {
-    validate_agent_id(&request.agent_id)?;
+    agent_id: &str,
+    content: &str,
+) -> (
+    String,
+    String,
+    local_service::AssetLocatorDto,
+    local_service::BaselineRefDto,
+) {
+    let asset_id = local_service::stable_id("asset", &format!("managed:{agent_id}:identity"));
+    let container_id =
+        local_service::stable_id("container", &format!("managed:{agent_id}:agent.yaml"));
+    let content_hash = local_service::hash_bytes(content.as_bytes());
+    let baseline_id = local_service::stable_id(
+        "baseline",
+        &format!("{asset_id}:{content_hash}:{content_hash}"),
+    );
+    let locator = local_service::AssetLocatorDto {
+        root_kind: local_service::RootKind::Managed,
+        display_path: root.join("agent.yaml").to_string_lossy().into_owned(),
+        relative_path: Some(format!("agt_{agent_id}/agent.yaml")),
+    };
+    let baseline_ref = local_service::BaselineRefDto {
+        id: baseline_id,
+        asset_id: asset_id.clone(),
+        container_id: container_id.clone(),
+        asset_content_hash: content_hash.clone(),
+        container_content_hash: content_hash,
+    };
+    (asset_id, container_id, locator, baseline_ref)
+}
+
+fn load_managed_agent_identity_at(
+    root: &Path,
+    agent_id: &str,
+) -> Result<ManagedAgentIdentityEditorResult, String> {
+    validate_agent_id(agent_id)?;
     if !root.is_dir() {
         return Err("AGENT_NOT_FOUND: 受管 AgentPackage 不存在".into());
     }
     let manifest_path = root.join("agent.yaml");
-    let current = fs::read_to_string(&manifest_path)
+    let canonical_content = fs::read_to_string(&manifest_path)
         .map_err(|_| "AGENT_READ_FAILED: 无法读取 agent.yaml".to_string())?;
-    if baseline(&current) != request.expected_manifest {
-        return Err("BASELINE_CHANGED: agent.yaml 已被外部修改，请刷新后重试".into());
+    let (_, schema_version) =
+        local_service::manifest_facts(&manifest_path).map_err(|diagnostic| diagnostic.message)?;
+    if schema_version != 1 {
+        return Err("AGENT_READ_ONLY: 当前 AgentPackage 版本不支持身份编辑".into());
+    }
+    let metadata = fs::symlink_metadata(&manifest_path)
+        .map_err(|_| "AGENT_READ_FAILED: 无法检查 agent.yaml".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("AGENT_READ_ONLY: agent.yaml 必须是普通文件".into());
+    }
+    let (asset_id, container_id, locator, baseline_ref) =
+        identity_asset_facts(root, agent_id, &canonical_content);
+    Ok(ManagedAgentIdentityEditorResult {
+        asset_id,
+        container_id,
+        locator,
+        canonical_content,
+        baseline_ref,
+    })
+}
+
+#[tauri::command]
+fn load_managed_agent_identity(
+    app: tauri::AppHandle,
+    agent_id: String,
+) -> Result<ManagedAgentIdentityEditorResult, String> {
+    let root = managed_agent_dir(&app, &agent_id)?;
+    load_managed_agent_identity_at(&root, &agent_id)
+}
+
+fn identity_validation_failed(
+    request_id: String,
+    message: &str,
+    remediation: &str,
+) -> SaveManagedAgentIdentityResult {
+    SaveManagedAgentIdentityResult::ValidationFailed {
+        request_id,
+        diagnostics: vec![local_service::diagnostic(
+            "identity_request_invalid",
+            "error",
+            message,
+            Some("agent.yaml".into()),
+            Some(remediation),
+        )],
+    }
+}
+
+fn save_managed_agent_identity_at(
+    root: &Path,
+    revisions_root: &Path,
+    request: SaveManagedAgentIdentityRequest,
+) -> SaveManagedAgentIdentityResult {
+    save_managed_agent_identity_with_revision_source(root, revisions_root, request, None)
+}
+
+fn save_managed_agent_identity_with_revision_source(
+    root: &Path,
+    revisions_root: &Path,
+    request: SaveManagedAgentIdentityRequest,
+    restored_from_revision_id: Option<String>,
+) -> SaveManagedAgentIdentityResult {
+    let request_id = request.request_id.clone();
+    if !validate_identifier(&request.request_id)
+        || validate_agent_id(&request.agent_id).is_err()
+        || request.manifest.len() > 1024 * 1024
+        || request.base_content.len() > 1024 * 1024
+        || request.manifest.contains('\0')
+    {
+        return identity_validation_failed(request_id, "身份保存请求无效", "刷新后重试");
+    }
+    if !root.is_dir() {
+        return identity_validation_failed(
+            request_id,
+            "受管 AgentPackage 不存在",
+            "返回 Agent 列表并重新发现",
+        );
+    }
+    let manifest_path = root.join("agent.yaml");
+    let current = match fs::read_to_string(&manifest_path) {
+        Ok(content) => content,
+        Err(_) => {
+            return identity_validation_failed(
+                request_id,
+                "无法读取 agent.yaml",
+                "检查 AgentPackage 完整性",
+            )
+        }
+    };
+    let (asset_id, container_id, locator, current_baseline) =
+        identity_asset_facts(root, &request.agent_id, &current);
+    let base_hash = local_service::hash_bytes(request.base_content.as_bytes());
+    if request.expected_baseline.asset_content_hash != base_hash
+        || request.expected_baseline.container_content_hash != base_hash
+        || request.expected_baseline.asset_id != asset_id
+        || request.expected_baseline.container_id != container_id
+    {
+        return identity_validation_failed(
+            request_id,
+            "编辑器原始 manifest 与服务签发基线不一致",
+            "重新加载身份配置后重试",
+        );
+    }
+    if request.expected_baseline.asset_content_hash != current_baseline.asset_content_hash
+        || request.expected_baseline.container_content_hash
+            != current_baseline.container_content_hash
+    {
+        return SaveManagedAgentIdentityResult::BaselineChanged {
+            request_id,
+            asset_id,
+            container_id,
+            locator,
+            base: local_service::current_side(request.base_content),
+            current: local_service::current_side(current),
+            proposed: local_service::current_side(request.manifest),
+            diagnostics: vec![local_service::diagnostic(
+                "baseline_changed",
+                "warning",
+                "agent.yaml 已在编辑期间发生变化",
+                Some("agent.yaml".into()),
+                Some("比较当前内容后重新应用编辑"),
+            )],
+        };
     }
     if let AvatarChange::Replace { bytes } = &request.avatar {
-        validate_avatar(bytes)?;
+        if let Err(message) = validate_avatar(bytes) {
+            return identity_validation_failed(request_id, &message, "选择有效的 PNG 头像");
+        }
     }
     let avatar_path = root.join("avatar.png");
     let has_avatar = match &request.avatar {
@@ -564,77 +1005,576 @@ fn save_managed_agent_identity_at(
         AvatarChange::Replace { .. } => true,
         AvatarChange::Remove => false,
     };
-    validate_agent_record(&request.agent_id, &request.agent, has_avatar)?;
+    if let Err(message) = validate_agent_record(&request.agent_id, &request.agent, has_avatar) {
+        return identity_validation_failed(request_id, &message, "修正身份字段与头像选择");
+    }
+    if current == request.manifest && matches!(&request.avatar, AvatarChange::Keep) {
+        return SaveManagedAgentIdentityResult::Unchanged {
+            request_id,
+            agent: request.agent,
+            baseline_ref: current_baseline,
+        };
+    }
     let old_avatar = fs::read(&avatar_path).ok();
-    let old_record = fs::read(root.join(".bandi-agent.json")).ok();
-    let result = (|| {
+    let record_path = root.join(".bandi-agent.json");
+    let old_record = fs::read(&record_path).ok();
+    let previous_hash = current_baseline.container_content_hash.clone();
+    let write_result = (|| {
         match &request.avatar {
             AvatarChange::Keep => {}
-            AvatarChange::Replace { bytes } => write_atomic(&avatar_path, bytes)?,
+            AvatarChange::Replace { bytes } => config_fs::restricted_atomic_write(
+                &avatar_path,
+                bytes,
+                avatar_path.exists(),
+                "Agent 头像",
+            )?,
             AvatarChange::Remove => match fs::remove_file(&avatar_path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err("AGENT_DELETE_FAILED: 无法移除 Agent 头像".into()),
+                Err(_) => return Err("无法移除 Agent 头像".into()),
             },
         }
-        write_atomic(&manifest_path, request.manifest.as_bytes())?;
-        write_agent_record(root, &request.agent)?;
-        Ok(ManagedAgentResult {
-            agent: request.agent,
-            baseline: baseline(&request.manifest),
-        })
+        config_fs::restricted_atomic_write(
+            &manifest_path,
+            request.manifest.as_bytes(),
+            true,
+            "Agent manifest",
+        )?;
+        write_agent_record(root, &request.agent)
     })();
-    if result.is_err() {
-        let _ = write_atomic(&manifest_path, current.as_bytes());
+    if let Err(message) = write_result {
+        let _ = config_fs::restricted_atomic_write(
+            &manifest_path,
+            current.as_bytes(),
+            true,
+            "Agent manifest 回滚",
+        );
         match old_avatar {
             Some(bytes) => {
-                let _ = write_atomic(&avatar_path, &bytes);
+                let _ = config_fs::restricted_atomic_write(
+                    &avatar_path,
+                    &bytes,
+                    avatar_path.exists(),
+                    "Agent 头像回滚",
+                );
             }
             None => {
                 let _ = fs::remove_file(&avatar_path);
             }
         }
-        if let Some(bytes) = old_record {
-            let _ = write_atomic(&root.join(".bandi-agent.json"), &bytes);
+        match old_record {
+            Some(bytes) => {
+                let _ = config_fs::restricted_atomic_write(
+                    &record_path,
+                    &bytes,
+                    record_path.exists(),
+                    "Agent 索引记录回滚",
+                );
+            }
+            None => {
+                let _ = fs::remove_file(&record_path);
+            }
+        }
+        return SaveManagedAgentIdentityResult::SaveFailed {
+            request_id,
+            diagnostics: vec![local_service::diagnostic(
+                "identity_save_failed",
+                "error",
+                &message,
+                Some("agent.yaml".into()),
+                Some("检查目录权限后重试"),
+            )],
+            retryable: true,
+            file_state: "unchanged".into(),
+            recovery_ref: None,
+        };
+    }
+    let verified = match fs::read_to_string(&manifest_path) {
+        Ok(content) if content == request.manifest => content,
+        _ => {
+            return SaveManagedAgentIdentityResult::SaveFailed {
+                request_id,
+                diagnostics: vec![local_service::diagnostic(
+                    "identity_write_not_verified",
+                    "error",
+                    "agent.yaml 写后重读验证失败",
+                    Some("agent.yaml".into()),
+                    Some("重新发现 AgentPackage 文件状态"),
+                )],
+                retryable: false,
+                file_state: "write_not_verified".into(),
+                recovery_ref: None,
+            }
+        }
+    };
+    let (_, _, _, baseline_ref) = identity_asset_facts(root, &request.agent_id, &verified);
+    let saved_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let receipt_id = local_service::stable_id(
+        "receipt",
+        &format!(
+            "{asset_id}:{previous_hash}:{}:{saved_at}",
+            baseline_ref.container_content_hash
+        ),
+    );
+    let revision_id = local_service::stable_id(
+        "revision",
+        &format!(
+            "{asset_id}:{previous_hash}:{}:{saved_at}",
+            baseline_ref.container_content_hash
+        ),
+    );
+    let receipt = local_service::WriteReceiptDto {
+        id: receipt_id.clone(),
+        container_id: container_id.clone(),
+        previous_container_hash: previous_hash,
+        written_container_hash: baseline_ref.container_content_hash.clone(),
+        verified_at: saved_at.clone(),
+        atomic_replace: true,
+    };
+    let revision = local_service::ConfigRevisionDto {
+        id: revision_id,
+        asset_id,
+        container_id,
+        locator,
+        asset_content_hash: baseline_ref.asset_content_hash.clone(),
+        container_content_hash: baseline_ref.container_content_hash.clone(),
+        source_asset_baseline_hash: request.expected_baseline.asset_content_hash,
+        source_container_baseline_hash: request.expected_baseline.container_content_hash,
+        redacted: false,
+        write_receipt_id: receipt_id,
+        saved_at,
+        summary: restored_from_revision_id
+            .as_ref()
+            .map_or_else(|| "保存身份与职责".into(), |id| format!("恢复自 {id}")),
+        confirmation_refs: Vec::new(),
+        restored_from_revision_id,
+    };
+    if local_service::append_revision(revisions_root, &revision, &verified).is_err() {
+        return SaveManagedAgentIdentityResult::SaveFailed {
+            request_id,
+            diagnostics: vec![local_service::diagnostic(
+                "revision_pending",
+                "error",
+                "身份与职责已验证写入，但 ConfigRevision 记录失败",
+                Some("agent.yaml".into()),
+                Some("保留 recovery 状态并修复本地存储"),
+            )],
+            retryable: false,
+            file_state: "verified_written_revision_pending".into(),
+            recovery_ref: Some(revision.id),
+        };
+    }
+    SaveManagedAgentIdentityResult::Saved {
+        request_id,
+        agent: request.agent,
+        baseline_ref,
+        revision: Box::new(revision),
+        write_receipt: receipt,
+    }
+}
+
+fn agent_record_for_manifest(
+    root: &Path,
+    agent_id: &str,
+    manifest: &str,
+) -> Result<serde_json::Value, String> {
+    let identity: serde_json::Value =
+        serde_yaml::from_str(manifest).map_err(|_| "历史 agent.yaml 无法解析".to_string())?;
+    let identity = identity
+        .as_object()
+        .ok_or_else(|| "历史 agent.yaml 必须是对象".to_string())?;
+    if identity.get("id").and_then(serde_json::Value::as_str) != Some(agent_id)
+        || identity
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+    {
+        return Err("历史 agent.yaml 的稳定 id 或 schemaVersion 不匹配".into());
+    }
+    let record_path = root.join(".bandi-agent.json");
+    let mut record: serde_json::Value = serde_json::from_slice(
+        &fs::read(&record_path).map_err(|_| "无法读取 Agent 索引记录".to_string())?,
+    )
+    .map_err(|_| "Agent 索引记录已损坏".to_string())?;
+    let record = record
+        .as_object_mut()
+        .ok_or_else(|| "Agent 索引记录必须是对象".to_string())?;
+    const IDENTITY_FIELDS: &[&str] = &[
+        "id",
+        "name",
+        "roleId",
+        "status",
+        "companyId",
+        "primaryDepartmentId",
+        "managerAgentId",
+        "avatarPath",
+        "mission",
+        "responsibilities",
+        "deliverables",
+        "decisionBoundaries",
+        "escalationConditions",
+        "prohibitions",
+        "completionDefinition",
+    ];
+    for field in IDENTITY_FIELDS {
+        match identity.get(*field) {
+            Some(value) => {
+                record.insert((*field).into(), value.clone());
+            }
+            None => {
+                record.remove(*field);
+            }
         }
     }
-    result
+    let has_avatar = root.join("avatar.png").is_file();
+    validate_agent_record(
+        agent_id,
+        &serde_json::Value::Object(record.clone()),
+        has_avatar,
+    )
+    .map_err(|_| {
+        "历史 manifest 的头像引用与当前固定 avatar.png 不一致，无法只恢复 manifest".to_string()
+    })?;
+    Ok(serde_json::Value::Object(record.clone()))
+}
+
+fn recover_managed_agent_identity_at(
+    root: &Path,
+    revisions_root: &Path,
+    request: RecoverManagedAgentIdentityRequest,
+) -> SaveManagedAgentIdentityResult {
+    let request_id = request.request_id.clone();
+    if !validate_identifier(&request.request_id)
+        || validate_agent_id(&request.agent_id).is_err()
+        || request.asset_id.len() > 160
+        || !validate_identifier(&request.recovery_ref)
+    {
+        return identity_validation_failed(
+            request_id,
+            "身份版本补记请求无效",
+            "重新加载身份配置后重试",
+        );
+    }
+    let loaded = match load_managed_agent_identity_at(root, &request.agent_id) {
+        Ok(value) => value,
+        Err(message) => {
+            return identity_validation_failed(request_id, &message, "重新发现 AgentPackage")
+        }
+    };
+    if loaded.asset_id != request.asset_id {
+        return identity_validation_failed(
+            request_id,
+            "恢复引用不属于当前身份资产",
+            "重新加载身份配置后重试",
+        );
+    }
+    if local_service::list_revisions_at(revisions_root, &request.asset_id)
+        .is_ok_and(|items| items.iter().any(|item| item.id == request.recovery_ref))
+    {
+        let agent =
+            match agent_record_for_manifest(root, &request.agent_id, &loaded.canonical_content) {
+                Ok(value) => value,
+                Err(message) => {
+                    return identity_validation_failed(
+                        request_id,
+                        &message,
+                        "修复 AgentPackage 索引",
+                    )
+                }
+            };
+        return SaveManagedAgentIdentityResult::Unchanged {
+            request_id,
+            agent,
+            baseline_ref: loaded.baseline_ref,
+        };
+    }
+    let saved_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let receipt_id = local_service::stable_id(
+        "receipt-recovery",
+        &format!("{}:{saved_at}", loaded.asset_id),
+    );
+    let revision = local_service::ConfigRevisionDto {
+        id: request.recovery_ref,
+        asset_id: loaded.asset_id.clone(),
+        container_id: loaded.container_id.clone(),
+        locator: loaded.locator,
+        asset_content_hash: loaded.baseline_ref.asset_content_hash.clone(),
+        container_content_hash: loaded.baseline_ref.container_content_hash.clone(),
+        source_asset_baseline_hash: loaded.baseline_ref.asset_content_hash.clone(),
+        source_container_baseline_hash: loaded.baseline_ref.container_content_hash.clone(),
+        redacted: false,
+        write_receipt_id: receipt_id,
+        saved_at,
+        summary: "补记已验证写入的身份与职责".into(),
+        confirmation_refs: Vec::new(),
+        restored_from_revision_id: None,
+    };
+    if local_service::append_revision(revisions_root, &revision, &loaded.canonical_content).is_err()
+    {
+        return SaveManagedAgentIdentityResult::SaveFailed {
+            request_id,
+            diagnostics: vec![local_service::diagnostic(
+                "revision_pending",
+                "error",
+                "ConfigRevision 仍无法补记，agent.yaml 未再次写入",
+                Some("agent.yaml".into()),
+                Some("修复本地版本存储后重试恢复引用"),
+            )],
+            retryable: true,
+            file_state: "verified_written_revision_pending".into(),
+            recovery_ref: Some(revision.id),
+        };
+    }
+    let agent = match agent_record_for_manifest(root, &request.agent_id, &loaded.canonical_content)
+    {
+        Ok(value) => value,
+        Err(message) => {
+            return identity_validation_failed(request_id, &message, "修复 AgentPackage 索引")
+        }
+    };
+    let receipt = local_service::WriteReceiptDto {
+        id: revision.write_receipt_id.clone(),
+        container_id: revision.container_id.clone(),
+        previous_container_hash: revision.container_content_hash.clone(),
+        written_container_hash: revision.container_content_hash.clone(),
+        verified_at: revision.saved_at.clone(),
+        atomic_replace: true,
+    };
+    SaveManagedAgentIdentityResult::Saved {
+        request_id,
+        agent,
+        baseline_ref: loaded.baseline_ref,
+        revision: Box::new(revision),
+        write_receipt: receipt,
+    }
+}
+
+fn restore_managed_agent_identity_at(
+    root: &Path,
+    revisions_root: &Path,
+    request: RestoreManagedAgentIdentityRequest,
+) -> SaveManagedAgentIdentityResult {
+    let request_id = request.request_id.clone();
+    if !validate_identifier(&request.request_id)
+        || validate_agent_id(&request.agent_id).is_err()
+        || request.asset_id.len() > 160
+        || !validate_identifier(&request.revision_id)
+        || request.base_content.len() > 1024 * 1024
+        || !request.confirmed
+    {
+        return identity_validation_failed(
+            request_id,
+            "身份历史恢复请求无效或尚未确认",
+            "重新核对历史版本后确认恢复",
+        );
+    }
+    let revisions = match local_service::list_revisions_at(revisions_root, &request.asset_id) {
+        Ok(value) => value,
+        Err(message) => {
+            return identity_validation_failed(request_id, &message, "重新加载身份版本历史")
+        }
+    };
+    if !revisions.iter().any(|item| item.id == request.revision_id) {
+        return identity_validation_failed(
+            request_id,
+            "目标 ConfigRevision 不属于当前身份资产",
+            "重新选择该身份资产的历史版本",
+        );
+    }
+    let manifest =
+        match local_service::read_revision_content_at(revisions_root, &request.revision_id) {
+            Ok(value) => value,
+            Err(message) => {
+                return identity_validation_failed(request_id, &message, "修复本地版本记录后重试")
+            }
+        };
+    let agent = match agent_record_for_manifest(root, &request.agent_id, &manifest) {
+        Ok(value) => value,
+        Err(message) => {
+            return identity_validation_failed(request_id, &message, "选择与当前头像状态兼容的版本")
+        }
+    };
+    let revision_id = request.revision_id;
+    save_managed_agent_identity_with_revision_source(
+        root,
+        revisions_root,
+        SaveManagedAgentIdentityRequest {
+            request_id: request.request_id,
+            agent_id: request.agent_id,
+            agent,
+            manifest,
+            expected_baseline: request.expected_baseline,
+            base_content: request.base_content,
+            avatar: AvatarChange::Keep,
+        },
+        Some(revision_id),
+    )
 }
 
 #[tauri::command]
 fn save_managed_agent_identity(
     app: tauri::AppHandle,
     request: SaveManagedAgentIdentityRequest,
-) -> Result<ManagedAgentResult, String> {
+) -> Result<SaveManagedAgentIdentityResult, String> {
     let root = managed_agent_dir(&app, &request.agent_id)?;
-    save_managed_agent_identity_at(&root, request)
+    Ok(save_managed_agent_identity_at(
+        &root,
+        &revisions_root(&app)?,
+        request,
+    ))
 }
 
 #[tauri::command]
-fn list_managed_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    let marker = managed_agent_dir(&app, "probe")?;
-    let root = marker
-        .parent()
-        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?;
+fn recover_managed_agent_identity(
+    app: tauri::AppHandle,
+    request: RecoverManagedAgentIdentityRequest,
+) -> Result<SaveManagedAgentIdentityResult, String> {
+    let root = managed_agent_dir(&app, &request.agent_id)?;
+    Ok(recover_managed_agent_identity_at(
+        &root,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+#[tauri::command]
+fn restore_managed_agent_identity(
+    app: tauri::AppHandle,
+    request: RestoreManagedAgentIdentityRequest,
+) -> Result<SaveManagedAgentIdentityResult, String> {
+    let root = managed_agent_dir(&app, &request.agent_id)?;
+    Ok(restore_managed_agent_identity_at(
+        &root,
+        &revisions_root(&app)?,
+        request,
+    ))
+}
+
+fn list_managed_agents_at(root: &Path) -> Result<Vec<serde_json::Value>, String> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("AGENT_READ_FAILED: 无法扫描受管 Agent 目录".into()),
     };
     let mut agents = Vec::new();
-    for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().starts_with("agt_") || !entry.path().is_dir() {
+    for entry in entries {
+        let entry = entry.map_err(|_| "AGENT_READ_FAILED: 无法枚举受管 Agent 目录")?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let Some(agent_id) = file_name.strip_prefix("agt_") else {
             continue;
-        }
-        let bytes = match fs::read(entry.path().join(".bandi-agent.json")) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
         };
-        if let Ok(agent) = serde_json::from_slice(&bytes) {
-            agents.push(agent);
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| format!("AGENT_READ_FAILED: 无法检查 {file_name}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(format!(
+                "AGENT_PACKAGE_REJECTED: {file_name} 必须是受管根内普通目录"
+            ));
         }
+        let agent = local_service::project_managed_agent_at(&entry.path(), agent_id)
+            .map_err(|message| format!("{file_name}: {message}"))?;
+        agents.push(agent);
     }
+    agents.sort_by(|left, right| {
+        left.get("id")
+            .and_then(serde_json::Value::as_str)
+            .cmp(&right.get("id").and_then(serde_json::Value::as_str))
+    });
     Ok(agents)
+}
+
+#[tauri::command]
+fn list_managed_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    list_managed_agents_at(&managed_agents_root(&app)?)
+}
+
+#[tauri::command]
+fn discover_eligible_memory_spaces(
+    app: tauri::AppHandle,
+    request: memory_service::DiscoverEligibleMemorySpacesRequest,
+) -> Result<memory_service::EligibleMemorySpacesResult, String> {
+    memory_service::discover_eligible_spaces_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn create_memory_candidate(
+    app: tauri::AppHandle,
+    request: memory_service::CreateMemoryCandidateRequest,
+) -> Result<memory_service::MemoryReviewBundleDto, String> {
+    memory_service::create_candidate_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn list_memory_reviews(
+    app: tauri::AppHandle,
+    request_id: String,
+    agent_id: String,
+) -> Result<Vec<memory_service::MemoryReviewBundleDto>, String> {
+    memory_service::list_reviews_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request_id,
+        agent_id,
+    )
+}
+
+#[tauri::command]
+fn list_memory_revisions(
+    app: tauri::AppHandle,
+    request: memory_service::ListMemoryRevisionsRequest,
+) -> Result<Vec<memory_service::MemoryRevisionDto>, String> {
+    memory_service::list_revisions_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn load_memory_review(
+    app: tauri::AppHandle,
+    request_id: String,
+    candidate_id: String,
+) -> Result<memory_service::MemoryReviewBundleDto, String> {
+    memory_service::load_review_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request_id,
+        candidate_id,
+    )
+}
+
+#[tauri::command]
+fn review_memory_candidate(
+    app: tauri::AppHandle,
+    request: memory_service::ReviewMemoryCandidateRequest,
+) -> Result<memory_service::ReviewMemoryCandidateResult, String> {
+    memory_service::review_candidate_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn recover_memory_revision(
+    app: tauri::AppHandle,
+    request: memory_service::RecoverMemoryRevisionRequest,
+) -> Result<memory_service::ReviewMemoryCandidateResult, String> {
+    memory_service::recover_revision_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &workspace_registry_root(&app)?,
+        request,
+    )
 }
 
 #[tauri::command]
@@ -666,16 +1606,54 @@ const COMMAND_IDS: &[&str] = &[
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            launch_workspace_terminal,
+            register_workspace,
+            create_workspace,
+            load_organization_snapshot,
+            save_company,
+            save_department,
+            save_role,
+            save_workspace,
+            remove_workspace,
+            save_service_grants,
+            generate_entity_id,
+            discover_eligible_memory_spaces,
+            create_memory_candidate,
+            list_memory_reviews,
+            list_memory_revisions,
+            load_memory_review,
+            review_memory_candidate,
+            recover_memory_revision,
+            create_backup_snapshot,
+            list_backup_snapshots,
+            preview_backup_restore,
+            restore_backup_snapshot,
+            discover_config,
+            load_config_editor,
+            list_config_revisions,
+            read_config_revision_content,
+            create_workspace_binding,
+            save_config,
+            recover_config_revision,
+            restore_config_revision,
+            request_client_handoff,
             import_ui_asset,
             read_ui_asset,
             delete_ui_asset,
             read_agent_avatar,
             create_managed_agent,
+            load_managed_agent_identity,
             save_managed_agent_identity,
+            recover_managed_agent_identity,
+            restore_managed_agent_identity,
             list_managed_agents
         ])
         .menu(|app| {
@@ -740,12 +1718,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::{
-        asset_name, baseline, create_managed_agent_at, image_mime, launch_args,
-        save_managed_agent_identity_at, terminal_bundle_id, validate_agent_id, validate_avatar,
-        validate_identifier, validate_launch, validated_workspace_path, AgentPackageFile,
-        AvatarChange, CreateManagedAgentRequest, LaunchWorkspaceRequest,
-        SaveManagedAgentIdentityRequest, AGENT_AVATAR_LIMIT, COMMAND_IDS,
+        asset_name, create_managed_agent_at, image_mime, list_managed_agents_at,
+        load_managed_agent_identity_at, recover_managed_agent_identity_at,
+        restore_managed_agent_identity_at, save_managed_agent_identity_at, validate_agent_id,
+        validate_avatar, validate_identifier, AgentPackageFile, AvatarChange,
+        CreateManagedAgentRequest, DiagnosticDto, LocalServiceEventDto,
+        RecoverManagedAgentIdentityRequest, RestoreManagedAgentIdentityRequest,
+        SaveManagedAgentIdentityRequest, SaveManagedAgentIdentityResult, AGENT_AVATAR_LIMIT,
+        COMMAND_IDS,
     };
 
     #[test]
@@ -755,56 +1738,189 @@ mod tests {
     }
 
     #[test]
-    fn terminal_apps_are_whitelisted() {
-        for id in [
-            "system",
-            "terminal",
-            "iterm2",
-            "warp",
-            "ghostty",
-            "wezterm",
-            "kitty",
-            "alacritty",
-        ] {
-            assert!(terminal_bundle_id(id).is_ok());
-        }
-        assert!(terminal_bundle_id("/bin/sh").is_err());
-        assert_eq!(terminal_bundle_id("system"), terminal_bundle_id("terminal"));
-    }
-
-    #[test]
-    fn terminal_request_inputs_are_validated() {
+    fn client_handoff_rejects_unknown_fields() {
+        let valid = include_str!(
+            "../../../../packages/contracts/fixtures/client-handoff/request.valid.json"
+        );
+        assert!(serde_json::from_str::<crate::ai_adapters::ClientHandoffRequest>(valid).is_ok());
+        let extra = include_str!(
+            "../../../../packages/contracts/fixtures/client-handoff/request.unknown-field.json"
+        );
+        assert!(serde_json::from_str::<crate::ai_adapters::ClientHandoffRequest>(extra).is_err());
         assert!(validate_identifier("workspace-1"));
-        assert!(!validate_identifier(""));
         assert!(!validate_identifier("workspace/../other"));
-        assert!(validated_workspace_path("relative/path").is_err());
-        assert!(validate_launch("claude", &["a;b $HOME 'literal'".into()]).is_ok());
-        assert!(validate_launch("claude && other", &[]).is_err());
-        assert!(validate_launch("claude", &["line\nbreak".into()]).is_err());
     }
 
     #[test]
-    fn bandi_entry_is_appended_once() {
-        let request = |args, enter_bandi_on_start| LaunchWorkspaceRequest {
-            request_id: "request-1".into(),
-            workspace_id: "workspace-1".into(),
-            cwd: "/tmp".into(),
-            terminal_id: "terminal".into(),
-            executable: "claude".into(),
-            args,
-            enter_bandi_on_start,
-        };
+    fn client_handoff_results_match_shared_fixtures() {
+        for fixture in [
+            include_str!(
+                "../../../../packages/contracts/fixtures/client-handoff/result.supported.json"
+            ),
+            include_str!(
+                "../../../../packages/contracts/fixtures/client-handoff/result.not-checked.json"
+            ),
+            include_str!(
+                "../../../../packages/contracts/fixtures/client-handoff/result.degraded.json"
+            ),
+            include_str!(
+                "../../../../packages/contracts/fixtures/client-handoff/result.unavailable.json"
+            ),
+        ] {
+            let result: crate::ai_adapters::ClientHandoffResult =
+                serde_json::from_str(fixture).expect("共享结果 fixture 应可反序列化");
+            let encoded = serde_json::to_value(result).expect("共享结果 fixture 应可重新序列化");
+            let expected: serde_json::Value =
+                serde_json::from_str(fixture).expect("共享结果 fixture 应为 JSON");
+            assert_eq!(encoded, expected);
+        }
+    }
+
+    #[test]
+    fn asset_reference_graph_matches_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../packages/contracts/fixtures/asset-reference-graph.valid.json"
+        ))
+        .expect("共享资产引用图 fixture 应为 JSON");
+        let nodes: Vec<crate::shared_assets::SharedAssetNodeDto> =
+            serde_json::from_value(fixture["sharedAssets"].clone())
+                .expect("共享资产节点应可反序列化");
+        let references: Vec<crate::local_service::AssetReferenceDto> =
+            serde_json::from_value(fixture["references"].clone())
+                .expect("共享资产引用应可反序列化");
         assert_eq!(
-            launch_args(&request(vec!["--model".into(), "opus".into()], true)),
-            Ok(vec!["--model".into(), "opus".into(), "/bandi:bandi".into()])
+            serde_json::to_value(nodes).unwrap(),
+            fixture["sharedAssets"]
         );
         assert_eq!(
-            launch_args(&request(vec!["/bandi:bandi".into()], true)),
-            Ok(vec!["/bandi:bandi".into()])
+            serde_json::to_value(references).unwrap(),
+            fixture["references"]
         );
+    }
+
+    #[test]
+    fn core_contracts_match_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../packages/contracts/fixtures/core-contracts.valid.json"
+        ))
+        .expect("核心共享 fixture 应为 JSON");
+        let baseline: crate::local_service::BaselineRefDto =
+            serde_json::from_value(fixture["baseline"].clone())
+                .expect("Baseline fixture 应可反序列化");
+        assert_eq!(serde_json::to_value(baseline).unwrap(), fixture["baseline"]);
+        let diagnostic: DiagnosticDto = serde_json::from_value(fixture["diagnostic"].clone())
+            .expect("Diagnostic fixture 应可反序列化");
         assert_eq!(
-            launch_args(&request(vec!["--model".into()], false)),
-            Ok(vec!["--model".into()])
+            serde_json::to_value(diagnostic).unwrap(),
+            fixture["diagnostic"]
+        );
+        let event: LocalServiceEventDto =
+            serde_json::from_value(fixture["event"].clone()).expect("Event fixture 应可反序列化");
+        assert_eq!(serde_json::to_value(event).unwrap(), fixture["event"]);
+        let request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["saveRequest"].clone())
+                .expect("SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            fixture["saveRequest"]
+        );
+        let context_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["contextSaveRequest"].clone())
+                .expect("Context SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(context_request).unwrap(),
+            fixture["contextSaveRequest"]
+        );
+        let rules_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["rulesSaveRequest"].clone())
+                .expect("Rules SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(rules_request).unwrap(),
+            fixture["rulesSaveRequest"]
+        );
+        let skills_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["skillsSaveRequest"].clone())
+                .expect("Skills SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(skills_request).unwrap(),
+            fixture["skillsSaveRequest"]
+        );
+        let mcp_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["mcpSaveRequest"].clone())
+                .expect("MCP SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(mcp_request).unwrap(),
+            fixture["mcpSaveRequest"]
+        );
+        let sop_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["sopSaveRequest"].clone())
+                .expect("SOP SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(sop_request).unwrap(),
+            fixture["sopSaveRequest"]
+        );
+        let orchestration_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["orchestrationSaveRequest"].clone())
+                .expect("Orchestration SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(orchestration_request).unwrap(),
+            fixture["orchestrationSaveRequest"]
+        );
+        let hooks_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["hooksSaveRequest"].clone())
+                .expect("Hooks SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(hooks_request).unwrap(),
+            fixture["hooksSaveRequest"]
+        );
+        let commands_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["commandsSaveRequest"].clone())
+                .expect("Commands SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(commands_request).unwrap(),
+            fixture["commandsSaveRequest"]
+        );
+        let permissions_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["permissionsSaveRequest"].clone())
+                .expect("Permissions SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(permissions_request).unwrap(),
+            fixture["permissionsSaveRequest"]
+        );
+        let workspace_binding_request: crate::local_service::SaveConfigRequest =
+            serde_json::from_value(fixture["workspaceBindingSaveRequest"].clone())
+                .expect("WorkspaceBinding SaveConfig fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(workspace_binding_request).unwrap(),
+            fixture["workspaceBindingSaveRequest"]
+        );
+        let create_workspace_binding_request: crate::local_service::CreateWorkspaceBindingRequest =
+            serde_json::from_value(fixture["createWorkspaceBindingRequest"].clone())
+                .expect("CreateWorkspaceBinding fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(create_workspace_binding_request).unwrap(),
+            fixture["createWorkspaceBindingRequest"]
+        );
+        let confirmation_result: crate::local_service::SaveConfigResult =
+            serde_json::from_value(fixture["confirmationRequired"].clone())
+                .expect("confirmation_required fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(confirmation_result).unwrap(),
+            fixture["confirmationRequired"]
+        );
+        let recovery: RecoverManagedAgentIdentityRequest =
+            serde_json::from_value(fixture["identityRecoveryRequest"].clone())
+                .expect("Identity recovery fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(recovery).unwrap(),
+            fixture["identityRecoveryRequest"]
+        );
+        let restore: RestoreManagedAgentIdentityRequest =
+            serde_json::from_value(fixture["identityRestoreRequest"].clone())
+                .expect("Identity restore fixture 应可反序列化");
+        assert_eq!(
+            serde_json::to_value(restore).unwrap(),
+            fixture["identityRestoreRequest"]
         );
     }
 
@@ -836,50 +1952,291 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_create_and_identity_save_check_baseline() {
-        let root = std::env::temp_dir().join(format!("bandi-agent-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    fn managed_agent_identity_saves_revision_and_checks_baseline() {
+        let root = tempfile::tempdir().expect("应创建隔离目录");
+        let manifest = "schemaVersion: 1\nid: test-agent\n";
         let created = create_managed_agent_at(
-            &root,
+            root.path(),
             CreateManagedAgentRequest {
                 agent_id: "test-agent".into(),
                 agent: serde_json::json!({ "id": "test-agent", "avatarPath": "avatar.png" }),
                 files: vec![AgentPackageFile {
                     path: "agent.yaml".into(),
-                    content: "id: test-agent".into(),
+                    content: manifest.into(),
                 }],
                 avatar_bytes: Some(b"\x89PNG\r\n\x1a\nrest".to_vec()),
             },
         )
         .expect("隔离目录中的 AgentPackage 应创建成功");
-        assert_eq!(created.baseline, baseline("id: test-agent"));
+        assert_eq!(
+            created.baseline_ref.asset_content_hash,
+            crate::local_service::hash_bytes(manifest.as_bytes())
+        );
 
-        let package = root.join("agt_test-agent");
+        let package = root.path().join("agt_test-agent");
+        let revisions = root.path().join("revisions");
+        let loaded = load_managed_agent_identity_at(&package, "test-agent")
+            .expect("应加载真实 identity baseline");
+        let updated = "schemaVersion: 1\nid: test-agent\nname: updated\n";
         let saved = save_managed_agent_identity_at(
             &package,
+            &revisions,
             SaveManagedAgentIdentityRequest {
+                request_id: "save-identity".into(),
                 agent_id: "test-agent".into(),
                 agent: serde_json::json!({ "id": "test-agent", "avatarPath": null }),
-                manifest: "id: test-agent\nname: updated".into(),
-                expected_manifest: created.baseline,
+                manifest: updated.into(),
+                expected_baseline: loaded.baseline_ref.clone(),
+                base_content: loaded.canonical_content.clone(),
                 avatar: AvatarChange::Remove,
             },
-        )
-        .expect("正确基线应保存成功");
+        );
+        let SaveManagedAgentIdentityResult::Saved {
+            baseline_ref,
+            revision,
+            ..
+        } = saved
+        else {
+            panic!("正确基线应返回 saved");
+        };
         assert!(!package.join("avatar.png").exists());
-        assert_eq!(saved.baseline, baseline("id: test-agent\nname: updated"));
+        assert_eq!(
+            baseline_ref.asset_content_hash,
+            crate::local_service::hash_bytes(updated.as_bytes())
+        );
+        assert_eq!(
+            crate::local_service::read_revision_content_at(&revisions, &revision.id).unwrap(),
+            updated
+        );
 
+        let reloaded = load_managed_agent_identity_at(&package, "test-agent").unwrap();
+        std::fs::write(
+            package.join("agent.yaml"),
+            "schemaVersion: 1\nid: test-agent\nname: external\n",
+        )
+        .unwrap();
         let changed = save_managed_agent_identity_at(
             &package,
+            &revisions,
             SaveManagedAgentIdentityRequest {
+                request_id: "save-conflict".into(),
                 agent_id: "test-agent".into(),
                 agent: serde_json::json!({ "id": "test-agent" }),
-                manifest: "id: changed".into(),
-                expected_manifest: "stale".into(),
+                manifest: "schemaVersion: 1\nid: test-agent\nname: proposed\n".into(),
+                expected_baseline: reloaded.baseline_ref,
+                base_content: reloaded.canonical_content,
                 avatar: AvatarChange::Keep,
             },
         );
-        assert!(matches!(changed, Err(error) if error.starts_with("BASELINE_CHANGED")));
-        let _ = std::fs::remove_dir_all(&root);
+        assert!(matches!(
+            changed,
+            SaveManagedAgentIdentityResult::BaselineChanged { .. }
+        ));
+    }
+
+    fn canonical_agent_fixture(root: &Path) -> PathBuf {
+        let files = vec![
+            ("agent.yaml", "schemaVersion: 1\nid: alpha\nname: Canonical\nroleId: role-1\nstatus: active\nmission: canonical mission\nresponsibilities: []\ndeliverables: []\ndecisionBoundaries: []\nescalationConditions: []\nprohibitions: []\ncompletionDefinition: []\n"),
+            ("instructions.md", "# Canonical\n"),
+            ("config/context.yaml", "schemaVersion: 1\ncontextPolicy:\n  enabled: true\n  triggerRatio: 0.8\n  targetRatio: 0.5\n  protectRecentTurns: 6\n  protectOpeningTurns: 2\ncontextWindowTokens: 200000\noutputProfileId: \"\"\noutputParameterBindings: []\n"),
+            ("config/rules.yaml", "schemaVersion: 1\nrules:\n  []\n"),
+            ("config/skills.yaml", "schemaVersion: 1\nskills:\n  []\n"),
+            ("config/mcp.yaml", "schemaVersion: 1\nmcp:\n  []\n"),
+            ("config/permissions.yaml", "schemaVersion: 1\npermissions:\n  files: \"仅当前工作区\"\n  commands: \"构建与测试\"\n  network: \"禁止\"\n  delegation: \"禁止\"\n"),
+            ("config/sop.yaml", "schemaVersion: 1\nsop:\n  []\n"),
+            ("config/orchestration.yaml", "schemaVersion: 1\norchestration: { enabled: false, maxDelegationDepth: 0, allowedAgentIds: [], allowedRoleIds: [], allowedDepartmentIds: [], requireWorkspaceBinding: true, requireSopMatch: true, requireServiceGrantForCrossDepartment: true, escalationConditions: [], prohibitions: [] }\n"),
+            ("config/hooks.yaml", "schemaVersion: 1\nhooks: []\n"),
+            ("config/commands.yaml", "schemaVersion: 1\ncommands: []\n"),
+            ("workspaces/ws-1/config.yaml", "schemaVersion: 1\nworkspaceBinding: { workspaceId: ws-1, instructions: old binding, ruleIds: [], skillIds: [], mcpIds: [] }\n"),
+        ];
+        let stale = serde_json::json!({
+            "id": "alpha", "name": "Stale", "role": "legacy", "department": "legacy",
+            "status": "inactive", "roleId": "stale-role", "packageSchema": { "compatibility": "unverified" },
+            "workspaces": 99, "config": "配置完整", "updated": "旧值", "mission": "stale mission",
+            "serviceGrants": [], "packagePath": "~/.bandi/agents/agt_alpha/",
+            "packageSource": { "kind": "bandi-managed", "packageId": "agt_alpha", "strategy": "managed" },
+            "instructions": "stale instructions", "skillRefs": ["stale"], "ruleRefs": ["stale"],
+            "mcpRefs": ["stale"], "contextPolicy": {}, "contextWindowTokens": 1,
+            "outputParameterBindings": [], "orchestrationPolicy": {}, "hookRefs": [], "commandRefs": [],
+            "permissions": { "files": "stale", "commands": "stale", "network": "stale", "delegation": "stale" },
+            "workspaceBindings": [{ "workspaceId": "ws-1", "instructions": "stale", "ruleIds": [], "skillIds": [], "mcpIds": [], "memoryRevision": "r7" }],
+            "sopRefs": [], "files": []
+        });
+        create_managed_agent_at(
+            root,
+            CreateManagedAgentRequest {
+                agent_id: "alpha".into(),
+                agent: stale,
+                files: files
+                    .into_iter()
+                    .map(|(path, content)| AgentPackageFile {
+                        path: path.into(),
+                        content: content.into(),
+                    })
+                    .collect(),
+                avatar_bytes: None,
+            },
+        )
+        .unwrap();
+        root.join("agt_alpha")
+    }
+
+    #[test]
+    fn managed_agent_list_reprojects_saved_canonical_config() {
+        let root = tempfile::tempdir().unwrap();
+        let package = canonical_agent_fixture(root.path());
+        let revisions = root.path().join("revisions");
+
+        for (kind, value) in [
+            ("instructions", "# Saved instructions\n"),
+            ("permissions", "schemaVersion: 1\npermissions:\n  files: \"未授予\"\n  commands: \"构建与测试\"\n  network: \"禁止\"\n  delegation: \"禁止\"\n"),
+            ("workspace_binding", "schemaVersion: 1\nworkspaceBinding: { workspaceId: ws-1, instructions: saved binding, ruleIds: [], skillIds: [], mcpIds: [] }\n"),
+        ] {
+            let asset_identity = if kind == "workspace_binding" {
+                "managed:alpha:workspace_binding:workspaces/ws-1/config.yaml".into()
+            } else {
+                format!("managed:alpha:{kind}")
+            };
+            let asset_id = crate::local_service::stable_id("asset", &asset_identity);
+            let loaded = crate::local_service::load_editor_at(
+                root.path(),
+                crate::local_service::LoadEditorRequest { request_id: format!("load-{kind}"), asset_id },
+            )
+            .unwrap();
+            let change = match kind {
+                "instructions" => crate::local_service::ConfigChangeDto::Instructions { value: value.into() },
+                "permissions" => crate::local_service::ConfigChangeDto::Permissions { value: value.into() },
+                "workspace_binding" => crate::local_service::ConfigChangeDto::WorkspaceBinding { value: value.into() },
+                _ => unreachable!(),
+            };
+            let saved = crate::local_service::save_config_at(
+                root.path(),
+                &revisions,
+                crate::local_service::SaveConfigRequest {
+                    request_id: format!("save-{kind}"),
+                    asset_id: loaded.asset.id,
+                    expected_owner: crate::local_service::SaveConfigOwnerDto {
+                        agent_id: "alpha".into(),
+                        workspace_id: (kind == "workspace_binding").then(|| "ws-1".into()),
+                    },
+                    change,
+                    expected_baseline: loaded.baseline_ref,
+                    base_content: loaded.canonical_content,
+                    confirmation_ref: None,
+                },
+            );
+            assert!(matches!(saved, crate::local_service::SaveConfigResult::Saved { .. }));
+        }
+
+        let listed = list_managed_agents_at(root.path()).unwrap();
+        let agent = &listed[0];
+        assert_eq!(agent["name"], "Canonical");
+        assert_eq!(agent["instructions"], "# Saved instructions\n");
+        assert_eq!(agent["permissions"]["files"], "未授予");
+        assert_eq!(
+            agent["workspaceBindings"][0]["instructions"],
+            "saved binding"
+        );
+        assert_eq!(agent["workspaceBindings"][0]["memoryRevision"], "r7");
+        assert_eq!(agent["workspaces"], 1);
+        assert_eq!(agent["role"], "legacy");
+        assert_eq!(package.file_name().unwrap(), "agt_alpha");
+    }
+
+    #[test]
+    fn managed_agent_list_reports_missing_index_and_broken_canonical_files() {
+        let root = tempfile::tempdir().unwrap();
+        let package = canonical_agent_fixture(root.path());
+        std::fs::remove_file(package.join(".bandi-agent.json")).unwrap();
+        let missing = list_managed_agents_at(root.path()).unwrap_err();
+        assert!(missing.contains("AGENT_INDEX_MISSING"));
+
+        let root = tempfile::tempdir().unwrap();
+        let package = canonical_agent_fixture(root.path());
+        std::fs::remove_file(package.join("config/permissions.yaml")).unwrap();
+        let broken = list_managed_agents_at(root.path()).unwrap_err();
+        assert!(broken.contains("AGENT_CANONICAL_MISSING"));
+        assert!(broken.contains("config/permissions.yaml"));
+    }
+
+    #[test]
+    fn managed_identity_recovery_and_restore_preserve_history() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = "schemaVersion: 1\nid: test-agent\nname: original\n";
+        create_managed_agent_at(
+            root.path(),
+            CreateManagedAgentRequest {
+                agent_id: "test-agent".into(),
+                agent: serde_json::json!({ "id": "test-agent", "name": "original", "avatarPath": null }),
+                files: vec![AgentPackageFile {
+                    path: "agent.yaml".into(),
+                    content: manifest.into(),
+                }],
+                avatar_bytes: None,
+            },
+        )
+        .unwrap();
+        let package = root.path().join("agt_test-agent");
+        let revisions = root.path().join("revisions");
+        let loaded = load_managed_agent_identity_at(&package, "test-agent").unwrap();
+        let updated = "schemaVersion: 1\nid: test-agent\nname: updated\n";
+        let saved = save_managed_agent_identity_at(
+            &package,
+            &revisions,
+            SaveManagedAgentIdentityRequest {
+                request_id: "save-first".into(),
+                agent_id: "test-agent".into(),
+                agent: serde_json::json!({ "id": "test-agent", "name": "updated", "avatarPath": null }),
+                manifest: updated.into(),
+                expected_baseline: loaded.baseline_ref,
+                base_content: loaded.canonical_content,
+                avatar: AvatarChange::Keep,
+            },
+        );
+        let SaveManagedAgentIdentityResult::Saved { revision, .. } = saved else {
+            panic!("首次 identity 保存应成功");
+        };
+        let current = load_managed_agent_identity_at(&package, "test-agent").unwrap();
+        let restored = restore_managed_agent_identity_at(
+            &package,
+            &revisions,
+            RestoreManagedAgentIdentityRequest {
+                request_id: "restore-identity".into(),
+                agent_id: "test-agent".into(),
+                asset_id: current.asset_id.clone(),
+                revision_id: revision.id.clone(),
+                expected_baseline: current.baseline_ref,
+                base_content: current.canonical_content,
+                confirmed: true,
+            },
+        );
+        assert!(matches!(
+            restored,
+            SaveManagedAgentIdentityResult::Unchanged { .. }
+        ));
+
+        let recovery_ref = "revision-recovery".to_string();
+        let recovered = recover_managed_agent_identity_at(
+            &package,
+            &revisions,
+            RecoverManagedAgentIdentityRequest {
+                request_id: "recover-identity".into(),
+                agent_id: "test-agent".into(),
+                asset_id: current.asset_id,
+                recovery_ref: recovery_ref.clone(),
+            },
+        );
+        assert!(matches!(
+            recovered,
+            SaveManagedAgentIdentityResult::Saved { .. }
+        ));
+        assert_eq!(
+            crate::local_service::read_revision_content_at(&revisions, &recovery_ref).unwrap(),
+            updated
+        );
+        assert_eq!(
+            crate::local_service::read_revision_content_at(&revisions, &revision.id).unwrap(),
+            updated
+        );
     }
 }

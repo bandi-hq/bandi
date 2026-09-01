@@ -5,19 +5,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiClientHandoffAction } from '../components/ai-clients'
-import type { State } from '../state'
 import { GlobalSheets } from '../sheets'
-import { AppProvider, initialState, useApp } from '../state'
+import { AppProvider, initialState, useApp, type State } from '../state'
 
-const desktopBridge = vi.hoisted(() => ({
-  desktop: false,
-  requestLaunchWorkspace: vi.fn(),
-}))
+const desktopBridge = vi.hoisted(() => ({ desktop: false, requestClientHandoff: vi.fn() }))
 
 vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => desktopBridge.desktop,
   listManagedAgents: () => Promise.resolve([]),
-  requestLaunchWorkspace: desktopBridge.requestLaunchWorkspace,
+  loadOrganizationSnapshot: () => Promise.resolve({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] }),
+  requestClientHandoff: desktopBridge.requestClientHandoff,
 }))
 
 function HandoffHarness({ workspaceId = 'bandi', planning = false }: { workspaceId?: string; planning?: boolean }) {
@@ -42,10 +39,14 @@ function GuideHarness() {
   </>
 }
 
+const result = (status: 'supported' | 'degraded' | 'unavailable' | 'not_checked', outcome: 'accepted' | 'manual_required' | 'rejected' | 'not_attempted') => ({
+  clientId: 'claude-code', adapterId: 'claude-code-terminal-v1', workspaceId: 'bandi', terminalId: 'terminal', intent: 'continue_workspace',
+  capability: { status, reason: `${status} 原因`, evidence: ['合同测试'], remediation: ['复制路径后手动继续'] }, outcome,
+})
+
 beforeEach(() => {
   desktopBridge.desktop = false
-  desktopBridge.requestLaunchWorkspace.mockReset()
-  vi.stubGlobal('crypto', { randomUUID: () => 'request-1' })
+  desktopBridge.requestClientHandoff.mockReset()
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
@@ -55,141 +56,73 @@ describe('AI 编程工具界面', () => {
     const empty = renderHandoff([])
     expect(screen.getByRole('button', { name: '添加 AI 编程工具' })).toBeInTheDocument()
     empty.unmount()
-
     const single = renderHandoff(['claude-code'])
     expect(screen.getByRole('button', { name: '在 Claude Code 中继续' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '选择 AI 编程工具' })).not.toBeInTheDocument()
     single.unmount()
-
     renderHandoff(['claude-code', 'codex'])
     fireEvent.keyDown(screen.getByRole('button', { name: '选择 AI 编程工具' }), { key: 'Enter' })
     expect(screen.getByText('可继续使用')).toBeInTheDocument()
-    expect(screen.getByText('仅配置')).toBeInTheDocument()
-    expect(screen.getByText('打开工作区交接说明')).toBeInTheDocument()
-    expect(screen.getByText('仅配置 · 尚未定义启动适配')).toBeInTheDocument()
+    expect(screen.queryByText('仅配置')).not.toBeInTheDocument()
   })
 
-  it('多个仅配置工具时不显示空的可继续分组', () => {
-    renderHandoff(['codex', 'gemini-cli'])
-    fireEvent.keyDown(screen.getByRole('button', { name: '选择 AI 编程工具' }), { key: 'Enter' })
-
-    expect(screen.queryByText('可继续使用')).not.toBeInTheDocument()
-    expect(screen.getByText('仅配置')).toBeInTheDocument()
-  })
-
-  it('无工作区时禁用 Claude Code 交接但保留配置入口', () => {
+  it('无工作区时禁用所有已验证的目录交接入口', () => {
     renderHandoff(['claude-code', 'codex'], '')
     fireEvent.keyDown(screen.getByRole('button', { name: '选择 AI 编程工具' }), { key: 'Enter' })
-
     expect(screen.getByRole('menuitem', { name: /Claude Code/ })).toHaveAttribute('data-disabled')
-    expect(screen.getByRole('menuitem', { name: /Codex/ })).not.toHaveAttribute('data-disabled')
+    expect(screen.getByRole('menuitem', { name: /Codex/ })).toHaveAttribute('data-disabled')
   })
 
-  it('仅配置工具可查看配置且不存在的客户端不回退 Claude Code', () => {
-    renderHandoff(['codex'], '')
-    fireEvent.click(screen.getByRole('button', { name: '查看 Codex 配置' }))
-    expect(screen.getByRole('dialog', { name: 'Codex 配置入口' })).toBeInTheDocument()
-    expect(screen.getByText('已加入当前配置方案')).toBeInTheDocument()
-    expect(screen.queryByText(/^claude$/)).not.toBeInTheDocument()
-  })
-
-  it('Claude Code 与非 Claude 配置指引保持执行语义分离', () => {
-    render(<MemoryRouter><AppProvider><GuideHarness /></AppProvider></MemoryRouter>)
-
+  it('Codex 与 Claude Code 共用安全目录交接且不生成命令', () => {
+    render(<MemoryRouter><AppProvider initialState={initialState}><GuideHarness /></AppProvider></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Codex 指引' }))
-    expect(screen.getByRole('dialog', { name: 'Codex 配置入口' })).toBeInTheDocument()
-    expect(screen.queryByText(/^claude$/)).not.toBeInTheDocument()
-    expect(screen.getByText(/尚未定义经过验证的启动命令/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /中打开/ })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-
+    expect(screen.getByRole('dialog', { name: '在 Codex 中继续' })).toBeInTheDocument()
+    expect(screen.getByText(/Bandi 不生成、执行或回传命令/)).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: '关闭' }).at(-1)!)
     fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
-    expect(screen.getByRole('dialog', { name: '在 Claude Code 中继续' })).toBeInTheDocument()
-    expect(screen.getByText("cd '/Volumes/wwx/org/bandi' && 'claude' '/bandi:bandi'")).toBeInTheDocument()
-    expect(screen.getByText(/不执行 Shell/)).toBeInTheDocument()
-    expect(screen.getByText(/浏览器无法直接启动本机终端/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Terminal\.app 中进入 Bandi/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/Bandi 不生成、执行或回传命令/)).toBeInTheDocument()
+    expect(screen.queryByText(/cd '/)).not.toBeInTheDocument()
   })
 
-  it('Web 环境复制完整启动命令', async () => {
-    render(<MemoryRouter><AppProvider><GuideHarness /></AppProvider></MemoryRouter>)
+  it('Web 环境只复制工作目录', async () => {
+    render(<MemoryRouter><AppProvider initialState={initialState}><GuideHarness /></AppProvider></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
-    fireEvent.click(screen.getByRole('button', { name: '复制完整启动命令' }))
-
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("cd '/Volumes/wwx/org/bandi' && 'claude' '/bandi:bandi'"))
-    expect(screen.getByRole('button', { name: '复制完整启动命令' })).toBeInTheDocument()
+    const copy = screen.getByRole('button', { name: '复制工作目录' })
+    fireEvent.click(copy)
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/Volumes/wwx/org/bandi')
   })
 
-  it('规划协作方式时只复制一次性说明且不修改启动参数', async () => {
+  it('规划说明不进入五字段交接请求', async () => {
     desktopBridge.desktop = true
-    desktopBridge.requestLaunchWorkspace.mockResolvedValue({ kind: 'accepted', requestId: 'request-1', acceptedAt: '1' })
+    desktopBridge.requestClientHandoff.mockResolvedValue(result('supported', 'accepted'))
     renderHandoff(['claude-code'], 'bandi', true)
-
     fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
-    expect(screen.getByRole('dialog', { name: '让 AI 帮我规划协作方式' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '复制协作规划说明' })).toBeDisabled()
     fireEvent.change(screen.getByLabelText('你的场景与目标'), { target: { value: '长期协调产品、研发和运营' } })
-    fireEvent.change(screen.getByLabelText('当前参与者与资源（可选）'), { target: { value: '一名负责人和两个现有 Agent' } })
-    fireEvent.change(screen.getByLabelText('高频协作与重要边界（可选）'), { target: { value: '发布前必须人工验收' } })
-    fireEvent.click(screen.getByRole('button', { name: '复制协作规划说明' }))
-
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('场景与目标：长期协调产品、研发和运营')))
-    const prompt = vi.mocked(navigator.clipboard.writeText).mock.calls.at(-1)?.[0] as string
-    expect(prompt).toContain('先提出必要的澄清问题')
-    expect(prompt).toContain('个人工作区是否已经足够')
-    expect(prompt).toContain('当前参与者与资源：一名负责人和两个现有 Agent')
-    expect(prompt).toContain('高频协作与重要边界：发布前必须人工验收')
-    expect(prompt).toContain('在我明确确认前')
-
-    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中进入 Bandi' }))
-    await waitFor(() => expect(desktopBridge.requestLaunchWorkspace).toHaveBeenCalledWith({ requestId: 'request-1', workspaceId: 'bandi', cwd: '/Volumes/wwx/org/bandi', terminalId: 'terminal', executable: 'claude', args: [], enterBandiOnStart: true }))
-    expect(JSON.stringify(desktopBridge.requestLaunchWorkspace.mock.calls[0][0])).not.toContain('长期协调')
-    expect(JSON.stringify(desktopBridge.requestLaunchWorkspace.mock.calls[0][0])).not.toContain('--permission-mode')
+    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中打开目录' }))
+    await waitFor(() => expect(desktopBridge.requestClientHandoff).toHaveBeenCalledWith({ clientId: 'claude-code', adapterId: 'claude-code-terminal-v1', workspaceId: 'bandi', terminalId: 'terminal', intent: 'continue_workspace' }))
+    expect(JSON.stringify(desktopBridge.requestClientHandoff.mock.calls[0][0])).not.toContain('长期协调')
   })
 
-  it('关闭规划弹窗后不会保留表单内容', () => {
-    renderHandoff(['claude-code'], 'bandi', true)
-    fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
-    fireEvent.change(screen.getByLabelText('你的场景与目标'), { target: { value: '临时规划内容' } })
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
-    expect(screen.getByLabelText('你的场景与目标')).toHaveValue('')
-  })
-
-  it('Desktop 使用所选终端提交结构化启动请求且不声称已加载', async () => {
+  it('accepted 只说明目录打开请求已接受', async () => {
     desktopBridge.desktop = true
-    desktopBridge.requestLaunchWorkspace.mockResolvedValue({ kind: 'accepted', requestId: 'request-1', acceptedAt: '1' })
-    render(<MemoryRouter><AppProvider><GuideHarness /></AppProvider></MemoryRouter>)
+    desktopBridge.requestClientHandoff.mockResolvedValue(result('supported', 'accepted'))
+    render(<MemoryRouter><AppProvider initialState={initialState}><GuideHarness /></AppProvider></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
-    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中进入 Bandi' }))
-
-    await waitFor(() => expect(desktopBridge.requestLaunchWorkspace).toHaveBeenCalledWith({ requestId: 'request-1', workspaceId: 'bandi', cwd: '/Volumes/wwx/org/bandi', terminalId: 'terminal', executable: 'claude', args: [], enterBandiOnStart: true }))
-    expect(await screen.findByText(/不表示 Claude Code 或 Bandi 已成功加载/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中打开目录' }))
+    expect(await screen.findByText(/请在自己的终端中启动 Claude Code/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('终端要求降级时使用后端返回的规范化参数生成复制命令', async () => {
+  it.each([
+    ['degraded', 'manual_required'],
+    ['unavailable', 'rejected'],
+    ['not_checked', 'not_attempted'],
+  ] as const)('%s 结果保留弹窗并提供路径降级', async (status, outcome) => {
     desktopBridge.desktop = true
-    desktopBridge.requestLaunchWorkspace.mockResolvedValue({ kind: 'fallback-required', requestId: 'request-1', executable: 'claude', args: ['--model', 'opus', '/bandi:bandi'], message: '请复制命令运行' })
-    render(<MemoryRouter><AppProvider><GuideHarness /></AppProvider></MemoryRouter>)
+    desktopBridge.requestClientHandoff.mockResolvedValue(result(status, outcome))
+    render(<MemoryRouter><AppProvider initialState={initialState}><GuideHarness /></AppProvider></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
-    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中进入 Bandi' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('请复制命令运行')
-    fireEvent.click(screen.getByRole('button', { name: '复制完整启动命令' }))
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("cd '/Volumes/wwx/org/bandi' && 'claude' '--model' 'opus' '/bandi:bandi'"))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-  })
-
-  it('启动请求被拒绝时保留弹窗并显示复制降级', async () => {
-    desktopBridge.desktop = true
-    desktopBridge.requestLaunchWorkspace.mockResolvedValue({ kind: 'rejected', requestId: 'request-1', code: 'TERMINAL_OPEN_FAILED', message: '终端未安装' })
-    render(<MemoryRouter><AppProvider><GuideHarness /></AppProvider></MemoryRouter>)
-    fireEvent.click(screen.getByRole('button', { name: 'Claude 指引' }))
-    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中进入 Bandi' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('终端未安装')
-    expect(screen.getByRole('button', { name: '复制完整启动命令' })).toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '在 Terminal.app 中打开目录' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(`${status} 原因`)
+    expect(screen.getByRole('button', { name: '复制工作目录' })).toBeInTheDocument()
   })
 })

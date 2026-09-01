@@ -22,6 +22,52 @@ const customEnvironment: ConfigurationEnvironment = {
 }
 
 describe('演示状态', () => {
+  it('静默恢复 Desktop 正式 Memory 候选并区分正式 Revision', () => {
+    const hash = `sha256:${'a'.repeat(64)}` as const
+    const bundle = {
+      requestId: 'list-memory-worker',
+      space: {
+        id: 'memory-agent-worker',
+        scopeType: 'agent_long_term' as const,
+        scopeKey: { kind: 'agent_long_term' as const, agentId: 'worker' },
+        owner: { kind: 'agent' as const, agentId: 'worker' },
+        stewardAgentId: 'worker',
+        reviewerAgentId: 'manager',
+        reviewPolicy: 'independent_reviewer' as const,
+        visibilityPolicy: 'agent_private' as const,
+        storageProfileVersion: 'memory-v1' as const,
+        state: 'active' as const,
+        storageLocator: { rootKind: 'managed' as const, displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' },
+        currentRevisionId: 'memory-revision-1',
+        contentHash: hash,
+        updatedAt: '2026-09-01T00:00:00Z',
+      },
+      candidate: {
+        id: 'candidate-written',
+        spaceId: 'memory-agent-worker',
+        proposerAgentId: 'worker',
+        reviewerAgentId: 'manager',
+        source: { kind: 'manual' as const, label: 'test' },
+        summary: '已写入候选',
+        proposedContent: 'new',
+        proposedContentHash: hash,
+        submittedBaseline: { id: 'base', assetId: 'memory-agent-worker', containerId: 'memory-agent-worker', assetContentHash: hash, containerContentHash: hash },
+        status: 'written' as const,
+        version: 3,
+        createdAt: '2026-09-01T00:00:00Z',
+        updatedAt: '2026-09-01T00:01:00Z',
+      },
+      currentContent: 'new',
+    }
+    const state = { ...initialState, notice: { id: 'existing', tone: 'info' as const, title: '保留通知' } }
+
+    const result = reducer(state, { type: 'HYDRATE_FORMAL_MEMORY_REVIEWS', bundles: [bundle] })
+
+    expect(result.notice).toBe(state.notice)
+    expect(result.memoryCandidates.find((item) => item.id === bundle.candidate.id)?.status).toBe('已写入正式 Revision')
+    expect(result.memorySpaces.find((item) => item.id === bundle.space.id)?.revision).toBe('memory-revision-1')
+  })
+
   it('包含九个唯一内置客户端和空的会话最近 Agent', () => {
     expect(initialState.currentConfigurationEnvironmentId).toBe('personal')
     expect(initialState.configurationEnvironments[0]).toMatchObject({ id: 'personal', name: '个人配置' })
@@ -77,11 +123,30 @@ describe('演示状态', () => {
     expect(reducer(completed, { type: 'COMPLETE_ONBOARDING' })).toBe(completed)
   })
 
+  it('持久化实体同步会回写规范化结果并保留其他实体', () => {
+    const company = { ...initialState.companies[0], name: '规范化公司' }
+    const department = { ...initialState.departments[0], name: '规范化部门' }
+    const role = { ...initialState.roles[0], name: '规范化岗位' }
+    const workspace = { ...initialState.workspaces[0], name: '规范化工作区' }
+
+    const withCompany = reducer(initialState, { type: 'SYNC_PERSISTED_COMPANIES', companies: [company] })
+    const withDepartment = reducer(withCompany, { type: 'SYNC_PERSISTED_DEPARTMENTS', departments: [department] })
+    const withRole = reducer(withDepartment, { type: 'SYNC_PERSISTED_ROLES', roles: [role] })
+    const result = reducer(withRole, { type: 'SYNC_PERSISTED_WORKSPACES', workspaces: [workspace] })
+
+    expect(result.companies.find((item) => item.id === company.id)?.name).toBe('规范化公司')
+    expect(result.departments.find((item) => item.id === department.id)?.name).toBe('规范化部门')
+    expect(result.roles.find((item) => item.id === role.id)?.name).toBe('规范化岗位')
+    expect(result.workspaces.find((item) => item.id === workspace.id)?.name).toBe('规范化工作区')
+    expect(result.currentWorkspaceId).toBe(workspace.id)
+    expect(result.companies).toHaveLength(initialState.companies.length)
+  })
+
   it('切换主题', () => expect(reducer(initialState, { type: 'THEME' }).theme).toBe('dark'))
 
   it('保存指令生成新的不可变配置版本', () => {
     const result = reducer(initialState, { type: 'SAVE_INSTRUCTIONS', agentId: 'zhouce', text: '新的演示指令' })
-    expect(result.notice?.description).toContain('仅当前页面内存')
+    expect(result.notice?.description).toContain('仅在当前页面有效')
     expect(result.configRevisions).toHaveLength(initialState.configRevisions.length + 1)
     expect(result.configRevisions[0]).toMatchObject({ ownerType: 'agent', ownerId: 'zhouce', path: 'instructions.md', content: '新的演示指令' })
     expect(initialState.configRevisions[0].content).not.toBe('新的演示指令')
@@ -102,7 +167,7 @@ describe('演示状态', () => {
       input: {
         agentId: source.id,
         kind: 'context',
-        value: { policy: { ...source.contextPolicy, triggerRatio: 0.85 } },
+        value: { policy: { ...source.contextPolicy, triggerRatio: 0.85 }, contextWindowTokens: 256_000 },
       },
     })
     const agent = result.agents.find((item) => item.id === source.id)!
@@ -112,7 +177,7 @@ describe('演示状态', () => {
   })
 
   it('保存 WorkspaceBinding 时登记 config.yaml 且不虚构 memory.md', () => {
-    const result = reducer(initialState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'songyan', kind: 'workspace-binding', value: { workspaceId: 'card', instructions: '负责审查', ruleIds: ['rule-common'], skillIds: [], mcpIds: [], memoryRevision: '' } } })
+    const result = reducer(initialState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'songyan', kind: 'workspace-binding', value: { workspaceId: 'card', instructions: '负责审查', ruleIds: ['rule-common'], skillIds: [], mcpIds: [] } } })
     const files = result.agents.find((item) => item.id === 'songyan')!.files
     expect(files.some((file) => file.path === 'workspaces/card/config.yaml')).toBe(true)
     expect(files.some((file) => file.path === 'workspaces/card/memory.md')).toBe(false)
@@ -185,24 +250,13 @@ describe('演示状态', () => {
     expect(switched.configRevisions).toBe(created.configRevisions)
   })
 
-  it('复制方案后可独立修改工具登记和启动配置', () => {
-    const source = initialState.configurationEnvironments.find((item) => item.id === 'team-demo')!
-    const configured = reducer(initialState, {
-      type: 'SAVE_CONFIGURATION_ENVIRONMENT',
-      environment: {
-        ...source,
-        clientLaunchProfiles: {
-          'claude-code': { version: 1, executable: 'claude', args: ['--dangerously-skip-permissions'], enterBandiOnStart: true },
-        },
-      },
-    })
-    const copied = reducer(configured, { type: 'CREATE_CONFIGURATION_ENVIRONMENT', environment: { ...customEnvironment, clientIds: [] }, sourceEnvironmentId: 'team-demo' })
+  it('复制方案后可独立修改工具登记', () => {
+    const copied = reducer(initialState, { type: 'CREATE_CONFIGURATION_ENVIRONMENT', environment: { ...customEnvironment, clientIds: [] }, sourceEnvironmentId: 'team-demo' })
     const copy = copied.configurationEnvironments.find((item) => item.id === customEnvironment.id)!
     expect(copy.clientIds).toEqual(['claude-code', 'codex'])
-    expect(copy.clientLaunchProfiles?.['claude-code']?.args).toEqual(['--dangerously-skip-permissions'])
     const changed = reducer(copied, { type: 'SET_ENVIRONMENT_CLIENT_REGISTRATION', environmentId: customEnvironment.id, clientId: 'claude-code', registered: false })
-    expect(changed.configurationEnvironments.find((item) => item.id === customEnvironment.id)?.clientLaunchProfiles).toBeUndefined()
-    expect(changed.configurationEnvironments.find((item) => item.id === 'team-demo')?.clientLaunchProfiles?.['claude-code']).toBeDefined()
+    expect(changed.configurationEnvironments.find((item) => item.id === customEnvironment.id)?.clientIds).toEqual(['codex'])
+    expect(changed.configurationEnvironments.find((item) => item.id === 'team-demo')?.clientIds).toEqual(['claude-code', 'codex'])
   })
 
   it('拒绝重名配置方案并保持现有方案不变', () => {
@@ -257,7 +311,7 @@ describe('演示状态', () => {
     expect(added.aiClients).toHaveLength(initialState.aiClients.length + 1)
     expect(added.aiClients.at(-1)).toMatchObject({ id: customClient.id, name: customClient.name, persistence: 'memory-only' })
     expect(added.recentAgentIds).toEqual([])
-    expect(added.notice?.description).toContain('当前页面内存')
+    expect(added.notice?.description).toContain('当前页面')
     expect(duplicateId).toBe(added)
     expect(duplicateName).toBe(added)
   })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, serializeAgentConfig, snapshotAgentConfig, validateContextPolicy, workspaceConfigPath } from '../agent-config-model'
+import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, parseAgentComponentRefs, parseAgentContextConfig, parseAgentMcpRefs, parseAgentOrchestrationPolicy, parseAgentPermissions, parseAgentRuleRefs, parseAgentSkillRefs, parseAgentSopRefs, parseWorkspaceBindingConfig, serializeAgentConfig, snapshotAgentConfig, validateContextPolicy, validateContextWindowTokens, workspaceConfigPath } from '../agent-config-model'
 import { initialAgents } from '../domain'
 
 const agent = initialAgents.find((item) => item.id === 'zhouce')!
@@ -8,22 +8,24 @@ describe('Agent 配置模型', () => {
   it('把普通配置映射到唯一规范路径', () => {
     expect(getAgentConfigPath({ kind: 'instructions', value: 'x' })).toBe('instructions.md')
     expect(getAgentConfigPath({ kind: 'rules', value: [] })).toBe('config/rules.yaml')
-    expect(getAgentConfigPath({ kind: 'context', value: { policy: agent.contextPolicy } })).toBe('config/context.yaml')
+    expect(getAgentConfigPath({ kind: 'context', value: { policy: agent.contextPolicy, contextWindowTokens: agent.contextWindowTokens } })).toBe('config/context.yaml')
     expect(workspaceConfigPath('card')).toBe('workspaces/card/config.yaml')
     expect(workspaceConfigPath('../card')).toBeUndefined()
   })
 
-  it('稳定序列化并应用 WorkspaceBinding', () => {
-    const value = { workspaceId: 'lab', instructions: '研究验证', ruleIds: ['rule-common'], skillIds: [], mcpIds: [], memoryRevision: '' }
+  it('稳定序列化、解析并应用 WorkspaceBinding 普通配置', () => {
+    const value = { workspaceId: 'lab', instructions: '研究验证', ruleIds: ['rule-common'], skillIds: [], mcpIds: [] }
     const payload = { kind: 'workspace-binding' as const, value }
-    const content = serializeAgentConfig(agent, payload)
-    expect(content).toContain('workspaceId: "lab"')
-    expect(content).toContain('rules:')
-    expect(applyAgentConfig(agent, payload)?.workspaceBindings.at(-1)).toEqual(value)
+    const content = serializeAgentConfig(agent, payload)!
+    expect(content).toBe(`schemaVersion: 1\nworkspaceBinding: ${JSON.stringify(value)}`)
+    expect(parseWorkspaceBindingConfig(content, agent)).toEqual(value)
+    expect(applyAgentConfig(agent, payload)?.workspaceBindings.at(-1)).toEqual({ ...value, memoryRevision: '' })
+    expect(parseWorkspaceBindingConfig(content.replace(/}$/, ',"memoryRevision":"MR-1"}'), agent)).toBeUndefined()
+    expect(parseWorkspaceBindingConfig(content.replace(/}$/, ',"unknown":true}'), agent)).toBeUndefined()
   })
 
   it('为新 Binding 只登记 config.yaml', () => {
-    const payload = { kind: 'workspace-binding' as const, value: { workspaceId: 'lab', instructions: '', ruleIds: [], skillIds: [], mcpIds: [], memoryRevision: '' } }
+    const payload = { kind: 'workspace-binding' as const, value: { workspaceId: 'lab', instructions: '', ruleIds: [], skillIds: [], mcpIds: [] } }
     const file = describeAgentConfigFile(payload)
     expect(file?.path).toBe('workspaces/lab/config.yaml')
     expect(file?.path).not.toContain('memory.md')
@@ -35,6 +37,7 @@ describe('Agent 配置模型', () => {
       kind: 'context' as const,
       value: {
         policy: { ...agent.contextPolicy, triggerRatio: 0.85, targetRatio: 0.55 },
+        contextWindowTokens: 256_000,
         outputProfileId: 'output-verifiable-delivery',
       },
     }
@@ -59,13 +62,108 @@ describe('Agent 配置模型', () => {
     expect(isAgentConfigPayload({ ...payload, value: { ...payload.value, avatarPath: 'https://example.com/avatar.png' } })).toBe(false)
   })
 
+  it('解析自身生成的规范上下文 YAML', () => {
+    const payload = {
+      kind: 'context' as const,
+      value: {
+        policy: { ...agent.contextPolicy, triggerRatio: 0.85 },
+        contextWindowTokens: 256_000,
+        outputProfileId: 'output-verifiable-delivery',
+        outputParameterBindings: [{ parameterId: 'tone', type: 'enum' as const, value: 'concise' }],
+      },
+    }
+    const content = serializeAgentConfig(agent, payload)!
+
+    expect(parseAgentContextConfig(content)).toEqual(payload.value)
+    expect(parseAgentContextConfig(content.replace('contextWindowTokens: 256000\n', ''))?.contextWindowTokens).toBe(200_000)
+    expect(parseAgentContextConfig(content.replace('contextWindowTokens: 256000', 'contextWindowTokens: 999'))).toBeUndefined()
+    expect(parseAgentContextConfig(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentContextConfig(content.replace('triggerRatio: 0.85', 'triggerRatio: NaN'))).toBeUndefined()
+    expect(parseAgentContextConfig(content.replace('outputParameterBindings:', 'unknownBindings:'))).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 Rule 引用 YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'rules', value: ['rule-common', 'rule-review'] })!
+    expect(parseAgentRuleRefs(content)).toEqual(['rule-common', 'rule-review'])
+    expect(parseAgentRuleRefs(serializeAgentConfig(agent, { kind: 'rules', value: [] })!)).toEqual([])
+    expect(parseAgentRuleRefs(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentRuleRefs(content.replace('rule-review', 'rule-common'))).toBeUndefined()
+    expect(parseAgentRuleRefs(content.replace('rule-review', '../rule-review'))).toBeUndefined()
+    expect(parseAgentRuleRefs(`${content}\nunknown: true`)).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 Skill 引用 YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'skills', value: ['skill-review', 'skill-release'] })!
+    expect(parseAgentSkillRefs(content)).toEqual(['skill-review', 'skill-release'])
+    expect(parseAgentSkillRefs(serializeAgentConfig(agent, { kind: 'skills', value: [] })!)).toEqual([])
+    expect(parseAgentSkillRefs(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentSkillRefs(content.replace('skill-release', 'skill-review'))).toBeUndefined()
+    expect(parseAgentSkillRefs(content.replace('skill-release', '../skill-release'))).toBeUndefined()
+    expect(parseAgentSkillRefs(`${content}\nunknown: true`)).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 MCP 引用 YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'mcp', value: ['mcp-common', 'mcp-review'] })!
+    expect(parseAgentMcpRefs(content)).toEqual(['mcp-common', 'mcp-review'])
+    expect(parseAgentMcpRefs(serializeAgentConfig(agent, { kind: 'mcp', value: [] })!)).toEqual([])
+    expect(parseAgentMcpRefs(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentMcpRefs(content.replace('mcp-review', 'mcp-common'))).toBeUndefined()
+    expect(parseAgentMcpRefs(content.replace('mcp-review', '../mcp-review'))).toBeUndefined()
+    expect(parseAgentMcpRefs(`${content}\nunknown: true`)).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 SOP 引用 YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'sop', value: ['sop-delivery', 'sop-review'] })!
+    expect(parseAgentSopRefs(content)).toEqual(['sop-delivery', 'sop-review'])
+    expect(parseAgentSopRefs(serializeAgentConfig(agent, { kind: 'sop', value: [] })!)).toEqual([])
+    expect(parseAgentSopRefs(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentSopRefs(content.replace('sop-review', 'sop-delivery'))).toBeUndefined()
+    expect(parseAgentSopRefs(content.replace('sop-review', '../sop-review'))).toBeUndefined()
+    expect(parseAgentSopRefs(`${content}\nunknown: true`)).toBeUndefined()
+  })
+
+  it.each([
+    ['Hook', 'hooks', 'hook-config-saved', 'include-path'],
+    ['Command', 'commands', 'command-config-audit', 'scope'],
+  ] as const)('解析自身生成的规范 %s 引用 YAML', (_label, key, assetId, parameterId) => {
+    const references = [{ assetId, parameterBindings: [{ parameterId, type: 'boolean' as const, value: true }] }]
+    const content = serializeAgentConfig(agent, { kind: key, value: references })!
+    expect(parseAgentComponentRefs(content, key)).toEqual(references)
+    expect(parseAgentComponentRefs(content.replace('schemaVersion: 1', 'schemaVersion: 2'), key)).toBeUndefined()
+    expect(parseAgentComponentRefs(content.replace(assetId, '../component'), key)).toBeUndefined()
+    expect(parseAgentComponentRefs(content.replace(`"assetId":"${assetId}"`, `"assetId":"${assetId}","unknown":true`), key)).toBeUndefined()
+    expect(parseAgentComponentRefs(content.replace(/}]$/, `},{"parameterId":"${parameterId}","type":"boolean","value":false}]`), key)).toBeUndefined()
+    expect(parseAgentComponentRefs(content.replace('"type":"boolean","value":true', '"type":"secret","value":"token"'), key)).toBeUndefined()
+    expect(parseAgentComponentRefs(content.replace('"type":"boolean","value":true', `"type":"string","value":"${'x'.repeat(4097)}"`), key)).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 Orchestration YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'orchestration', value: agent.orchestrationPolicy })!
+    expect(parseAgentOrchestrationPolicy(content)).toEqual(agent.orchestrationPolicy)
+    expect(parseAgentOrchestrationPolicy(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentOrchestrationPolicy(content.replace(/"maxDelegationDepth":\d+/, '"maxDelegationDepth":33'))).toBeUndefined()
+    expect(parseAgentOrchestrationPolicy(content.replace(/}$/, ',"unknown":true}'))).toBeUndefined()
+  })
+
+  it('解析自身生成的规范 Permissions YAML', () => {
+    const content = serializeAgentConfig(agent, { kind: 'permissions', value: agent.permissions })!
+    expect(parseAgentPermissions(content)).toEqual(agent.permissions)
+    expect(parseAgentPermissions(content.replace('schemaVersion: 1', 'schemaVersion: 2'))).toBeUndefined()
+    expect(parseAgentPermissions(content.replace('  files:', '  unknown:'))).toBeUndefined()
+    expect(parseAgentPermissions(`${content}\nextra: true`)).toBeUndefined()
+  })
+
   it('拒绝非法上下文策略', () => {
     expect(validateContextPolicy({ ...agent.contextPolicy, triggerRatio: 0.49 })).not.toHaveLength(0)
     expect(validateContextPolicy({ ...agent.contextPolicy, targetRatio: 0.75, triggerRatio: 0.8 })).not.toHaveLength(0)
     expect(validateContextPolicy({ ...agent.contextPolicy, protectRecentTurns: 1.5 })).not.toHaveLength(0)
+    expect(validateContextWindowTokens(256_000)).toHaveLength(0)
+    expect(validateContextWindowTokens(999)).not.toHaveLength(0)
+    expect(validateContextWindowTokens(2_000_001)).not.toHaveLength(0)
+    expect(validateContextWindowTokens(256_000.5)).not.toHaveLength(0)
     expect(applyAgentConfig(agent, {
       kind: 'context',
-      value: { policy: { ...agent.contextPolicy, targetRatio: 0.75, triggerRatio: 0.8 } },
+      value: { policy: { ...agent.contextPolicy, targetRatio: 0.75, triggerRatio: 0.8 }, contextWindowTokens: agent.contextWindowTokens },
     })).toBeUndefined()
   })
 
@@ -73,14 +171,14 @@ describe('Agent 配置模型', () => {
     const payload = {
       kind: 'workspace-binding' as const,
       value: {
-        workspaceId: 'lab', instructions: '', ruleIds: [], skillIds: [], mcpIds: [], memoryRevision: '',
-        contextPolicy: { triggerRatio: 0.9 },
+        workspaceId: 'lab', instructions: '', ruleIds: [], skillIds: [], mcpIds: [],
+        contextPolicy: { triggerRatio: 0.75 },
         outputProfileId: 'output-verifiable-delivery',
       },
     }
     const content = serializeAgentConfig(agent, payload)!
-    expect(content).toContain('triggerRatio: 0.9')
-    expect(content).not.toContain('targetRatio:')
+    expect(content).toContain('"triggerRatio":0.75')
+    expect(content).not.toContain('"targetRatio"')
     expect(content).not.toContain('aiClientProfileId')
   })
 })

@@ -20,3 +20,8 @@ tmp/
 # 编辑器配置
 .idea/
 *.swp
+
+# 测试运行产物
+.playwright-cli/
+e2e/.logs/
+e2e/.sandbox/

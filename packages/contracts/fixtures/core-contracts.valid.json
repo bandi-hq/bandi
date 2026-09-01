@@ -1,0 +1,298 @@
+{
+  "baseline": {
+    "id": "base-1",
+    "assetId": "asset-instructions-1",
+    "containerId": "container-1",
+    "assetContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "containerContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "diagnostic": {
+    "code": "instructions_invalid",
+    "severity": "error",
+    "message": "Instructions 内容无效",
+    "field": "change.value",
+    "path": "instructions.md",
+    "range": {
+      "startLine": 1,
+      "startColumn": 1,
+      "endLine": 1,
+      "endColumn": 2
+    },
+    "remediation": "修正内容后重试"
+  },
+  "event": {
+    "kind": "config_invalidated",
+    "eventId": "event-1",
+    "occurredAt": "2026-08-31T12:00:00Z",
+    "assetIds": [
+      "asset-instructions-1"
+    ],
+    "reason": "external_change"
+  },
+  "saveRequest": {
+    "requestId": "request-1",
+    "assetId": "asset-instructions-1",
+    "change": {
+      "kind": "instructions",
+      "value": "# Instructions\n"
+    },
+    "expectedBaseline": {
+      "id": "base-1",
+      "assetId": "asset-instructions-1",
+      "containerId": "container-1",
+      "assetContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "containerContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "baseContent": "# Original Instructions\n",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "contextSaveRequest": {
+    "requestId": "request-context-1",
+    "assetId": "asset-context-1",
+    "change": {
+      "kind": "context",
+      "value": "schemaVersion: 1\ncontextPolicy:\n  enabled: true\n  triggerRatio: 0.8\n  targetRatio: 0.5\n  protectRecentTurns: 6\n  protectOpeningTurns: 2\ncontextWindowTokens: 200000\noutputProfileId: \"\"\noutputParameterBindings: []"
+    },
+    "expectedBaseline": {
+      "id": "base-context-1",
+      "assetId": "asset-context-1",
+      "containerId": "container-context-1",
+      "assetContentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "containerContentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "baseContent": "schemaVersion: 1\ncontextPolicy:\n  enabled: false\n  triggerRatio: 0.8\n  targetRatio: 0.5\n  protectRecentTurns: 6\n  protectOpeningTurns: 2\ncontextWindowTokens: 200000\noutputProfileId: \"\"\noutputParameterBindings: []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "rulesSaveRequest": {
+    "requestId": "request-rules-1",
+    "assetId": "asset-rules-1",
+    "change": {
+      "kind": "rules",
+      "value": "schemaVersion: 1\nrules:\n  - \"rule-common\""
+    },
+    "expectedBaseline": {
+      "id": "base-rules-1",
+      "assetId": "asset-rules-1",
+      "containerId": "container-rules-1",
+      "assetContentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "containerContentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "baseContent": "schemaVersion: 1\nrules:\n  []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "skillsSaveRequest": {
+    "requestId": "request-skills-1",
+    "assetId": "asset-skills-1",
+    "change": {
+      "kind": "skills",
+      "value": "schemaVersion: 1\nskills:\n  - \"skill-common\""
+    },
+    "expectedBaseline": {
+      "id": "base-skills-1",
+      "assetId": "asset-skills-1",
+      "containerId": "container-skills-1",
+      "assetContentHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "containerContentHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "baseContent": "schemaVersion: 1\nskills:\n  []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "mcpSaveRequest": {
+    "requestId": "request-mcp-1",
+    "assetId": "asset-mcp-1",
+    "change": {
+      "kind": "mcp",
+      "value": "schemaVersion: 1\nmcp:\n  - \"mcp-common\""
+    },
+    "expectedBaseline": {
+      "id": "base-mcp-1",
+      "assetId": "asset-mcp-1",
+      "containerId": "container-mcp-1",
+      "assetContentHash": "sha256:abababababababababababababababababababababababababababababababab",
+      "containerContentHash": "sha256:abababababababababababababababababababababababababababababababab"
+    },
+    "baseContent": "schemaVersion: 1\nmcp:\n  []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "sopSaveRequest": {
+    "requestId": "request-sop-1",
+    "assetId": "asset-sop-1",
+    "change": {
+      "kind": "sop",
+      "value": "schemaVersion: 1\nsop:\n  - \"sop-delivery\""
+    },
+    "expectedBaseline": {
+      "id": "base-sop-1",
+      "assetId": "asset-sop-1",
+      "containerId": "container-sop-1",
+      "assetContentHash": "sha256:bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc",
+      "containerContentHash": "sha256:bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc"
+    },
+    "baseContent": "schemaVersion: 1\nsop:\n  []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "orchestrationSaveRequest": {
+    "requestId": "request-orchestration-1",
+    "assetId": "asset-orchestration-1",
+    "change": {
+      "kind": "orchestration",
+      "value": "schemaVersion: 1\norchestration: {\"enabled\":true,\"maxDelegationDepth\":2,\"allowedAgentIds\":[\"agent-review\"],\"allowedRoleIds\":[\"role-review\"],\"allowedDepartmentIds\":[\"department-engineering\"],\"requireWorkspaceBinding\":true,\"requireSopMatch\":true,\"requireServiceGrantForCrossDepartment\":true,\"escalationAgentId\":\"agent-lead\",\"escalationConditions\":[\"没有合法候选\"],\"prohibitions\":[\"禁止跨公司\"]}"
+    },
+    "expectedBaseline": {
+      "id": "base-orchestration-1",
+      "assetId": "asset-orchestration-1",
+      "containerId": "container-orchestration-1",
+      "assetContentHash": "sha256:acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+      "containerContentHash": "sha256:acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac"
+    },
+    "baseContent": "schemaVersion: 1\norchestration: {\"enabled\":false,\"maxDelegationDepth\":0,\"allowedAgentIds\":[],\"allowedRoleIds\":[],\"allowedDepartmentIds\":[],\"requireWorkspaceBinding\":true,\"requireSopMatch\":true,\"requireServiceGrantForCrossDepartment\":true,\"escalationConditions\":[],\"prohibitions\":[]}",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "hooksSaveRequest": {
+    "requestId": "request-hooks-1",
+    "assetId": "asset-hooks-1",
+    "change": {
+      "kind": "hooks",
+      "value": "schemaVersion: 1\nhooks: [{\"assetId\":\"hook-config-saved\",\"parameterBindings\":[{\"parameterId\":\"include-path\",\"type\":\"boolean\",\"value\":true}]}]"
+    },
+    "expectedBaseline": {
+      "id": "base-hooks-1",
+      "assetId": "asset-hooks-1",
+      "containerId": "container-hooks-1",
+      "assetContentHash": "sha256:adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+      "containerContentHash": "sha256:adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad"
+    },
+    "baseContent": "schemaVersion: 1\nhooks: []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "commandsSaveRequest": {
+    "requestId": "request-commands-1",
+    "assetId": "asset-commands-1",
+    "change": {
+      "kind": "commands",
+      "value": "schemaVersion: 1\ncommands: [{\"assetId\":\"command-config-audit\",\"parameterBindings\":[{\"parameterId\":\"scope\",\"type\":\"enum\",\"value\":\"agent\"}]}]"
+    },
+    "expectedBaseline": {
+      "id": "base-commands-1",
+      "assetId": "asset-commands-1",
+      "containerId": "container-commands-1",
+      "assetContentHash": "sha256:aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+      "containerContentHash": "sha256:aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae"
+    },
+    "baseContent": "schemaVersion: 1\ncommands: []",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "permissionsSaveRequest": {
+    "requestId": "request-permissions-1",
+    "assetId": "asset-permissions-1",
+    "change": {
+      "kind": "permissions",
+      "value": "schemaVersion: 1\npermissions:\n  files: \"仅当前工作区\"\n  commands: \"构建、测试与版本控制\"\n  network: \"仅已配置 MCP\"\n  delegation: \"仅明确服务授权范围\""
+    },
+    "expectedBaseline": {
+      "id": "base-permissions-1",
+      "assetId": "asset-permissions-1",
+      "containerId": "container-permissions-1",
+      "assetContentHash": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "containerContentHash": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "baseContent": "schemaVersion: 1\npermissions:\n  files: \"只读当前工作区\"\n  commands: \"构建、测试与版本控制\"\n  network: \"仅已配置 MCP\"\n  delegation: \"仅明确服务授权范围\"",
+    "expectedOwner": {
+      "agentId": "alpha"
+    }
+  },
+  "confirmationRequired": {
+    "kind": "confirmation_required",
+    "requestId": "request-permissions-1",
+    "challenge": {
+      "id": "confirmation-permissions-1",
+      "assetId": "asset-permissions-1",
+      "proposedContentHash": "sha256:dededededededededededededededededededededededededededededededede",
+      "expiresAt": "2026-08-31T12:10:00Z",
+      "reason": "扩大 Agent 长期权限边界"
+    },
+    "diagnostics": [
+      {
+        "code": "permission_expansion_confirmation_required",
+        "severity": "warning",
+        "message": "扩大 Agent 长期权限必须独立确认"
+      }
+    ]
+  },
+  "validationFailed": {
+    "kind": "validation_failed",
+    "requestId": "request-1",
+    "diagnostics": [
+      {
+        "code": "instructions_invalid",
+        "severity": "error",
+        "message": "Instructions 内容无效"
+      }
+    ]
+  },
+  "identityRecoveryRequest": {
+    "requestId": "recover-identity-1",
+    "agentId": "agent-1",
+    "assetId": "asset-identity-1",
+    "recoveryRef": "revision-identity-pending-1"
+  },
+  "identityRestoreRequest": {
+    "requestId": "restore-identity-1",
+    "agentId": "agent-1",
+    "assetId": "asset-identity-1",
+    "revisionId": "revision-identity-1",
+    "expectedBaseline": {
+      "id": "base-identity-1",
+      "assetId": "asset-identity-1",
+      "containerId": "container-identity-1",
+      "assetContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "containerContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "baseContent": "schemaVersion: 1\nid: agent-1\n",
+    "confirmed": true
+  },
+  "workspaceBindingSaveRequest": {
+    "requestId": "request-workspace-binding-1",
+    "assetId": "asset-workspace-binding-1",
+    "change": {
+      "kind": "workspace_binding",
+      "value": "schemaVersion: 1\nworkspaceBinding: {\"workspaceId\":\"ws-1\",\"instructions\":\"专属配置\",\"ruleIds\":[\"rule-common\"],\"skillIds\":[],\"mcpIds\":[],\"contextPolicy\":{\"triggerRatio\":0.7},\"orchestrationPolicy\":{\"maxDelegationDepth\":1}}"
+    },
+    "expectedBaseline": {
+      "id": "base-workspace-binding-1",
+      "assetId": "asset-workspace-binding-1",
+      "containerId": "container-workspace-binding-1",
+      "assetContentHash": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+      "containerContentHash": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf"
+    },
+    "baseContent": "schemaVersion: 1\nworkspaceBinding: {\"workspaceId\":\"ws-1\",\"instructions\":\"旧专属配置\",\"ruleIds\":[\"rule-common\"],\"skillIds\":[],\"mcpIds\":[],\"contextPolicy\":{\"triggerRatio\":0.7},\"orchestrationPolicy\":{\"maxDelegationDepth\":1}}",
+    "expectedOwner": {
+      "agentId": "alpha",
+      "workspaceId": "ws-1"
+    }
+  },
+  "createWorkspaceBindingRequest": {
+    "requestId": "create-workspace-binding-1",
+    "agentId": "agent-1",
+    "workspaceId": "ws-1",
+    "value": "schemaVersion: 1\nworkspaceBinding: {\"workspaceId\":\"ws-1\",\"instructions\":\"专属配置\",\"ruleIds\":[\"rule-common\"],\"skillIds\":[],\"mcpIds\":[],\"contextPolicy\":{\"triggerRatio\":0.7},\"orchestrationPolicy\":{\"maxDelegationDepth\":1}}"
+  }
+}

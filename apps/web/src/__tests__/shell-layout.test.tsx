@@ -110,7 +110,7 @@ describe('应用壳导航布局', () => {
     expect(rail.querySelector('[data-brand-variant]')).toHaveAttribute('data-brand-variant', theme)
   })
 
-  it('一级配置入口始终位于 Rail，无最近 Agent 时隐藏上下文栏', () => {
+  it('一级配置入口始终位于 Rail，无最近访问记录时隐藏上下文栏', () => {
     createMatchMedia(1440)
     const { container } = renderShell('expanded')
     const rail = screen.getByLabelText('Bandi 配置管理')
@@ -121,7 +121,7 @@ describe('应用壳导航布局', () => {
     expect(within(rail).getByRole('link', { name: /概览/ })).toBeInTheDocument()
     expect(within(rail).getByRole('button', { name: '切换暗色' })).toBeInTheDocument()
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'hidden')
-    expect(screen.queryByLabelText('最近访问 Agent')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('最近访问')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '打开主菜单' })).not.toBeInTheDocument()
   })
 
@@ -136,17 +136,17 @@ describe('应用壳导航布局', () => {
     const { container } = renderShell(preference, 'light', '/', ['zhouce'])
 
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', expected)
-    expect(screen.getByLabelText('最近访问 Agent')).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: '最近访问' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: '查看全部 Agents' })).not.toBeInTheDocument()
     if (expected === 'expanded') {
-      expect(screen.getByText('最近 Agent')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '收起最近 Agent' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '最近 Agent 更多操作' })).toHaveAttribute('aria-haspopup', 'menu')
-      expect(within(screen.getByLabelText('最近 Agent')).getByText('周策')).toBeInTheDocument()
+      expect(screen.getByText('最近访问')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '收起最近访问' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '最近访问更多操作' })).toHaveAttribute('aria-haspopup', 'menu')
+      expect(within(screen.getByRole('complementary', { name: '最近访问' })).getByText('周策')).toBeInTheDocument()
     } else {
-      expect(screen.queryByText('最近 Agent')).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '展开最近 Agent' })).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: '最近 Agent 更多操作' })).not.toBeInTheDocument()
+      expect(screen.queryByText('最近访问')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '展开最近访问' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '最近访问更多操作' })).not.toBeInTheDocument()
     }
   })
 
@@ -155,7 +155,7 @@ describe('应用壳导航布局', () => {
     const { container } = renderShell('expanded', 'light', '/agents/zhouce')
 
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'expanded')
-    const recent = screen.getByLabelText('最近访问 Agent')
+    const recent = screen.getByRole('complementary', { name: '最近访问' })
     expect(within(recent).getByRole('link', { name: /周策/ })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Agent 详情')).toBeInTheDocument()
     expect(screen.queryByText(/在线|运行中|Session/)).not.toBeInTheDocument()
@@ -165,13 +165,13 @@ describe('应用壳导航布局', () => {
   it('展开态直接提供收起与更多操作，紧凑态只提供展开', () => {
     createMatchMedia(1440)
     const { unmount } = renderShell('expanded', 'light', '/', ['zhouce'])
-    expect(screen.getByRole('button', { name: '收起最近 Agent' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '最近 Agent 更多操作' })).toHaveAttribute('aria-haspopup', 'menu')
+    expect(screen.getByRole('button', { name: '收起最近访问' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '最近访问更多操作' })).toHaveAttribute('aria-haspopup', 'menu')
     unmount()
 
     renderShell('compact', 'light', '/', ['zhouce'])
-    expect(screen.getByRole('button', { name: '展开最近 Agent' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '最近 Agent 更多操作' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开最近访问' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '最近访问更多操作' })).not.toBeInTheDocument()
   })
 
   it('可显式隐藏上下文栏且 Agent 深链不会重新显示', async () => {
@@ -179,7 +179,7 @@ describe('应用壳导航布局', () => {
     const { container } = renderShell('hidden', 'light', '/agents/zhouce', ['songyan'])
 
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'hidden')
-    expect(screen.queryByLabelText('最近访问 Agent')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('最近访问')).not.toBeInTheDocument()
     await waitFor(() => expect(JSON.parse(localStorage.getItem('bandi-ui-preferences-v1') ?? '{}').mainMenuLayout).toBe('hidden'))
   })
 
@@ -187,7 +187,7 @@ describe('应用壳导航布局', () => {
     createMatchMedia(1440)
     renderShell('expanded', 'light', '/agents/zhouce', ['songyan', 'zhouce'])
 
-    const links = within(screen.getByLabelText('最近 Agent')).getAllByRole('link')
+    const links = within(screen.getByRole('complementary', { name: '最近访问' })).getAllByRole('link')
     expect(links.map((link) => link.getAttribute('aria-label'))).toEqual([
       expect.stringMatching(/^宋研/),
       expect.stringMatching(/^周策/),
@@ -199,19 +199,19 @@ describe('应用壳导航布局', () => {
     createMatchMedia(1440)
     const { container } = renderShell('expanded', 'light', '/agents/zhouce', ['zhouce'])
 
-    fireEvent.click(screen.getByRole('button', { name: '从最近 Agent 中移除周策' }))
+    fireEvent.click(screen.getByRole('button', { name: '从最近访问中移除周策' }))
 
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'hidden')
-    expect(screen.queryByLabelText('最近访问 Agent')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('最近访问')).not.toBeInTheDocument()
     expect(screen.getByText('Agent 详情')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('link', { name: 'Agents' }))
     fireEvent.click(screen.getByRole('link', { name: '进入周策' }))
 
-    await waitFor(() => expect(screen.getByLabelText('最近访问 Agent')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('complementary', { name: '最近访问' })).toBeInTheDocument())
   })
 
-  it('跟随窗口调整最近 Agent 栏宽度', async () => {
+  it('跟随窗口调整最近访问栏宽度', async () => {
     const viewport = createMatchMedia(1279)
     const { container } = renderShell('follow-window', 'light', '/', ['zhouce'])
     expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'compact')
@@ -220,9 +220,10 @@ describe('应用壳导航布局', () => {
     await waitFor(() => expect(container.querySelector('[data-main-menu-layout]')).toHaveAttribute('data-main-menu-layout', 'expanded'))
   })
 
-  it('演示模式只在 Header 显示一次', () => {
+  it('浏览器能力边界只在 Header 显示一次', () => {
     createMatchMedia(1440)
     renderShell('expanded', 'light', '/', ['zhouce'])
-    expect(screen.getAllByText(/演示模式/)).toHaveLength(1)
+    expect(screen.getAllByText(/浏览器演示/)).toHaveLength(1)
+    expect(screen.getByText(/不读取本机配置/)).toBeInTheDocument()
   })
 })

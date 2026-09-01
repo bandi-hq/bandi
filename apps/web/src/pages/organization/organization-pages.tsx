@@ -6,6 +6,7 @@ import { AppDialog } from '../../components/ui/dialog'
 import { EmptyState, EntityNotFound, EntityTabs, FieldRow, PageHeader, StatusBadge } from '../../components/app/page'
 import { useApp } from '../../state'
 import type { FullDepartment, Role } from '../../domain'
+import { generateEntityId, isDesktopRuntime, saveRole } from '../../desktop-bridge'
 
 export function OrganizationPage() {
   const { state, dispatch } = useApp()
@@ -60,7 +61,7 @@ function DepartmentNode({ department, depth, companyId, selectedDepartmentId, ex
   return <div><div style={{ paddingLeft: `${depth * 18}px` }} className={`flex min-h-11 items-center rounded-md pr-2 text-sm ${selected ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{children.length ? <button type="button" aria-label={`${expanded ? '收起' : '展开'}${department.name}`} aria-expanded={expanded} aria-controls={childrenId} onClick={() => onToggle(department.id)} className="grid min-h-11 min-w-11 place-items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}</button> : <span className="w-11" aria-hidden="true" />}<button type="button" aria-label={department.name} aria-current={selected ? 'page' : undefined} onClick={() => onSelect(department)} className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Building2 size={14} aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{department.name}</span><small className={selected ? 'text-background/75' : 'text-muted-foreground'}>{department.memberAgentIds.length}</small></button></div>{children.length > 0 && expanded && <div id={childrenId}>{children.map((item) => <DepartmentNode key={item.id} department={item} depth={depth + 1} companyId={companyId} selectedDepartmentId={selectedDepartmentId} expandedDepartmentIds={expandedDepartmentIds} onToggle={onToggle} onSelect={onSelect} />)}</div>}</div>
 }
 
-function CompanyOverview({ company }: { company: ReturnType<typeof useApp>['state']['companies'][number] }) { const { state } = useApp(); return <section className="panel p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="label">公司</div><h3 className="mt-2 text-xl font-semibold">{company.name}</h3></div><Button asChild variant="outline"><Link to={`/organization/companies/${company.id}`}>查看公司详情</Link></Button></div><p className="mt-5 max-w-3xl leading-7">{company.mission}</p><div className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="部门" value={state.departments.filter((item) => item.companyId === company.id).length} /><Metric label="工作区" value={state.workspaces.filter((item) => item.companyId === company.id).length} /><Metric label="共享资产" value={state.assets.filter((item) => item.companyId === company.id && item.sourceType === '显式共享').length} /></div><div className="mt-7 rounded-lg border border-border bg-muted/35 p-4 text-sm leading-6"><b>边界</b><p className="mt-2 text-muted-foreground">{company.boundary}</p></div></section> }
+function CompanyOverview({ company }: { company: ReturnType<typeof useApp>['state']['companies'][number] }) { const { state, dispatch } = useApp(); return <section className="panel p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="label">公司</div><h3 className="mt-2 text-xl font-semibold">{company.name}</h3></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'organization', entity: 'company', id: company.id, mode: 'edit' } })}>编辑公司</Button><Button asChild variant="outline"><Link to={`/organization/companies/${company.id}`}>查看公司详情</Link></Button></div></div><p className="mt-5 max-w-3xl leading-7">{company.mission}</p><div className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="部门" value={state.departments.filter((item) => item.companyId === company.id).length} /><Metric label="工作区" value={state.workspaces.filter((item) => item.companyId === company.id).length} /><Metric label="共享资产" value={state.assets.filter((item) => item.companyId === company.id && item.sourceType === '显式共享').length} /></div><div className="mt-7 rounded-lg border border-border bg-muted/35 p-4 text-sm leading-6"><b>边界</b><p className="mt-2 text-muted-foreground">{company.boundary}</p></div></section> }
 function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-lg bg-muted p-4"><b className="text-xl">{value}</b><p className="mt-1 text-xs text-muted-foreground">{label}</p></div> }
 
 const companyTabs = [['overview', '概览'], ['organization', '组织'], ['workspaces', '工作区'], ['shared', '共享资产'], ['permissions', '权限']].map(([id, label]) => ({ id, label }))
@@ -173,26 +174,44 @@ function RoleDialog({ department, current, onClose }: { department: FullDepartme
   const [boundaries, setBoundaries] = useState((current?.decisionBoundaries ?? []).join('\n'))
   const referencedAgents = current ? state.agents.filter((agent) => agent.roleId === current.id) : []
   const duplicate = state.roles.some((role) => role.id !== current?.id && role.companyId === department.companyId && role.name.trim() === name.trim())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const desktop = isDesktopRuntime()
   const toLines = (value: string) => value.split('\n').map((item) => item.trim()).filter(Boolean)
-  const save = (status: Role['status'] = current?.status ?? 'active') => {
-    const role: Role = {
-      id: current?.id ?? `role-${department.id}-${Date.now()}`,
-      companyId: department.companyId,
-      departmentId: department.id,
-      name: name.trim(),
-      status,
-      mission: mission.trim(),
-      responsibilities: toLines(responsibilities),
-      inputs: current?.inputs ?? [],
-      deliverables: current?.deliverables ?? [],
-      decisionBoundaries: toLines(boundaries),
-      escalationConditions: current?.escalationConditions ?? [],
-      completionDefinition: current?.completionDefinition ?? [],
+  const save = async (status: Role['status'] = current?.status ?? 'active') => {
+    if (saving) return
+    setSaving(true)
+    setError(undefined)
+    try {
+      const id = current?.id ?? (desktop ? await generateEntityId('role', `${department.id}-${name}`) : `role-${department.id}-${Date.now()}`)
+      const role: Role = {
+        id,
+        companyId: department.companyId,
+        departmentId: department.id,
+        name: name.trim(),
+        status,
+        mission: mission.trim(),
+        responsibilities: toLines(responsibilities),
+        inputs: current?.inputs ?? [],
+        deliverables: current?.deliverables ?? [],
+        decisionBoundaries: toLines(boundaries),
+        escalationConditions: current?.escalationConditions ?? [],
+        completionDefinition: current?.completionDefinition ?? [],
+      }
+      const persisted = desktop ? await saveRole(role) : role
+      dispatch(desktop
+        ? { type: 'SYNC_PERSISTED_ROLES', roles: [persisted] }
+        : current
+          ? { type: 'UPDATE_ROLE', roleId: current.id, changes: persisted }
+          : { type: 'CREATE_ROLE', role: persisted })
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSaving(false)
     }
-    dispatch(current ? { type: 'UPDATE_ROLE', roleId: current.id, changes: role } : { type: 'CREATE_ROLE', role })
-    onClose()
   }
-  return <AppDialog open onOpenChange={(open) => { if (!open) onClose() }} title={current ? '编辑岗位' : '添加岗位'} description={`${department.name} · 岗位只定义职责与边界，不授予权限或资产`} size="md" footer={<><Button variant="outline" onClick={onClose}>取消</Button>{current?.status === 'active' && <Button variant="outline" onClick={() => save('archived')}>归档</Button>}<Button disabled={!name.trim() || !mission.trim() || duplicate} onClick={() => save()}>保存演示配置</Button></>}><label className="block text-sm font-medium">岗位名称<input className="mt-2 h-10 w-full px-3" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={duplicate} aria-describedby={duplicate ? 'role-name-error' : undefined} />{duplicate && <span id="role-name-error" className="mt-1 block text-xs text-danger">同一公司内岗位名称不能重复。</span>}</label><label className="mt-4 block text-sm font-medium">岗位使命<textarea className="mt-2 min-h-20 w-full p-3" value={mission} onChange={(event) => setMission(event.target.value)} /></label><label className="mt-4 block text-sm font-medium">职责（每行一项）<textarea className="mt-2 min-h-24 w-full p-3" value={responsibilities} onChange={(event) => setResponsibilities(event.target.value)} /></label><label className="mt-4 block text-sm font-medium">决策边界（每行一项）<textarea className="mt-2 min-h-24 w-full p-3" value={boundaries} onChange={(event) => setBoundaries(event.target.value)} /></label>{current && <div className="mt-4 rounded-lg border border-border bg-muted/35 p-3 text-sm"><b>引用影响</b><p className="mt-1 text-muted-foreground">{referencedAgents.length ? `${referencedAgents.map((agent) => agent.name).join('、')} 正在使用该岗位；归档后保留引用并产生配置诊断。` : '当前没有 Agent 使用该岗位。'}</p></div>}<p className="mt-4 text-xs text-muted-foreground">仅更新当前页面内存并生成岗位配置版本；不修改 AgentPackage、权限或委派。</p></AppDialog>
+  return <AppDialog open onOpenChange={(open) => { if (!open && !saving) onClose() }} title={current ? '编辑岗位' : '添加岗位'} description={`${department.name} · 岗位只定义职责与边界，不授予权限或资产`} size="md" footer={<><Button variant="outline" disabled={saving} onClick={onClose}>取消</Button>{current?.status === 'active' && <Button variant="outline" disabled={saving} onClick={() => save('archived')}>{saving ? '保存中…' : '归档'}</Button>}<Button disabled={!name.trim() || !mission.trim() || duplicate || saving} onClick={() => save()}>{saving ? '保存中…' : desktop ? '保存岗位' : '保存演示配置'}</Button></>}><label className="block text-sm font-medium">岗位名称<input className="mt-2 h-10 w-full px-3" value={name} onChange={(event) => setName(event.target.value)} aria-invalid={duplicate} aria-describedby={duplicate ? 'role-name-error' : undefined} />{duplicate && <span id="role-name-error" className="mt-1 block text-xs text-danger">同一公司内岗位名称不能重复。</span>}</label><label className="mt-4 block text-sm font-medium">岗位使命<textarea className="mt-2 min-h-20 w-full p-3" value={mission} onChange={(event) => setMission(event.target.value)} /></label><label className="mt-4 block text-sm font-medium">职责（每行一项）<textarea className="mt-2 min-h-24 w-full p-3" value={responsibilities} onChange={(event) => setResponsibilities(event.target.value)} /></label><label className="mt-4 block text-sm font-medium">决策边界（每行一项）<textarea className="mt-2 min-h-24 w-full p-3" value={boundaries} onChange={(event) => setBoundaries(event.target.value)} /></label>{error && <p role="alert" className="mt-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}{current && <div className="mt-4 rounded-lg border border-border bg-muted/35 p-3 text-sm"><b>引用影响</b><p className="mt-1 text-muted-foreground">{referencedAgents.length ? `${referencedAgents.map((agent) => agent.name).join('、')} 正在使用该岗位；归档后保留引用并产生配置诊断。` : '当前没有 Agent 使用该岗位。'}</p></div>}<p className="mt-4 text-xs text-muted-foreground">{desktop ? '岗位保存到本机领域数据库；不修改 AgentPackage、权限或委派。' : '仅更新当前页面；不修改 AgentPackage、权限或委派。'}</p></AppDialog>
 }
 
 function Rows({ items }: { items: { id: string; title: string; meta: string; to: string }[] }) { return <section className="panel divide-y divide-border">{items.map((item) => <Link key={item.id} to={item.to} className="flex items-center justify-between gap-4 p-5 hover:bg-muted"><b>{item.title}</b><span className="text-sm text-muted-foreground">{item.meta}</span></Link>)}{!items.length && <p className="p-5 text-sm text-muted-foreground">暂无关联对象。</p>}</section> }

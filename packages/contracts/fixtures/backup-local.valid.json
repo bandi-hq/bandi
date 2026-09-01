@@ -1,0 +1,84 @@
+{
+  "createRequest": {
+    "requestId": "backup-create-1",
+    "scope": {
+      "kind": "files",
+      "assetIds": ["asset-instructions-1"]
+    }
+  },
+  "snapshot": {
+    "id": "backup-snapshot-1",
+    "kind": "manual",
+    "scope": "files",
+    "createdAt": "2026-09-01T08:00:00Z",
+    "entryCount": 1,
+    "manifestHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "integrity": "verified",
+    "entries": [
+      {
+        "assetId": "asset-instructions-1",
+        "containerId": "container-instructions-1",
+        "kind": "instructions",
+        "locator": {
+          "rootKind": "managed",
+          "displayPath": "instructions.md",
+          "relativePath": "instructions.md"
+        },
+        "assetContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "containerContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "snapshotContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sizeBytes": 24,
+        "redacted": false
+      }
+    ]
+  },
+  "previewRequest": {
+    "requestId": "backup-preview-1",
+    "snapshotId": "backup-snapshot-1",
+    "assetIds": ["asset-instructions-1"]
+  },
+  "restorePreview": {
+    "requestId": "backup-preview-1",
+    "previewRef": "backup-preview-ref-1",
+    "snapshotId": "backup-snapshot-1",
+    "expiresAt": "2026-09-01T08:10:00Z",
+    "entries": [
+      {
+        "assetId": "asset-instructions-1",
+        "status": "ready",
+        "snapshotContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "currentBaseline": {
+          "id": "baseline-current-1",
+          "assetId": "asset-instructions-1",
+          "containerId": "container-instructions-1",
+          "assetContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "containerContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "diagnostics": []
+      }
+    ],
+    "canRestore": true,
+    "requiresConfirmation": true
+  },
+  "restoreRequest": {
+    "requestId": "backup-restore-1",
+    "snapshotId": "backup-snapshot-1",
+    "assetIds": ["asset-instructions-1"],
+    "previewRef": "backup-preview-ref-1",
+    "confirmed": true
+  },
+  "restoreResult": {
+    "kind": "restored",
+    "requestId": "backup-restore-1",
+    "snapshotId": "backup-snapshot-1",
+    "preRestoreSnapshotId": "backup-snapshot-pre-1",
+    "entries": [
+      {
+        "assetId": "asset-instructions-1",
+        "status": "restored",
+        "revisionId": "revision-backup-restore-1",
+        "diagnostics": []
+      }
+    ]
+  }
+}

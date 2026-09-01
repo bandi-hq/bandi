@@ -56,11 +56,11 @@ export const agentConfigSections: AgentConfigSectionDefinition[] = [
   { id: 'overview', label: '概览' },
   { id: 'package', label: 'AgentPackage' },
   { id: 'identity', label: '身份与职责' },
-  { id: 'instructions', label: 'Instructions' },
+  { id: 'instructions', label: '主指令' },
   { id: 'context', label: '上下文' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'memory', label: 'Memory' },
-  { id: 'rules', label: 'Rules' },
+  { id: 'skills', label: '技能' },
+  { id: 'memory', label: '长期记忆' },
+  { id: 'rules', label: '规则' },
   { id: 'mcp', label: 'MCP' },
   { id: 'permissions', label: '权限' },
   { id: 'collaboration', label: '协作与编排' },
@@ -147,17 +147,17 @@ export function projectAgentFilePreview(agent: FullAgent, context: AgentProjecti
   const binding = workspaceBindingForPath(agent, normalized)
   const workspace = binding ? context.workspaces.find((item) => item.id === binding.workspaceId) : undefined
   const externalNotice = agent.packageSource.kind === 'external-reference'
-    ? '仅展示当前页面中明确登记的结构化事实；Web Mock 未读取外部文件。'
+    ? '仅展示当前页面中明确登记的配置信息；未读取外部文件。'
     : undefined
 
   if (normalized === 'agent.yaml') {
     const role = context.roles?.find((item) => item.id === agent.roleId)
     return {
       title: 'Agent 身份与职责',
-      description: '稳定身份、岗位引用、组织职责和生命周期的完整 manifest 预览。',
+      description: '稳定身份、岗位、组织职责和生命周期的完整清单预览。',
       fields: [
-        { label: 'Schema', value: agent.packageSchema.schemaVersion ? `v${agent.packageSchema.schemaVersion} · ${agent.packageSchema.compatibility}` : agent.packageSchema.compatibility },
-        { label: '稳定 ID', value: agent.id },
+        { label: '格式版本', value: agent.packageSchema.schemaVersion ? `v${agent.packageSchema.schemaVersion} · ${agent.packageSchema.compatibility}` : agent.packageSchema.compatibility },
+        { label: '技术标识', value: agent.id },
         { label: '名称与岗位', value: `${agent.name} · ${role?.name ?? agent.roleId}` },
         { label: '生命周期', value: agent.status },
         { label: '主属部门', value: agent.department },
@@ -167,32 +167,33 @@ export function projectAgentFilePreview(agent: FullAgent, context: AgentProjecti
     }
   }
   if (normalized === 'soul.md') return { title: '长期行为原则', description: '职责、决策边界和禁止事项的可读预览。', fields: [{ label: '职责', value: agent.responsibilities }, { label: '决策边界', value: agent.decisionBoundaries }, { label: '禁止事项', value: agent.prohibitions }], notice: externalNotice }
-  if (normalized === 'instructions.md') return { title: '主 Instructions', description: 'Agent 自有的主指令正文。', fields: [{ label: '正文', value: agent.instructions }], notice: externalNotice }
+  if (normalized === 'instructions.md') return { title: '主指令', description: 'Agent 自有的主指令正文。', fields: [{ label: '正文', value: agent.instructions }], notice: externalNotice }
   if (normalized === 'config/context.yaml') return {
     title: '上下文与输出格式',
-    description: '供 AI 编程工具构建 RuntimeProjection 时读取的长期配置。',
+    description: '供 AI 编程工具生成运行配置时读取的长期设置。',
     fields: [
-      { label: '压缩策略', value: agent.contextPolicy.enabled ? `达到 ${Math.round(agent.contextPolicy.triggerRatio * 100)}% 后压缩到 ${Math.round(agent.contextPolicy.targetRatio * 100)}%` : '已关闭' },
+      { label: '规划上下文窗口', value: `${agent.contextWindowTokens.toLocaleString('zh-CN')} Token` },
+      { label: '压缩策略', value: agent.contextPolicy.enabled ? `约 ${Math.round(agent.contextWindowTokens * agent.contextPolicy.triggerRatio).toLocaleString('zh-CN')} Token（${Math.round(agent.contextPolicy.triggerRatio * 100)}%）→ 约 ${Math.round(agent.contextWindowTokens * agent.contextPolicy.targetRatio).toLocaleString('zh-CN')} Token` : '已关闭' },
       { label: '消息保护', value: `最近 ${agent.contextPolicy.protectRecentTurns} 轮 · 开头 ${agent.contextPolicy.protectOpeningTurns} 轮` },
       { label: '输出格式', value: agent.outputProfileId ? context.assets.find((item) => item.id === agent.outputProfileId)?.name ?? agent.outputProfileId : '未设置' },
       { label: '输出参数', value: agent.outputParameterBindings.map((item) => item.parameterId) },
     ],
-    notice: externalNotice ?? '不包含当前 Session、token 使用、压缩次数或摘要正文。',
+    notice: externalNotice ?? '这些规划值尚未应用，也不包含当前会话、Token 使用量、压缩次数或摘要正文。',
   }
-  if (normalized === 'config/skills.yaml') return { title: 'Skill 引用', description: 'Agent 显式引用的 Skill；安装事实与引用事实保持分离。', fields: [{ label: '已引用', value: assetNames(agent.skillRefs, context) }], notice: externalNotice }
-  if (normalized === 'config/rules.yaml') return { title: 'Rule 引用', description: 'Agent 显式引用的规则资产。', fields: [{ label: '已引用', value: assetNames(agent.ruleRefs, context) }], notice: externalNotice }
-  if (normalized === 'config/orchestration.yaml') return { title: '长期协作与委派边界', description: '仅保存静态委派范围、必需条件、升级目标和禁止事项。', fields: [{ label: '委派状态', value: agent.orchestrationPolicy.enabled ? '允许（仍受权限和组织边界约束）' : '禁止' }, { label: '最大深度', value: String(agent.orchestrationPolicy.maxDelegationDepth) }, { label: '允许 Agent', value: agent.orchestrationPolicy.allowedAgentIds }, { label: '允许 Role', value: agent.orchestrationPolicy.allowedRoleIds }, { label: '允许 Department', value: agent.orchestrationPolicy.allowedDepartmentIds }, { label: '升级条件', value: agent.orchestrationPolicy.escalationConditions }, { label: '禁止事项', value: agent.orchestrationPolicy.prohibitions }], notice: externalNotice ?? '不包含当前任务、参与者、进度、审批或运行记录。' }
-  if (normalized === 'config/hooks.yaml') return { title: 'Hook 引用', description: '仅管理可信 HookDefinition 的显式引用与非敏感参数；不会执行 Hook。', fields: [{ label: '已引用', value: agent.hookRefs.map((item) => context.assets.find((asset) => asset.id === item.assetId)?.name ?? item.assetId) }, { label: '参数绑定', value: agent.hookRefs.flatMap((item) => item.parameterBindings.map((binding) => `${item.assetId}.${binding.parameterId}`)) }], notice: externalNotice ?? '引用存在不表示 Hook 已触发或当前 Session 已加载。' }
-  if (normalized === 'config/commands.yaml') return { title: 'Command 引用', description: '仅管理 CommandDefinition 的显式引用与非敏感参数；不会执行命令。', fields: [{ label: '已引用', value: agent.commandRefs.map((item) => context.assets.find((asset) => asset.id === item.assetId)?.name ?? item.assetId) }, { label: '参数绑定', value: agent.commandRefs.flatMap((item) => item.parameterBindings.map((binding) => `${item.assetId}.${binding.parameterId}`)) }], notice: externalNotice ?? '不接受 Shell 字符串、可执行程序、cwd 或环境变量。' }
+  if (normalized === 'config/skills.yaml') return { title: '技能引用', description: 'Agent 显式引用的技能；安装状态与引用关系分开记录。', fields: [{ label: '已引用', value: assetNames(agent.skillRefs, context) }], notice: externalNotice }
+  if (normalized === 'config/rules.yaml') return { title: '规则引用', description: 'Agent 显式引用的规则资产。', fields: [{ label: '已引用', value: assetNames(agent.ruleRefs, context) }], notice: externalNotice }
+  if (normalized === 'config/orchestration.yaml') return { title: '长期协作与委派边界', description: '仅保存静态委派范围、必需条件、升级目标和禁止事项。', fields: [{ label: '委派状态', value: agent.orchestrationPolicy.enabled ? '允许（仍受权限和组织边界约束）' : '禁止' }, { label: '最大深度', value: String(agent.orchestrationPolicy.maxDelegationDepth) }, { label: '允许 Agent', value: agent.orchestrationPolicy.allowedAgentIds }, { label: '允许岗位', value: agent.orchestrationPolicy.allowedRoleIds }, { label: '允许部门', value: agent.orchestrationPolicy.allowedDepartmentIds }, { label: '升级条件', value: agent.orchestrationPolicy.escalationConditions }, { label: '禁止事项', value: agent.orchestrationPolicy.prohibitions }], notice: externalNotice ?? '不包含当前任务、参与者、进度、审批或运行记录。' }
+  if (normalized === 'config/hooks.yaml') return { title: 'Hook 引用', description: '仅管理可信 HookDefinition 的显式引用与非敏感参数；不会执行 Hook。', fields: [{ label: '已引用', value: agent.hookRefs.map((item) => context.assets.find((asset) => asset.id === item.assetId)?.name ?? item.assetId) }, { label: '参数绑定', value: agent.hookRefs.flatMap((item) => item.parameterBindings.map((binding) => `${item.assetId}.${binding.parameterId}`)) }], notice: externalNotice ?? '存在引用不表示 Hook 已触发或已在当前会话中加载。' }
+  if (normalized === 'config/commands.yaml') return { title: 'Command 引用', description: '仅管理 CommandDefinition 的显式引用与非敏感参数；不会执行命令。', fields: [{ label: '已引用', value: agent.commandRefs.map((item) => context.assets.find((asset) => asset.id === item.assetId)?.name ?? item.assetId) }, { label: '参数绑定', value: agent.commandRefs.flatMap((item) => item.parameterBindings.map((binding) => `${item.assetId}.${binding.parameterId}`)) }], notice: externalNotice ?? '不接受 Shell 字符串、可执行程序、工作目录或环境变量。' }
   if (normalized === 'memory/long-term.md') {
     const spaces = context.memorySpaces.filter((item) => item.owner.includes(agent.name) && item.scopeType === 'Agent 长期')
-    return { title: '长期正式记忆', description: '正式 Memory 只能经 Candidate、Review 和 Revision 更新。', fields: [{ label: 'MemorySpace', value: spaces.map((item) => `${item.owner} · ${item.revision}`) }, { label: '治理', value: spaces.map((item) => `归口 ${item.steward} · 审核 ${item.reviewer}`) }], notice: externalNotice }
+    return { title: '长期正式记忆', description: '正式记忆只能经修改建议、审核和版本记录更新。', fields: [{ label: '记忆范围', value: spaces.map((item) => `${item.owner} · ${item.revision}`) }, { label: '治理', value: spaces.map((item) => `归口 ${item.steward} · 审核 ${item.reviewer}`) }], notice: externalNotice }
   }
-  if (binding && normalized.endsWith('/config.yaml')) return { title: `${workspace?.name ?? binding.workspaceId} 专属配置`, description: 'Agent × Workspace 的显式专属配置；只展示覆盖值，不冒充合并后的有效配置。', fields: [{ label: 'Instructions', value: binding.instructions }, { label: 'Rules', value: assetNames(binding.ruleIds, context) }, { label: 'Skills', value: assetNames(binding.skillIds, context) }, { label: 'MCP', value: assetNames(binding.mcpIds, context) }, { label: '上下文覆盖', value: binding.contextPolicy ? Object.keys(binding.contextPolicy).join('、') : '继承 Agent 根级' }, { label: '输出格式', value: binding.outputProfileId ?? '继承 Agent 根级' }, { label: '编排收紧', value: binding.orchestrationPolicy ? Object.keys(binding.orchestrationPolicy).join('、') : '继承 Agent 根级' }, { label: 'Hook 覆盖', value: binding.hookRefs?.map((item) => item.assetId) ?? [] }, { label: 'Command 覆盖', value: binding.commandRefs?.map((item) => item.assetId) ?? [] }], notice: externalNotice }
+  if (binding && normalized.endsWith('/config.yaml')) return { title: `${workspace?.name ?? binding.workspaceId} 专属配置`, description: 'Agent 的工作区专属配置；只展示覆盖值，不冒充合并后的有效配置。', fields: [{ label: '主指令', value: binding.instructions }, { label: '规则', value: assetNames(binding.ruleIds, context) }, { label: '技能', value: assetNames(binding.skillIds, context) }, { label: 'MCP', value: assetNames(binding.mcpIds, context) }, { label: '上下文覆盖', value: binding.contextPolicy ? Object.keys(binding.contextPolicy).join('、') : '继承 Agent 根级' }, { label: '输出格式', value: binding.outputProfileId ?? '继承 Agent 根级' }, { label: '编排收紧', value: binding.orchestrationPolicy ? Object.keys(binding.orchestrationPolicy).join('、') : '继承 Agent 根级' }, { label: 'Hook 覆盖', value: binding.hookRefs?.map((item) => item.assetId) ?? [] }, { label: 'Command 覆盖', value: binding.commandRefs?.map((item) => item.assetId) ?? [] }], notice: externalNotice }
   if (normalized.endsWith('/memory.md')) {
     const memoryWorkspaceId = association.file.scope.kind === 'workspace' ? association.file.scope.workspaceId : undefined
     const memoryWorkspace = context.workspaces.find((item) => item.id === memoryWorkspaceId)
-    return { title: `${memoryWorkspace?.name ?? '工作区'} 专属记忆`, description: '工作区专属记忆的治理元数据预览。', fields: [{ label: 'Revision', value: association.file.revision ?? binding?.memoryRevision ?? '未设置' }, { label: '状态', value: association.file.status }], notice: externalNotice }
+    return { title: `${memoryWorkspace?.name ?? '工作区'} 专属记忆`, description: '工作区专属记忆的治理信息预览。', fields: [{ label: '版本', value: association.file.revision ?? binding?.memoryRevision ?? '未设置' }, { label: '状态', value: association.file.status }], notice: externalNotice }
   }
   return { title: association.file.type, description: '当前文件尚无专属结构化预览。', fields: [{ label: '路径', value: normalized }, { label: '状态', value: association.file.status }], notice: externalNotice }
 }

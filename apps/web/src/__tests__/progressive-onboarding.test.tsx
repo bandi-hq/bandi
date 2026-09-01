@@ -13,12 +13,18 @@ import { AppProvider, initialState, type State } from '../state'
 const desktopBridge = vi.hoisted(() => ({
   desktop: false,
   selectWorkspaceDirectory: vi.fn(),
+  createWorkspace: vi.fn(),
+  generateEntityId: vi.fn(),
+  loadOrganizationSnapshot: vi.fn(),
 }))
 
 vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => desktopBridge.desktop,
   listManagedAgents: () => Promise.resolve([]),
+  loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
   selectWorkspaceDirectory: desktopBridge.selectWorkspaceDirectory,
+  createWorkspace: desktopBridge.createWorkspace,
+  generateEntityId: desktopBridge.generateEntityId,
 }))
 
 const storage = new Map<string, string>()
@@ -28,6 +34,12 @@ beforeEach(() => {
   storage.clear()
   desktopBridge.desktop = false
   desktopBridge.selectWorkspaceDirectory.mockReset()
+  desktopBridge.createWorkspace.mockReset()
+  desktopBridge.generateEntityId.mockReset()
+  desktopBridge.loadOrganizationSnapshot.mockReset()
+  desktopBridge.loadOrganizationSnapshot.mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
+  desktopBridge.generateEntityId.mockResolvedValue('workspace-generated')
+  desktopBridge.createWorkspace.mockImplementation((_requestId: string, selectedPath: string, workspace) => Promise.resolve({ ...workspace, path: selectedPath }))
   vi.stubGlobal('Request', class extends NativeRequest {
     constructor(input: RequestInfo | URL, init?: RequestInit) {
       super(input, { ...init, signal: undefined })
@@ -69,6 +81,24 @@ const emptyState: State = {
 }
 
 describe('渐进式首次体验', () => {
+  it('Desktop 等待真实 Workspace hydration，加载时不闪现 Web demo 或首次使用页', async () => {
+    desktopBridge.desktop = true
+    let resolveSnapshot!: (value: { schemaVersion: 1; companies: []; departments: []; roles: []; workspaces: State['workspaces']; serviceGrants: [] }) => void
+    desktopBridge.loadOrganizationSnapshot.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve }))
+    const router = createMemoryRouter([{ path: '/', element: <AppProvider><HomePage /></AppProvider> }], { initialEntries: ['/'] })
+    render(<RouterProvider router={router} />)
+
+    expect(screen.getByRole('heading', { name: '恢复你的工作区' })).toBeInTheDocument()
+    expect(screen.queryByText('星河科技')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '先建立你的个人工作区' })).not.toBeInTheDocument()
+
+    resolveSnapshot({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [{ ...initialState.workspaces[0], id: 'hydrated', name: '真实工作区' }], serviceGrants: [] })
+
+    expect(await screen.findByRole('heading', { name: '配置概览' })).toBeInTheDocument()
+    expect(screen.getByText('真实工作区')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '先建立你的个人工作区' })).not.toBeInTheDocument()
+  })
+
   it('允许从现有项目目录开始', () => {
     renderRoutes('/', emptyState)
 
@@ -94,7 +124,7 @@ describe('渐进式首次体验', () => {
     expect(screen.getByText('暂不关联组织')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '添加演示工作区' }))
 
-    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/workspaces/个人项目'))
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/workspaces/workspace-1'))
     expect(await screen.findByRole('heading', { name: '个人项目' })).toBeInTheDocument()
     expect(screen.getByText('先独立使用，或让 AI 帮你规划协作方式')).toBeInTheDocument()
     expect(screen.getByText('未验证')).toBeInTheDocument()
@@ -104,7 +134,7 @@ describe('渐进式首次体验', () => {
     fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
     expect(screen.getByRole('dialog', { name: '让 AI 帮我规划协作方式' })).toBeInTheDocument()
     expect(screen.getByLabelText('你的场景与目标')).toBeInTheDocument()
-    expect(screen.getByText(/'claude' '\/bandi:bandi'/)).toBeInTheDocument()
+    expect(screen.getByText(/Bandi 不生成、执行或回传命令/)).toBeInTheDocument()
     expect(screen.getAllByText('/Users/demo/project').length).toBeGreaterThan(0)
   })
 
@@ -133,6 +163,48 @@ describe('渐进式首次体验', () => {
     expect(screen.getByLabelText('名称')).toHaveValue('桌面项目')
     expect(screen.queryByRole('textbox', { name: '本地目录' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新选择目录' })).toBeInTheDocument()
+  })
+
+  it('Desktop 模式完成时通过本地服务登记规范化工作区', async () => {
+    desktopBridge.desktop = true
+    desktopBridge.selectWorkspaceDirectory.mockResolvedValue('/Volumes/demo/project')
+    desktopBridge.generateEntityId.mockResolvedValue('workspace-desktop-project')
+    desktopBridge.createWorkspace.mockImplementation((_requestId: string, _selectedPath: string, workspace) => Promise.resolve({ ...workspace, path: '/Volumes/demo/canonical' }))
+    const { router } = renderRoutes('/workspaces/new', emptyState)
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'desktop-project' } })
+    fireEvent.click(screen.getByRole('button', { name: '选择目录' }))
+    expect(await screen.findByText('/Volumes/demo/project')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加工作区' }))
+
+    await vi.waitFor(() => expect(desktopBridge.createWorkspace).toHaveBeenCalledWith('create-workspace-desktop-project', '/Volumes/demo/project', expect.objectContaining({ id: 'workspace-desktop-project', name: 'desktop-project' })))
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/workspaces/workspace-desktop-project'))
+  })
+
+  it('Desktop 创建失败后使用同一稳定 ID 重试', async () => {
+    desktopBridge.desktop = true
+    desktopBridge.selectWorkspaceDirectory.mockResolvedValue('/Volumes/demo/project')
+    desktopBridge.generateEntityId.mockResolvedValue('workspace-retry-project')
+    desktopBridge.createWorkspace.mockRejectedValueOnce(new Error('database busy')).mockImplementation((_requestId: string, selectedPath: string, workspace) => Promise.resolve({ ...workspace, path: selectedPath }))
+    const { router } = renderRoutes('/workspaces/new', emptyState)
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '重试项目' } })
+    fireEvent.click(screen.getByRole('button', { name: '选择目录' }))
+    expect(await screen.findByText('/Volumes/demo/project')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }))
+    fireEvent.click(screen.getByRole('button', { name: '添加工作区' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('database busy')
+    fireEvent.click(screen.getByRole('button', { name: '添加工作区' }))
+
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/workspaces/workspace-retry-project'))
+    expect(desktopBridge.generateEntityId).toHaveBeenCalledTimes(1)
+    expect(desktopBridge.createWorkspace).toHaveBeenCalledTimes(2)
   })
 
   it('Desktop 模式取消选择时保留原路径且不报错', async () => {

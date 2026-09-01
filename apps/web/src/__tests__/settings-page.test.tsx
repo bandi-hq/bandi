@@ -86,7 +86,7 @@ describe('设置页', () => {
     expect(screen.queryByRole('option', { name: '系统默认终端' })).not.toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Warp' })).toHaveValue('warp')
     expect(screen.getByRole('option', { name: 'Ghostty' })).toHaveValue('ghostty')
-    expect(screen.getByText(/Desktop 会使用该终端打开当前工作区/)).toBeInTheDocument()
+    expect(screen.getByText(/当前选择只保存在页面内存，刷新后恢复默认值/)).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '首选编辑器' })).not.toBeInTheDocument()
 
     fireEvent.change(terminal, { target: { value: 'iterm2' } })
@@ -192,8 +192,8 @@ describe('设置页', () => {
     renderSettings('/?section=ai-clients')
 
     expect(screen.getByRole('combobox', { name: '当前配置方案' })).toHaveValue('personal')
-    expect(screen.getByText(/当前方案记录已加入工具及其非敏感启动设置/)).toBeInTheDocument()
-    expect(screen.getByText('支持结构化终端交接 · 未探测安装状态')).toBeInTheDocument()
+    expect(screen.getByText(/当前方案只记录已加入的工具/)).toBeInTheDocument()
+    expect(screen.getAllByText('支持结构化终端交接 · 未探测安装状态')).toHaveLength(2)
     expect(screen.getAllByText('仅配置 · 尚未定义启动适配').length).toBeGreaterThan(0)
     expect(screen.getAllByRole('button', { name: '移出' })).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: '加入当前方案' }).length).toBeGreaterThan(0)

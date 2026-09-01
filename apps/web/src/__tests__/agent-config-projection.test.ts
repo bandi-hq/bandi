@@ -40,8 +40,10 @@ describe('Agent 配置文件投影', () => {
 
   it('上下文预览只展示长期策略与输出格式引用', () => {
     const preview = projectAgentFilePreview(agent, context, 'config/context.yaml')!
-    expect(preview.fields.map((field) => field.label)).toEqual(['压缩策略', '消息保护', '输出格式', '输出参数'])
-    expect(preview.notice).toContain('不包含当前 Session')
+    expect(preview.fields.map((field) => field.label)).toEqual(['规划上下文窗口', '压缩策略', '消息保护', '输出格式', '输出参数'])
+    expect(preview.fields[0].value).toBe('200,000 Token')
+    expect(preview.notice).toContain('尚未应用')
+    expect(preview.notice).toContain('不包含当前会话')
   })
 
   it('AgentPackage 包含全部已登记文件', () => {

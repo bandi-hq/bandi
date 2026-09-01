@@ -34,9 +34,10 @@ import { validateOrchestrationOverride } from './orchestration-policy'
 import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, serializeAgentConfig, snapshotAgentConfig, type AgentConfigPayload, type SaveAgentConfigInput } from './agent-config-model'
 import { appendConfigRevision } from './config-revisions'
 import { configurationEnvironmentPath, isConfigurationEnvironment, normalizeConfigurationEnvironment, serializeConfigurationEnvironment, validateConfigurationEnvironment } from './configuration-environment-model'
+import type { MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
 import type { TerminalId } from './terminal-model'
 import type { MainMenuLayoutPreference } from './navigation-layout'
-import { isDesktopRuntime, listManagedAgents } from './desktop-bridge'
+import { isDesktopRuntime, listManagedAgents, loadOrganizationSnapshot } from './desktop-bridge'
 import {
   DEFAULT_UI_PREFERENCES,
   getAccessibleAccent,
@@ -98,7 +99,22 @@ export type OnboardingState = {
   status: 'active' | 'completed'
 }
 
+export type HydrationStatus = 'idle' | 'loading' | 'succeeded' | 'failed'
+
+type OrganizationServiceGrant = {
+  agentId: string
+  id: string
+  departmentId: string
+  capabilities: string[]
+  workspaceIds: string[]
+  prohibitions: string[]
+  status: '有效' | '暂停'
+}
+
 export type State = {
+  runtime: 'web' | 'desktop'
+  hydration: { managedAgents: HydrationStatus; organization: HydrationStatus }
+  organizationServiceGrants: OrganizationServiceGrant[]
   onboarding: OnboardingState
   agents: FullAgent[]
   companies: Company[]
@@ -137,6 +153,13 @@ export type Action =
   | { type: 'CREATE_AGENT'; agent: FullAgent }
   | { type: 'UPSERT_MANAGED_AGENT'; agent: FullAgent; message?: string }
   | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[] }
+  | { type: 'FAIL_MANAGED_AGENTS_HYDRATION'; message: string }
+  | { type: 'HYDRATE_ORGANIZATION'; companies: Company[]; departments: FullDepartment[]; roles: Role[]; workspaces: FullWorkspace[]; serviceGrants: OrganizationServiceGrant[] }
+  | { type: 'FAIL_ORGANIZATION_HYDRATION'; message: string }
+  | { type: 'SYNC_PERSISTED_COMPANIES'; companies: Company[] }
+  | { type: 'SYNC_PERSISTED_DEPARTMENTS'; departments: FullDepartment[] }
+  | { type: 'SYNC_PERSISTED_ROLES'; roles: Role[] }
+  | { type: 'SYNC_PERSISTED_WORKSPACES'; workspaces: FullWorkspace[] }
   | { type: 'UPDATE_AGENT'; agentId: string; changes: Partial<FullAgent>; message?: string }
   | { type: 'SET_AGENT_LIFECYCLE'; agentId: string; status: FullAgent['status'] }
   | { type: 'SAVE_INSTRUCTIONS'; agentId?: string; text: string }
@@ -158,6 +181,9 @@ export type Action =
   | { type: 'APPLY_PLUGIN_ACTION'; pluginId: string; action: PluginAction; version?: string }
   | { type: 'UPDATE_BACKUP_SETTINGS'; changes: Partial<BackupSettings> }
   | { type: 'CREATE_MEMORY_CANDIDATE'; candidate: MemoryCandidate }
+  | { type: 'SYNC_FORMAL_MEMORY_CANDIDATE'; bundle: MemoryReviewBundleDto }
+  | { type: 'HYDRATE_FORMAL_MEMORY_REVIEWS'; bundles: MemoryReviewBundleDto[] }
+  | { type: 'SYNC_FORMAL_MEMORY_REVIEW'; result: ReviewMemoryCandidateResult }
   | { type: 'REVIEW_MEMORY_CANDIDATE'; candidateId: string; status: MemoryCandidateStatus }
   | { type: 'CREATE_DEMO_BACKUP_SNAPSHOT'; snapshot: BackupSnapshot }
   | { type: 'SIMULATE_RESTORE'; snapshotId: string; beforeSnapshot: BackupSnapshot }
@@ -185,6 +211,9 @@ function getInitialUiPreferences(): UiPreferences {
 const initialUiPreferences = getInitialUiPreferences()
 
 export const initialState: State = {
+  runtime: 'web',
+  hydration: { managedAgents: 'idle', organization: 'idle' },
+  organizationServiceGrants: [],
   onboarding: { status: 'active' },
   agents: initialAgents,
   companies: initialCompanies,
@@ -217,6 +246,27 @@ export const initialState: State = {
   dialog: null,
 }
 
+function createDesktopInitialState(): State {
+  return {
+    ...initialState,
+    runtime: 'desktop',
+    hydration: { managedAgents: 'loading', organization: 'loading' },
+    agents: [],
+    companies: [],
+    departments: [],
+    roles: [],
+    workspaces: [],
+    assets: [],
+    pluginInstallations: [],
+    memorySpaces: [],
+    memoryCandidates: [],
+    configRevisions: [],
+    backupSnapshots: [],
+    recentAgentIds: [],
+    currentWorkspaceId: null,
+  }
+}
+
 let noticeId = 0
 const notice = (tone: NoticeTone, title: string, description?: string, duration = 5000): Notice => ({
   id: `notice-${++noticeId}`,
@@ -225,6 +275,72 @@ const notice = (tone: NoticeTone, title: string, description?: string, duration 
   description,
   duration,
 })
+
+function memoryOwnerLabel(state: State, owner: MemoryReviewBundleDto['space']['owner']) {
+  if (owner.kind === 'agent') return state.agents.find((item) => item.id === owner.agentId)?.name ?? owner.agentId
+  if (owner.kind === 'workspace') return state.workspaces.find((item) => item.id === owner.workspaceId)?.name ?? owner.workspaceId
+  const department = state.departments.find((item) => item.id === owner.departmentId)?.name ?? owner.departmentId
+  const workspace = state.workspaces.find((item) => item.id === owner.workspaceId)?.name ?? owner.workspaceId
+  return `${department} × ${workspace}`
+}
+
+function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { space: MemorySpace; candidate: MemoryCandidate } {
+  const owner = memoryOwnerLabel(state, bundle.space.owner)
+  const steward = state.agents.find((item) => item.id === bundle.space.stewardAgentId)?.name ?? bundle.space.stewardAgentId
+  const reviewer = state.agents.find((item) => item.id === bundle.space.reviewerAgentId)?.name ?? bundle.space.reviewerAgentId
+  const formalStatus = bundle.candidate.status
+  const scopeType = {
+    agent_long_term: 'Agent 长期',
+    agent_workspace: 'Agent × Workspace',
+    workspace_shared: 'Workspace 公共',
+    department_workspace: 'Department × Workspace',
+  }[bundle.space.scopeType] as MemorySpace['scopeType']
+  const relativePath = bundle.space.storageLocator.relativePath ?? bundle.space.storageLocator.displayPath
+  const path = bundle.space.storageLocator.rootKind === 'managed' && 'agentId' in bundle.space.scopeKey
+    ? `~/.bandi/agents/agt_${bundle.space.scopeKey.agentId}/${relativePath}`
+    : relativePath
+  return {
+    space: {
+      id: bundle.space.id,
+      scopeType,
+      scopeKey: bundle.space.scopeKey,
+      owner,
+      steward,
+      reviewer,
+      reviewerAgentId: bundle.space.reviewerAgentId,
+      revision: bundle.space.currentRevisionId ?? '尚无正式版本',
+      path,
+    },
+    candidate: {
+      id: bundle.candidate.id,
+      spaceId: bundle.candidate.spaceId,
+      proposerAgentId: bundle.candidate.proposerAgentId,
+      reviewerAgentId: bundle.candidate.reviewerAgentId,
+      summary: bundle.candidate.summary,
+      current: bundle.currentContent,
+      proposed: bundle.candidate.proposedContent,
+      status: formalStatus === 'changes_requested'
+        ? '要求修改'
+        : formalStatus === 'rejected'
+          ? '已驳回'
+          : formalStatus === 'written'
+            ? '已写入正式 Revision'
+            : formalStatus === 'approved_pending_write' || formalStatus === 'revision_pending'
+              ? '已批准'
+              : '待审核',
+    },
+  }
+}
+
+function mergeFormalMemoryBundles(state: State, bundles: MemoryReviewBundleDto[]): Pick<State, 'memorySpaces' | 'memoryCandidates'> {
+  const mapped = bundles.map((bundle) => mapFormalMemoryBundle(state, bundle))
+  const spaceIds = new Set(mapped.map(({ space }) => space.id))
+  const candidateIds = new Set(mapped.map(({ candidate }) => candidate.id))
+  return {
+    memorySpaces: [...state.memorySpaces.filter((item) => !spaceIds.has(item.id)), ...mapped.map(({ space }) => space).filter((space, index, spaces) => spaces.findIndex((item) => item.id === space.id) === index)],
+    memoryCandidates: [...state.memoryCandidates.filter((item) => !candidateIds.has(item.id)), ...mapped.map(({ candidate }) => candidate)],
+  }
+}
 
 function initializeAgentConfigRecords(agent: FullAgent, revisions: ConfigRevision[]): { agent: FullAgent; revisions: ConfigRevision[] } {
   if (agent.packageSource.kind === 'external-reference') return { agent, revisions }
@@ -236,7 +352,7 @@ function initializeAgentConfigRecords(agent: FullAgent, revisions: ConfigRevisio
     snapshotAgentConfig(agent, 'orchestration'),
     ...(agent.hookRefs.length ? [snapshotAgentConfig(agent, 'hooks')] : []),
     ...(agent.commandRefs.length ? [snapshotAgentConfig(agent, 'commands')] : []),
-    ...agent.workspaceBindings.map((value) => ({ kind: 'workspace-binding' as const, value })),
+    ...agent.workspaceBindings.map((value) => snapshotAgentConfig(agent, 'workspace-binding', value.workspaceId)),
   ].filter((payload): payload is AgentConfigPayload => Boolean(payload))
   let nextRevisions = revisions
   let files = agent.files
@@ -262,7 +378,7 @@ function saveAgentConfig(state: State, agentId: string, payload: AgentConfigPayl
   if (payload.kind === 'identity') {
     const role = state.roles.find((item) => item.id === payload.value.roleId)
     if (payload.value.id !== agent.id || !role || role.status !== 'active' || role.companyId !== payload.value.companyId || (role.departmentId && role.departmentId !== payload.value.primaryDepartmentId)) {
-      return { ...state, notice: notice('error', '无法更新 Agent 配置', 'Agent ID、Role 或组织作用域无效') }
+      return { ...state, notice: notice('error', '无法更新 Agent 配置', 'Agent ID、岗位或组织作用域无效') }
     }
   }
   if (payload.kind === 'workspace-binding' && payload.value.orchestrationPolicy && validateOrchestrationOverride(agent.orchestrationPolicy, payload.value.orchestrationPolicy).length) {
@@ -289,7 +405,7 @@ function saveAgentConfig(state: State, agentId: string, payload: AgentConfigPayl
     ...state,
     agents: state.agents.map((item) => item.id === agentId ? { ...nextAgent, files, updated: '刚刚' } : item),
     configRevisions: appended.revisions,
-    notice: notice('success', 'Agent 配置已记录到页面内存', `${path} · ${appended.revision.id} · 仅当前页面内存 · 未写入真实文件`),
+    notice: notice('success', 'Agent 配置已记录', `${path} · ${appended.revision.id} · 仅在当前页面有效 · 未写入文件`),
   }
 }
 
@@ -348,17 +464,84 @@ export function reducer(state: State, action: Action): State {
       }
     }
     case 'HYDRATE_MANAGED_AGENTS': {
-      const managedIds = new Set(action.agents.map((item) => item.id))
+      const grantsByAgent = new Map<string, FullAgent['serviceGrants']>()
+      for (const grant of state.organizationServiceGrants) {
+        const { agentId, ...value } = grant
+        grantsByAgent.set(agentId, [...(grantsByAgent.get(agentId) ?? []), value])
+      }
       return {
         ...state,
-        agents: [
-          ...state.agents.filter((item) => !managedIds.has(item.id)),
-          ...action.agents,
-        ],
+        hydration: { ...state.hydration, managedAgents: 'succeeded' },
+        agents: action.agents.map((agent) => ({ ...agent, serviceGrants: grantsByAgent.get(agent.id) ?? [] })),
       }
     }
+    case 'FAIL_MANAGED_AGENTS_HYDRATION':
+      return {
+        ...state,
+        hydration: { ...state.hydration, managedAgents: 'failed' },
+        notice: notice('error', '无法恢复本机 Agent 配置事实', action.message),
+      }
+    case 'HYDRATE_ORGANIZATION': {
+      const grantsByAgent = new Map<string, FullAgent['serviceGrants']>()
+      for (const grant of action.serviceGrants) {
+        const { agentId, ...value } = grant
+        grantsByAgent.set(agentId, [...(grantsByAgent.get(agentId) ?? []), value])
+      }
+      return {
+        ...state,
+        hydration: { ...state.hydration, organization: 'succeeded' },
+        organizationServiceGrants: action.serviceGrants,
+        onboarding: state.runtime === 'desktop'
+          ? { status: action.workspaces.length ? 'completed' : 'active' }
+          : state.onboarding,
+        companies: action.companies,
+        departments: action.departments,
+        roles: action.roles,
+        workspaces: action.workspaces,
+        currentWorkspaceId: action.workspaces.some((item) => item.id === state.currentWorkspaceId) ? state.currentWorkspaceId : action.workspaces[0]?.id ?? null,
+        agents: state.agents.map((agent) => ({ ...agent, serviceGrants: grantsByAgent.get(agent.id) ?? [] })),
+      }
+    }
+    case 'FAIL_ORGANIZATION_HYDRATION':
+      return {
+        ...state,
+        hydration: { ...state.hydration, organization: 'failed' },
+        notice: notice('error', '无法恢复本机组织配置事实', action.message),
+      }
+    case 'SYNC_PERSISTED_COMPANIES': {
+      const persisted = new Map(action.companies.map((company) => [company.id, company]))
+      const companies = state.companies.map((company) => persisted.get(company.id) ?? company)
+      for (const company of action.companies) {
+        if (!companies.some((item) => item.id === company.id)) companies.push(company)
+      }
+      return { ...state, companies }
+    }
+    case 'SYNC_PERSISTED_DEPARTMENTS': {
+      const persisted = new Map(action.departments.map((department) => [department.id, department]))
+      const departments = state.departments.map((department) => persisted.get(department.id) ?? department)
+      for (const department of action.departments) {
+        if (!departments.some((item) => item.id === department.id)) departments.push(department)
+      }
+      return { ...state, departments }
+    }
+    case 'SYNC_PERSISTED_ROLES': {
+      const persisted = new Map(action.roles.map((role) => [role.id, role]))
+      const roles = state.roles.map((role) => persisted.get(role.id) ?? role)
+      for (const role of action.roles) {
+        if (!roles.some((item) => item.id === role.id)) roles.push(role)
+      }
+      return { ...state, roles }
+    }
+    case 'SYNC_PERSISTED_WORKSPACES': {
+      const persisted = new Map(action.workspaces.map((workspace) => [workspace.id, workspace]))
+      const workspaces = state.workspaces.map((workspace) => persisted.get(workspace.id) ?? workspace)
+      for (const workspace of action.workspaces) {
+        if (!workspaces.some((item) => item.id === workspace.id)) workspaces.push(workspace)
+      }
+      return { ...state, workspaces, currentWorkspaceId: action.workspaces.at(-1)?.id ?? state.currentWorkspaceId }
+    }
     case 'UPDATE_AGENT':
-      return { ...state, agents: state.agents.map((item) => item.id === action.agentId ? { ...item, ...action.changes, updated: '刚刚' } : item), notice: notice('success', 'Agent 演示配置已更新', action.message ?? '仅当前页面内存 · 未写入磁盘') }
+      return { ...state, agents: state.agents.map((item) => item.id === action.agentId ? { ...item, ...action.changes, updated: '刚刚' } : item), notice: notice('success', 'Agent 演示配置已更新', action.message ?? '仅在当前页面有效 · 未写入文件') }
     case 'SET_AGENT_LIFECYCLE': {
       const agent = state.agents.find((item) => item.id === action.agentId)
       const manifest = agent ? snapshotAgentConfig(agent, 'identity') : undefined
@@ -401,7 +584,7 @@ export function reducer(state: State, action: Action): State {
       const configRevisions = appended.revisions
       if (target.ownerType === 'asset') {
         const asset = state.assets.find((item) => item.id === target.ownerId)
-        if (!asset || asset.kind === 'Memory') return { ...state, notice: notice('warning', '无法恢复配置版本', '正式 Memory 使用独立 MemoryRevision') }
+        if (!asset || asset.kind === 'Memory') return { ...state, notice: notice('warning', '无法恢复配置版本', '正式记忆使用独立的记忆版本') }
         let changes: Partial<FullAsset> = { content: target.content }
         if (asset.kind === 'SOP') {
           try {
@@ -418,7 +601,7 @@ export function reducer(state: State, action: Action): State {
     }
     case 'CREATE_COMPANY':
       if (state.companies.some((item) => item.id === action.company.id)) return state
-      return { ...state, companies: [...state.companies, action.company], notice: notice('success', '公司已加入演示组织', '仅当前页面内存') }
+      return { ...state, companies: [...state.companies, action.company], notice: notice('success', '公司已加入演示组织', '仅在当前页面有效') }
     case 'UPDATE_COMPANY':
       return { ...state, companies: state.companies.map((item) => item.id === action.companyId ? { ...item, ...action.changes } : item), notice: notice('success', '公司演示信息已更新', '未写入文件') }
     case 'CREATE_DEPARTMENT':
@@ -427,22 +610,22 @@ export function reducer(state: State, action: Action): State {
     case 'UPDATE_DEPARTMENT':
       return { ...state, departments: state.departments.map((item) => item.id === action.departmentId ? { ...item, ...action.changes } : item), notice: notice('success', '部门关系已更新', '未隐式修改 Agent 配置或权限') }
     case 'CREATE_ROLE': {
-      if (state.roles.some((item) => item.id === action.role.id || (item.companyId === action.role.companyId && item.name === action.role.name))) return { ...state, notice: notice('warning', '无法创建 Role', '稳定 ID 或公司内名称重复') }
+      if (state.roles.some((item) => item.id === action.role.id || (item.companyId === action.role.companyId && item.name === action.role.name))) return { ...state, notice: notice('warning', '无法创建岗位', '稳定 ID 或公司内名称重复') }
       const path = `companies/${action.role.companyId}/roles/${action.role.id}.yaml`
       const content = JSON.stringify(action.role, null, 2)
-      const appended = appendConfigRevision(state.configRevisions, { ownerType: 'role', ownerId: action.role.id, path, content, summary: `创建 Role ${action.role.name}`, payload: action.role, evidence: 'memory-only' })
-      return { ...state, roles: [...state.roles, action.role], configRevisions: appended.revisions, notice: notice('success', 'Role 已记录到页面内存', `${path} · 不授予权限或资产`) }
+      const appended = appendConfigRevision(state.configRevisions, { ownerType: 'role', ownerId: action.role.id, path, content, summary: `创建岗位${action.role.name}`, payload: action.role, evidence: 'memory-only' })
+      return { ...state, roles: [...state.roles, action.role], configRevisions: appended.revisions, notice: notice('success', '岗位已记录到页面内存', `${path} · 不授予权限或资产`) }
     }
     case 'UPDATE_ROLE': {
       const current = state.roles.find((item) => item.id === action.roleId)
-      if (!current) return { ...state, notice: notice('warning', '无法更新 Role', 'Role 不存在') }
+      if (!current) return { ...state, notice: notice('warning', '无法更新岗位', '岗位不存在') }
       const role = { ...current, ...action.changes, id: current.id } as Role
-      if (state.roles.some((item) => item.id !== role.id && item.companyId === role.companyId && item.name === role.name)) return { ...state, notice: notice('warning', '无法更新 Role', '公司内 Role 名称重复') }
+      if (state.roles.some((item) => item.id !== role.id && item.companyId === role.companyId && item.name === role.name)) return { ...state, notice: notice('warning', '无法更新岗位', '公司内岗位名称重复') }
       if (JSON.stringify(role) === JSON.stringify(current)) return state
       const path = `companies/${role.companyId}/roles/${role.id}.yaml`
       const content = JSON.stringify(role, null, 2)
-      const appended = appendConfigRevision(state.configRevisions, { ownerType: 'role', ownerId: role.id, path, content, summary: `${role.status === 'archived' ? '归档' : '更新'} Role ${role.name}`, payload: role, evidence: 'memory-only' })
-      return { ...state, roles: state.roles.map((item) => item.id === role.id ? role : item), configRevisions: appended.revisions, notice: notice('success', 'Role 已记录到页面内存', `${path} · 未修改 Agent 权限、资产或 AgentPackage`) }
+      const appended = appendConfigRevision(state.configRevisions, { ownerType: 'role', ownerId: role.id, path, content, summary: `${role.status === 'archived' ? '归档' : '更新'}岗位 ${role.name}`, payload: role, evidence: 'memory-only' })
+      return { ...state, roles: state.roles.map((item) => item.id === role.id ? role : item), configRevisions: appended.revisions, notice: notice('success', '岗位已记录到页面内存', `${path} · 未修改 Agent 权限、资产或 AgentPackage`) }
     }
     case 'ADD_WORKSPACE':
       if (state.workspaces.some((item) => item.id === action.workspace.id)) return state
@@ -458,7 +641,7 @@ export function reducer(state: State, action: Action): State {
         workspaces,
         currentWorkspaceId: state.currentWorkspaceId === action.workspaceId ? workspaces[0]?.id ?? null : state.currentWorkspaceId,
         dialog: null,
-        notice: notice('success', `${target.name} 已从演示索引移除`, '未删除目录、文件、Agent WorkspaceBinding、MemorySpace 或资产引用'),
+        notice: notice('success', `${target.name} 已从演示索引移除`, '未删除目录、文件、Agent 工作区专属配置、记忆范围 或资产引用'),
       }
     }
     case 'SELECT_WORKSPACE':
@@ -472,7 +655,7 @@ export function reducer(state: State, action: Action): State {
         ? appendConfigRevision(state.configRevisions, { ownerType: 'asset', ownerId: asset.id, path: asset.path, content: revisionContent, summary: `保存 ${asset.name} 演示配置`, evidence: 'memory-only' })
         : undefined
       const configRevisions = appended?.revisions ?? state.configRevisions
-      return { ...state, assets: state.assets.map((item) => item.id === action.assetId ? nextAsset : item), configRevisions, notice: notice('success', '资产演示配置已更新', appended ? `已记录 ${appended.revision.id} · 仅当前页面内存 · 未写入真实文件` : action.message ?? '仅当前页面内存 · 未写入真实文件') }
+      return { ...state, assets: state.assets.map((item) => item.id === action.assetId ? nextAsset : item), configRevisions, notice: notice('success', '资产演示配置已更新', appended ? `已记录 ${appended.revision.id} · 仅在当前页面有效 · 未写入文件` : action.message ?? '仅在当前页面有效 · 未写入文件') }
     }
     case 'CREATE_ASSET':
       if (state.assets.some((item) => item.id === action.asset.id)) return state
@@ -487,14 +670,14 @@ export function reducer(state: State, action: Action): State {
     }
     case 'APPLY_PLUGIN_ACTION': {
       const installation = state.pluginInstallations.find((item) => item.pluginId === action.pluginId)
-      if (!installation) return { ...state, notice: notice('warning', '无法更新 Plugin 演示状态', '目标没有独立 PluginInstallation 记录') }
+      if (!installation) return { ...state, notice: notice('warning', '无法更新 Plugin 演示状态', '目标没有独立的插件安装记录') }
       const next = applyPluginAction(installation, action.action, action.version)
       if (!next) return { ...state, notice: notice('warning', '当前 Plugin 状态不支持此操作', '未修改安装事实或 Agent 组件引用') }
       const labels: Record<PluginAction, string> = { install: '安装', update: '更新', rollback: '回滚', uninstall: '卸载' }
       return { ...state, pluginInstallations: state.pluginInstallations.map((item) => item.pluginId === action.pluginId ? next : item), notice: notice('success', `Plugin 已模拟${labels[action.action]}`, '仅更新 PluginInstallation 页面内存事实 · 未探测、下载、执行安装脚本或写入文件 · 未自动增删 Agent 引用') }
     }
     case 'UPDATE_BACKUP_SETTINGS':
-      return { ...state, backupSettings: { ...state.backupSettings, ...action.changes }, notice: notice('info', '备份演示策略已更新', '仅当前页面内存 · 未连接 Git、上传文件或读取凭据') }
+      return { ...state, backupSettings: { ...state.backupSettings, ...action.changes }, notice: notice('info', '备份演示策略已更新', '仅在当前页面有效 · 未连接 Git、上传文件或读取凭据') }
     case 'CREATE_MEMORY_CANDIDATE': {
       if (state.memoryCandidates.some((item) => item.id === action.candidate.id)) return { ...state, notice: notice('warning', '无法创建正式记忆候选', '候选 ID 已存在') }
       const governance = resolveMemoryGovernance(state, action.candidate.spaceId, action.candidate.proposerAgentId)
@@ -502,7 +685,32 @@ export function reducer(state: State, action: Action): State {
         return { ...state, notice: notice('error', '无法创建正式记忆候选', governance.errors.join(' ')) }
       }
       const candidate = { ...action.candidate, reviewerAgentId: governance.reviewerAgentId }
-      return { ...state, memoryCandidates: [...state.memoryCandidates, candidate], notice: notice('success', '正式记忆候选已创建', '尚未写入 MemorySpace') }
+      return { ...state, memoryCandidates: [...state.memoryCandidates, candidate], notice: notice('success', '正式记忆候选已创建', '尚未写入正式记忆') }
+    }
+    case 'SYNC_FORMAL_MEMORY_CANDIDATE': {
+      return {
+        ...state,
+        ...mergeFormalMemoryBundles(state, [action.bundle]),
+        notice: notice('success', '正式记忆候选已创建', '已保存到本机审核队列，尚未写入正式 Memory'),
+      }
+    }
+    case 'HYDRATE_FORMAL_MEMORY_REVIEWS':
+      return { ...state, ...mergeFormalMemoryBundles(state, action.bundles) }
+    case 'SYNC_FORMAL_MEMORY_REVIEW': {
+      const { result } = action
+      if (!('candidate' in result)) return state
+      const status: MemoryCandidateStatus = result.kind === 'saved'
+        ? '已写入正式 Revision'
+        : result.kind === 'review_recorded'
+          ? result.candidate.status === 'changes_requested' ? '要求修改' : '已驳回'
+          : '已批准'
+      return {
+        ...state,
+        memoryCandidates: state.memoryCandidates.map((item) => item.id === result.candidate.id ? { ...item, status } : item),
+        memorySpaces: result.kind === 'saved'
+          ? state.memorySpaces.map((space) => space.id === result.revision.spaceId ? { ...space, revision: result.revision.id } : space)
+          : state.memorySpaces,
+      }
     }
     case 'REVIEW_MEMORY_CANDIDATE': {
       const candidate = state.memoryCandidates.find((item) => item.id === action.candidateId)
@@ -520,7 +728,7 @@ export function reducer(state: State, action: Action): State {
         dialog: null,
         notice: action.status === '已写入演示 Revision'
           ? notice('success', '候选已模拟写入正式记忆', '已创建新 Revision · 未写入磁盘')
-          : notice('info', `候选状态已更新为${action.status}`, '仅当前页面内存'),
+          : notice('info', `候选状态已更新为${action.status}`, '仅在当前页面有效'),
       }
     }
     case 'CREATE_DEMO_BACKUP_SNAPSHOT':
@@ -528,7 +736,7 @@ export function reducer(state: State, action: Action): State {
     case 'SIMULATE_RESTORE':
       return { ...state, backupSnapshots: [action.beforeSnapshot, ...state.backupSnapshots], dialog: null, notice: notice('info', `已记录模拟恢复 ${action.snapshotId}`, '未恢复任何真实文件') }
     case 'UPDATE_SETTINGS':
-      return { ...state, settings: { ...state.settings, ...action.changes }, notice: notice('success', '设置已更新到当前页面内存', '未写入配置文件') }
+      return { ...state, settings: { ...state.settings, ...action.changes }, notice: notice('success', '设置已在当前页面更新', '未写入配置文件') }
     case 'RECORD_RECENT_AGENT': {
       if (!state.agents.some((item) => item.id === action.agentId) || state.recentAgentIds.includes(action.agentId)) return state
       return { ...state, recentAgentIds: [action.agentId, ...state.recentAgentIds].slice(0, 6) }
@@ -538,19 +746,19 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         recentAgentIds: state.recentAgentIds.filter((id) => id !== action.agentId),
-        notice: notice('info', '已从最近 Agent 中移除', '仅影响当前页面内存'),
+        notice: notice('info', '已从最近访问中移除', '仅影响当前页面'),
       }
     }
     case 'CLEAR_RECENT_AGENTS':
       return state.recentAgentIds.length
-        ? { ...state, recentAgentIds: [], notice: notice('info', '最近 Agent 记录已清空', '仅影响当前页面内存') }
+        ? { ...state, recentAgentIds: [], notice: notice('info', '最近访问记录已清空', '仅影响当前页面') }
         : state
     case 'ADD_CUSTOM_AI_CLIENT': {
       const normalizedName = action.client.name.trim()
       const duplicate = state.aiClients.some((item) => item.id === action.client.id || item.name.trim().toLowerCase() === normalizedName.toLowerCase())
       if (!normalizedName || duplicate) return state
       const client = { ...action.client, name: normalizedName, persistence: 'memory-only' as const }
-      return { ...state, aiClients: [...state.aiClients, client], notice: notice('info', `${client.name}已添加`, '仅登记到当前页面内存 · 未探测本机 · 未写入磁盘') }
+      return { ...state, aiClients: [...state.aiClients, client], notice: notice('info', `${client.name}已添加`, '仅登记到当前页面 · 未探测本机 · 未写入磁盘') }
     }
     case 'SAVE_CONFIGURATION_ENVIRONMENT': {
       const environment = normalizeConfigurationEnvironment(action.environment)
@@ -572,7 +780,7 @@ export function reducer(state: State, action: Action): State {
           ? state.configurationEnvironments.map((item) => item.id === environment.id ? { ...environment, evidence: 'memory-only' } : item)
           : [...state.configurationEnvironments, { ...environment, evidence: 'memory-only' }],
         configRevisions: appended.revisions,
-        notice: notice('success', '配置方案已记录到页面内存', `${path} · 未读取或修改真实工具配置`),
+        notice: notice('success', '配置方案已记录', `${path} · 未读取或修改真实工具配置`),
       }
     }
     case 'CREATE_CONFIGURATION_ENVIRONMENT': {
@@ -584,16 +792,13 @@ export function reducer(state: State, action: Action): State {
       const environment = {
         ...action.environment,
         clientIds: source ? [...source.clientIds] : [...action.environment.clientIds],
-        clientLaunchProfiles: source?.clientLaunchProfiles
-          ? Object.fromEntries(Object.entries(source.clientLaunchProfiles).map(([clientId, profile]) => [clientId, { ...profile, args: [...profile.args] }]))
-          : action.environment.clientLaunchProfiles,
       }
       const saved = reducer(state, { type: 'SAVE_CONFIGURATION_ENVIRONMENT', environment })
       return saved.configRevisions === state.configRevisions ? saved : { ...saved, currentConfigurationEnvironmentId: environment.id }
     }
     case 'SELECT_CONFIGURATION_ENVIRONMENT':
       return state.configurationEnvironments.some((item) => item.id === action.environmentId)
-        ? { ...state, currentConfigurationEnvironmentId: action.environmentId, notice: notice('info', '当前配置方案已切换', '仅影响当前页面内存，未切换真实工具配置') }
+        ? { ...state, currentConfigurationEnvironmentId: action.environmentId, notice: notice('info', '当前配置方案已切换', '仅影响当前页面，未切换真实工具配置') }
         : { ...state, notice: notice('error', '无法切换配置方案', '目标方案不存在') }
     case 'SET_ENVIRONMENT_CLIENT_REGISTRATION': {
       const environment = state.configurationEnvironments.find((item) => item.id === action.environmentId)
@@ -626,7 +831,7 @@ type AppContextValue = {
 const Ctx = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children, initialState: providedState }: { children: ReactNode; initialState?: State }) {
-  const [state, dispatch] = useReducer(reducer, providedState ?? initialState)
+  const [state, dispatch] = useReducer(reducer, providedState ?? (isDesktopRuntime() ? createDesktopInitialState() : initialState))
   const [preview, setPreview] = useState<{ preferences: UiPreferences; assets?: UiPreviewAssets }>()
   const [prefersDark, setPrefersDark] = useState(() => providedState?.theme === 'dark')
   const effectiveUiPreferences = preview?.preferences ?? state.uiPreferences
@@ -637,9 +842,13 @@ export function AppProvider({ children, initialState: providedState }: { childre
 
   useEffect(() => {
     if (providedState || !isDesktopRuntime()) return
+    const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
     void listManagedAgents()
       .then((agents) => dispatch({ type: 'HYDRATE_MANAGED_AGENTS', agents }))
-      .catch(() => undefined)
+      .catch((error) => dispatch({ type: 'FAIL_MANAGED_AGENTS_HYDRATION', message: errorMessage(error) }))
+    void loadOrganizationSnapshot()
+      .then((snapshot) => dispatch({ type: 'HYDRATE_ORGANIZATION', ...snapshot }))
+      .catch((error) => dispatch({ type: 'FAIL_ORGANIZATION_HYDRATION', message: errorMessage(error) }))
   }, [providedState])
 
   useEffect(() => {

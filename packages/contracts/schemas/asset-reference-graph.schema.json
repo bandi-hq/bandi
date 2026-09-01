@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bandi.local/contracts/asset-reference-graph.schema.json",
+  "title": "Bandi Asset Reference Graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sharedAssets", "references"],
+  "properties": {
+    "sharedAssets": { "type": "array", "items": { "$ref": "#/$defs/sharedAsset" } },
+    "references": { "type": "array", "items": { "$ref": "#/$defs/reference" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$" },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "kind": { "enum": ["rule", "skill", "mcp", "sop", "hook", "command", "output_profile"] },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootKind", "displayPath"],
+      "properties": {
+        "rootKind": { "const": "bandi" },
+        "displayPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["error", "warning", "info"] },
+        "message": { "type": "string", "minLength": 1 },
+        "field": { "type": "string" },
+        "path": { "type": "string" },
+        "remediation": { "type": "string" }
+      }
+    },
+    "sharedAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "companyId", "locator", "contentHash", "parseStatus", "diagnostics"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "oneOf": [{ "$ref": "#/$defs/kind" }, { "const": "unknown" }] },
+        "companyId": { "$ref": "#/$defs/id" },
+        "departmentId": { "$ref": "#/$defs/id" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "contentHash": { "$ref": "#/$defs/hash" },
+        "parseStatus": { "enum": ["parsed", "invalid"] },
+        "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceAssetId", "sourceContainerId", "referrerKind", "referrerId", "targetAssetId", "targetKind", "state", "sourcePath"],
+      "properties": {
+        "sourceAssetId": { "$ref": "#/$defs/id" },
+        "sourceContainerId": { "$ref": "#/$defs/id" },
+        "referrerKind": { "const": "agent" },
+        "referrerId": { "$ref": "#/$defs/id" },
+        "workspaceId": { "$ref": "#/$defs/id" },
+        "targetAssetId": { "$ref": "#/$defs/id" },
+        "targetKind": { "$ref": "#/$defs/kind" },
+        "state": { "enum": ["resolved", "unresolved", "dangling", "type_mismatch", "out_of_scope", "target_invalid"] },
+        "targetLocator": { "$ref": "#/$defs/locator" },
+        "targetCompanyId": { "$ref": "#/$defs/id" },
+        "sourcePath": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    }
+  }
+}

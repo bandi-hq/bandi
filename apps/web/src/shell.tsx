@@ -110,6 +110,9 @@ export function Shell() {
   })
   const title = metadata.title
   const workspace = state.workspaces.find((item) => item.id === state.currentWorkspaceId)
+  const runtimeLabel = isDesktopRuntime()
+    ? 'Bandi Desktop · 本机配置管理'
+    : '浏览器演示 · 不读取本机配置 · 更改仅在当前页面有效'
   const recentAgents = state.recentAgentIds.flatMap((id) => {
     const agent = state.agents.find((item) => item.id === id)
     return agent ? [{ ...agent, roleName: state.roles.find((role) => role.id === agent.roleId)?.name ?? agent.department }] : []
@@ -234,16 +237,16 @@ export function Shell() {
           </div>
         </aside>
 
-        {mainMenuLayout !== 'hidden' && <aside className="sticky top-0 flex h-screen min-w-0 flex-col border-r border-border bg-card" aria-label="最近访问 Agent">
+        {mainMenuLayout !== 'hidden' && <aside className="sticky top-0 flex h-screen min-w-0 flex-col border-r border-border bg-card" aria-label="最近访问">
           {agentMenuCompact && logoUrl && <div className="flex h-14 items-center justify-center border-b border-border"><img src={logoUrl} alt="" aria-hidden="true" className="size-8 rounded-lg object-contain" /></div>}
           <div className={cn('flex h-14 items-center border-b border-border', agentMenuExpanded ? 'justify-between gap-2 px-3' : 'justify-center', agentMenuCompact && logoUrl && 'h-12')}>
             {agentMenuExpanded ? <>
-              <div className="flex min-w-0 items-center gap-2">{logoUrl && <img src={logoUrl} alt="" aria-hidden="true" className="size-8 shrink-0 rounded-lg object-contain" />}<div className="min-w-0"><b className="text-sm font-semibold">最近 Agent</b>{effectiveUiPreferences.shellLabel && <p className="truncate text-xs text-muted-foreground">{effectiveUiPreferences.shellLabel}</p>}</div></div>
+              <div className="flex min-w-0 items-center gap-2">{logoUrl && <img src={logoUrl} alt="" aria-hidden="true" className="size-8 shrink-0 rounded-lg object-contain" />}<div className="min-w-0"><b className="text-sm font-semibold">最近访问</b>{effectiveUiPreferences.shellLabel && <p className="truncate text-xs text-muted-foreground">{effectiveUiPreferences.shellLabel}</p>}</div></div>
               <div className="flex shrink-0 items-center gap-0.5">
-                <Tooltip content="收起最近 Agent" side="bottom">
-                  <Button variant="ghost" size="icon" className="size-8 min-h-8 p-0" aria-label="收起最近 Agent" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'compact' })}><PanelLeftClose size={16} aria-hidden="true" /></Button>
+                <Tooltip content="收起最近访问" side="bottom">
+                  <Button variant="ghost" size="icon" className="size-8 min-h-8 p-0" aria-label="收起最近访问" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'compact' })}><PanelLeftClose size={16} aria-hidden="true" /></Button>
                 </Tooltip>
-                <ActionMenu label="最近 Agent 更多操作">
+                <ActionMenu label="最近访问更多操作">
                   {state.recentAgentIds.some((id) => id !== metadata.agentId) && <>
                     <DropdownMenu.Item className={menuItemClass} onSelect={() => dispatch({ type: 'CLEAR_RECENT_AGENTS' })}>{metadata.agentId ? '清空其他最近记录' : '清空最近记录'}</DropdownMenu.Item>
                     <DropdownMenu.Separator className="my-1 h-px bg-border" />
@@ -251,11 +254,11 @@ export function Shell() {
                   <DropdownMenu.Item className={menuItemClass} onSelect={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'hidden' })}>隐藏此栏</DropdownMenu.Item>
                 </ActionMenu>
               </div>
-            </> : <Tooltip content="展开最近 Agent" side="right">
-              <Button variant="ghost" size="icon" aria-label="展开最近 Agent" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'expanded' })}><PanelLeftOpen size={17} aria-hidden="true" /></Button>
+            </> : <Tooltip content="展开最近访问" side="right">
+              <Button variant="ghost" size="icon" aria-label="展开最近访问" onClick={() => dispatch({ type: 'SET_MAIN_MENU_LAYOUT', preference: 'expanded' })}><PanelLeftOpen size={17} aria-hidden="true" /></Button>
             </Tooltip>}
           </div>
-          <nav className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto py-2', agentMenuExpanded ? 'gap-2 px-2' : 'items-center gap-1 px-2')} aria-label="最近 Agent">
+          <nav className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto py-2', agentMenuExpanded ? 'gap-2 px-2' : 'items-center gap-1 px-2')} aria-label="最近访问">
             {recentAgents.map((agent) => {
               const label = `${agent.name} · ${agent.roleName}`
               const link = <NavLink
@@ -271,7 +274,7 @@ export function Shell() {
                 <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-xs font-semibold text-foreground">{agent.name.slice(0, 1)}</span>
                 {agentMenuExpanded && <span className="min-w-0"><b className="block truncate text-sm font-medium">{agent.name}</b><span className="block truncate text-xs text-muted-foreground">{agent.roleName}</span></span>}
               </NavLink>
-              return agentMenuExpanded ? <div key={agent.id} className="group relative">{link}<Tooltip content="从最近记录移除" side="right" triggerClassName="absolute right-1.5 top-1/2 -translate-y-1/2"><Button variant="ghost" size="icon" className="size-8 min-h-8 rounded-md p-0 text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-background/80 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100" aria-label={`从最近 Agent 中移除${agent.name}`} onClick={() => dispatch({ type: 'REMOVE_RECENT_AGENT', agentId: agent.id })}><X size={14} strokeWidth={1.8} aria-hidden="true" /></Button></Tooltip></div> : <Tooltip key={agent.id} content={label} side="right">{link}</Tooltip>
+              return agentMenuExpanded ? <div key={agent.id} className="group relative">{link}<Tooltip content="从最近记录移除" side="right" triggerClassName="absolute right-1.5 top-1/2 -translate-y-1/2"><Button variant="ghost" size="icon" className="size-8 min-h-8 rounded-md p-0 text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-background/80 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100" aria-label={`从最近访问中移除${agent.name}`} onClick={() => dispatch({ type: 'REMOVE_RECENT_AGENT', agentId: agent.id })}><X size={14} strokeWidth={1.8} aria-hidden="true" /></Button></Tooltip></div> : <Tooltip key={agent.id} content={label} side="right">{link}</Tooltip>
             })}
           </nav>
         </aside>}
@@ -298,7 +301,7 @@ export function Shell() {
                   {state.workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </label>
-              <div className="hidden rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted-foreground min-[1180px]:block">演示模式 · 未探测本机 · 未写盘</div>
+              <div className="hidden rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted-foreground min-[1180px]:block">{runtimeLabel}</div>
               <AiClientHandoffAction workspaceId={workspace?.id} className="max-[700px]:px-2.5" />
             </div>
           </header>

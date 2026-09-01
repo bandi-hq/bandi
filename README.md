@@ -3,7 +3,7 @@
 现实创业公司的本地数字孪生与长期 Agent 配置管理平面：在 Desktop 中可视化管理多 Agent 配置、组织关系和版本历史，在用户自己的 Claude Code CLI 中指挥班底工作。
 
 > [!NOTE]
-> 仓库当前包含 React Web Mock；Desktop、Rust Local Service、CLI 与 Plugin 的真实系统能力仍在设计和实现中，不建议用于生产环境。Web Mock 不读取或写入真实配置文件，业务变化只保存在当前页面内存。
+> 仓库当前包含 React Web Mock、Tauri Desktop、本地 Rust 领域服务、SQLite/WAL、Workspace Registry、AI Adapter Registry、RestrictedConfigWriter、`bandi` CLI 与 Bandi Plugin；仍不建议用于生产环境。纯 Web 继续使用明确标识的页面内存演示，Desktop 已接入的真实能力以本地服务回执、受管文件事实和共享合同为准。
 
 ## 核心边界
 
@@ -27,9 +27,9 @@ Bandi Desktop 管理“下次及以后如何工作”的长期配置：
 - 任务冲突、任务审批、逐级汇报与最终验收；
 - 聊天、工具调用、Todo、日志、Agent View、Session 和执行状态。
 
-Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。界面中的**工作区**是一个本地项目及其长期配置作用域，**本地目录**是该工作区登记的路径，只有进入外部 CLI 的指引才将这个路径称为**工作目录（cwd）**。Claude Code 可使用配置方案中的非敏感“启动程序 + 独立参数”完成一次受控终端交接并进入 `/bandi:bandi`；不支持 Shell 语法，不读取输出或跟踪会话。客户端配置不代表客户端已安装、连接或运行。
+Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像，也不为每次任务要求用户选人。界面中的**工作区**是一个本地项目及其长期配置作用域，**本地目录**是该工作区登记的路径，只有进入外部 CLI 的指引才将这个路径称为**工作目录（cwd）**。当前工作区交接契约只接受 `clientId / adapterId / workspaceId / terminalId / intent`，由后端从 Workspace Registry 重取 canonical cwd，并仅通过固定 `/usr/bin/open` 请求白名单终端打开目录。通用 `executable`、`argv`、Shell、自动执行 `/bandi:bandi` 和 fallback 命令回传均不属于产品能力。交接被系统接受也不代表客户端已安装、连接、运行或创建了 Session。
 
-用户可以同时在 Claude Code、Codex、OpenClaw 等宿主工具中打开多个终端；DeepSeek 等通常是宿主工具中的 Model / Provider，不单独视为终端客户端。Bandi 不跟踪这些终端或会话，多个外部程序对配置文件的影响统一通过“编辑基线 → 保存前复核 → 三方 Diff → 解决冲突后重新保存”处理，也不猜测修改来自哪个终端。
+首版内置 AI 编程工具目录固定为 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 和 Pi；完整稳定 ID 与逐项能力状态见[首版能力矩阵](./docs/首版能力矩阵.md)。目录身份只表示 Bandi 能稳定识别该工具，不证明本机安装、配置、连接、交接或 Bandi 集成可用。用户可以同时在 Claude Code、Codex、OpenClaw 等宿主工具中打开多个终端；DeepSeek 等通常是宿主工具中的 Model / Provider，不单独视为终端客户端。Bandi 不跟踪这些终端或会话，多个外部程序对配置文件的影响统一通过“编辑基线 → 保存前复核 → 三方 Diff → 解决冲突后重新保存”处理，也不猜测修改来自哪个终端。
 
 ## 日常主线
 
@@ -63,21 +63,36 @@ Desktop 不建立任务中心、审批中心、运行监控台或 Session 镜像
 
 SOP 是供 Claude Code 中的董事长助理和部门主管解析的长期配置定义，描述目标、步骤、责任部门/岗位、输入输出、依赖、确认条件、升级条件和验收标准。Desktop 只负责查看、编辑、保存和版本追溯；不运行 SOP、不产生任务待办或审批队列。
 
-## 产品组成
+## 当前已接入
+
+- **React Web Mock**：配置管理界面与页面内存演示事实；`demo-fixture` 表示预置演示资料，`memory-only` 表示本次页面内存操作。
+- **Tauri Desktop 与本地服务**：受限配置发现与编辑器加载、受管 AgentPackage、Workspace Registry、Organization SQLite、全配置族安全保存、ConfigRevision、四类正式 Memory、本地 Backup/Restore、共享资产只读索引与显式引用图。
+- **安全写入链**：稳定资产身份、双哈希基线、外部变化保护、受限原子写入、重读验证和 Revision；恢复与扩大长期权限保留独立确认。
+- **AI 工具目录与交接**：9 个稳定工具/Adapter 身份；当前只有经验证组合可以请求白名单终端打开 Registry 中的 canonical cwd，不启动 AI 工具或管理 Session。
+- **CLI 与 Plugin**：`bandi doctor`、`bandi status`、`bandi config check` 复用本地配置事实；Plugin 提供白名单只读入口，不绕过服务写配置或正式 Memory。
+- **本机个性化窄能力**：固定 `logo` / `background` 槽位和受管 Agent PNG 头像；不接受任意目标路径或远程 URL。
+- **正交状态证据**：数据来源使用 `real / memory-only / demo-fixture / read-only`，系统能力使用 `supported / degraded / unavailable / not_checked`。配置目录项、客户端条目、文件存在或按钮可见性都不能证明已安装、已连接、已保存、已启动或已加载 Session。
+
+共享资产本体当前只提供受限根内的可信只读 discovery、组织归属校验和反向引用诊断，不提供创建、编辑、删除、安装或执行事务。跨 Company 独立共享授权尚未建模，越界引用明确标记为 `out_of_scope`。
+
+## 系统组成
 
 ```text
 Bandi Desktop
     多 Agent 配置、组织关系、版本历史与正式记忆治理
         ↓
 Rust Local Service
-    配置发现、有效配置解析、安全写回、版本、备份与审计
+    配置发现、有效配置解析、RestrictedConfigWriter、版本与审计
+    Workspace Registry、AI Adapter Registry、SQLite/WAL
         ↑
 Bandi Plugin / bandi CLI
-    Claude Code 侧配置读取、边界校验与 cwd / 命令衔接
+    Claude Code 侧配置读取、边界校验与受限终端交接
         ↓
 用户自己的 Claude Code CLI
     任务交互、分层委派、执行、授权、汇报与验收
 ```
+
+Local Service 是本机领域服务和唯一受控配置写入边界；SQLite/WAL 保存组织、注册表、策略、版本元数据、正式记忆治理与本地快照元数据，不取代真实配置资产。Workspace Registry 保存经用户登记和验证的工作区身份与 canonical path；AI Adapter Registry 保存受支持客户端的稳定 adapter ID、能力声明和验证证据，不接受任意可执行程序或参数模板。各能力的真实、降级、不可用与未检查状态以[首版能力矩阵](./docs/首版能力矩阵.md)为准。
 
 ## 当前有效文档
 
@@ -85,6 +100,8 @@ Bandi Plugin / bandi CLI
 2. [页面低保真线框图](./docs/页面低保真线框图.md) — 配置工作台、Agent 配置、版本历史、条件 Dialog 与正式记忆审核。
 3. [技术架构](./docs/技术架构.md) — 安全写回、ConfigRevision、MemoryRevision、BackupSnapshot 与 Plugin / CLI 边界。
 4. [本地服务与前端联调契约](./docs/本地服务与前端联调契约.md) — Rust / TypeScript 跨进程 DTO、结果与事件契约。
+5. [首版能力矩阵](./docs/首版能力矩阵.md) — 当前真实、降级、不可用与未检查能力证据。
+6. [首版验收报告](./docs/首版验收报告.md) — 自动化、Chromium、故障场景、迁移回滚与用户验收脚本。
 
 `docs/archive/**` 为历史讨论，不作为当前施工契约。
 

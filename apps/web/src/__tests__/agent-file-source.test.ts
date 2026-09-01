@@ -27,9 +27,9 @@ describe('Agent 文件源码投影', () => {
     const result = projectAgentFileSource(agent, context, 'workspaces/bandi/config.yaml')
     expect(result.status).toBe('available')
     if (result.status === 'available') {
-      expect(result.content).toContain('workspaceId: "bandi"')
-      expect(result.content).toContain('rules:')
-      expect(result.content).not.toContain('刚刚')
+      expect(result.content).toContain('"workspaceId":"bandi"')
+      expect(result.content).toContain('"ruleIds":')
+      expect(result.content).not.toContain('memoryRevision')
     }
   })
 

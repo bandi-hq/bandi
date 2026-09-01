@@ -33,9 +33,10 @@ function workspaceSource(agent: FullAgent, path: string): AgentFileSource | unde
     status: 'available', provenance: 'demo-projection', language: 'markdown',
     content: `# Workspace Memory\n\n- Workspace: ${binding.workspaceId}\n- Revision: ${binding.memoryRevision}\n\n正式内容未在 Web Mock 中读取；修改仍需经过 MemoryCandidate、Review 和 MemoryRevision。`,
   }
+  const payload = snapshotAgentConfig(agent, 'workspace-binding', binding.workspaceId)
   return {
     status: 'available', provenance: 'demo-projection', language: 'yaml',
-    content: serializeAgentConfig(agent, { kind: 'workspace-binding', value: binding }) ?? '',
+    content: payload ? serializeAgentConfig(agent, payload) ?? '' : '',
   }
 }
 

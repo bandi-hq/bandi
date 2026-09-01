@@ -56,22 +56,14 @@ export type ComponentReference = {
   parameterBindings: ParameterBinding[]
 }
 
-export type ClientLaunchProfile = {
-  version: 1
-  executable: string
-  args: string[]
-  enterBandiOnStart: boolean
-}
-
 export type ConfigurationEnvironment = {
   id: string
   name: string
   clientIds: string[]
-  clientLaunchProfiles?: Record<string, ClientLaunchProfile>
   evidence: EvidenceKind
 }
 
-export type WorkspaceBinding = {
+export type WorkspaceBindingConfig = {
   workspaceId: string
   instructions: string
   ruleIds: string[]
@@ -83,6 +75,10 @@ export type WorkspaceBinding = {
   orchestrationPolicy?: OrchestrationPolicyOverride
   hookRefs?: ComponentReference[]
   commandRefs?: ComponentReference[]
+}
+
+export type WorkspaceBinding = WorkspaceBindingConfig & {
+  /** 正式记忆的只读派生事实，不进入普通 WorkspaceBinding 配置写入。 */
   memoryRevision: string
 }
 
@@ -127,6 +123,7 @@ export type FullAgent = Omit<Agent, 'status'> & {
   ruleRefs: string[]
   mcpRefs: string[]
   contextPolicy: ContextPolicy
+  contextWindowTokens: number
   outputProfileId?: string
   outputParameterBindings: ParameterBinding[]
   orchestrationPolicy: OrchestrationPolicy
@@ -254,6 +251,11 @@ export type MemoryScopeType = 'Agent 长期' | 'Agent × Workspace' | 'Workspace
 export type MemorySpace = {
   id: string
   scopeType: MemoryScopeType
+  scopeKey:
+    | { kind: 'agent_long_term'; agentId: string }
+    | { kind: 'agent_workspace'; agentId: string; workspaceId: string }
+    | { kind: 'workspace_shared'; workspaceId: string }
+    | { kind: 'department_workspace'; departmentId: string; workspaceId: string }
   owner: string
   steward: string
   reviewer: string
@@ -261,7 +263,7 @@ export type MemorySpace = {
   revision: string
   path: string
 }
-export type MemoryCandidateStatus = '待审核' | '要求修改' | '已驳回' | '已批准' | '已写入演示 Revision'
+export type MemoryCandidateStatus = '待审核' | '要求修改' | '已驳回' | '已批准' | '已写入演示 Revision' | '已写入正式 Revision'
 export type MemoryCandidate = {
   id: string
   spaceId: string
@@ -345,6 +347,7 @@ const baseAgent = (agent: Agent, details: Partial<FullAgent>): FullAgent => {
   ruleRefs: ['rule-common'],
   mcpRefs: ['mcp-bandi'],
   contextPolicy: { enabled: true, triggerRatio: 0.8, targetRatio: 0.5, protectRecentTurns: 6, protectOpeningTurns: 2 },
+  contextWindowTokens: 200_000,
   outputProfileId: 'output-verifiable-delivery',
   outputParameterBindings: [{ parameterId: 'include-summary', type: 'boolean', value: true }],
   orchestrationPolicy: {
@@ -447,10 +450,10 @@ export const initialPluginInstallations: PluginInstallation[] = [
 ]
 
 export const initialMemorySpaces: MemorySpace[] = [
-  { id: 'mem-agent-zhouce', scopeType: 'Agent 长期', owner: '周策', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r18', path: '~/.bandi/agents/agt_zhouce/memory/long-term.md' },
-  { id: 'mem-agent-ws-zhouce-bandi', scopeType: 'Agent × Workspace', owner: '周策', steward: '周策', reviewer: '周策', reviewerAgentId: 'zhouce', revision: 'r7', path: '~/.bandi/agents/agt_zhouce/workspaces/bandi/memory.md' },
-  { id: 'mem-ws-bandi', scopeType: 'Workspace 公共', owner: 'Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r12', path: '.bandi/memory/public.md' },
-  { id: 'mem-dev-bandi', scopeType: 'Department × Workspace', owner: '研发部 × Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r7', path: '.bandi/memory/departments/dev.md' },
+  { id: 'mem-agent-zhouce', scopeType: 'Agent 长期', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r18', path: '~/.bandi/agents/agt_zhouce/memory/long-term.md' },
+  { id: 'mem-agent-ws-zhouce-bandi', scopeType: 'Agent × Workspace', scopeKey: { kind: 'agent_workspace', agentId: 'zhouce', workspaceId: 'bandi' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r7', path: '~/.bandi/agents/agt_zhouce/workspaces/bandi/memory.md' },
+  { id: 'mem-ws-bandi', scopeType: 'Workspace 公共', scopeKey: { kind: 'workspace_shared', workspaceId: 'bandi' }, owner: 'Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r12', path: '.bandi/memory/public.md' },
+  { id: 'mem-dev-bandi', scopeType: 'Department × Workspace', scopeKey: { kind: 'department_workspace', departmentId: 'dev', workspaceId: 'bandi' }, owner: '研发部 × Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r7', path: '.bandi/memory/departments/dev.md' },
 ]
 
 export const initialMemoryCandidates: MemoryCandidate[] = [

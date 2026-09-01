@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LegacyDepartmentRedirect, OrganizationPage } from '../pages/organization/organization-pages'
 import { GlobalSheets } from '../sheets'
 import { AppProvider, initialState } from '../state'
+import * as desktopBridge from '../desktop-bridge'
 
 const NativeRequest = globalThis.Request
 
@@ -82,7 +83,7 @@ describe('组织页', () => {
     expect(screen.queryByText('Workspaces')).not.toBeInTheDocument()
   })
 
-  it('编辑部门时只读展示所属公司', () => {
+  it('编辑部门时只读展示所属公司，并只允许从本部门成员选择主管', () => {
     renderOrganization(`/organization?company=${child.companyId}&department=${child.id}`)
 
     fireEvent.click(screen.getByRole('button', { name: '编辑部门' }))
@@ -91,7 +92,24 @@ describe('组织页', () => {
     expect(within(dialog).getByText('所属公司')).toBeInTheDocument()
     expect(within(dialog).getByText(initialState.companies.find((company) => company.id === child.companyId)!.name)).toBeInTheDocument()
     expect(within(dialog).queryByRole('combobox', { name: '所属公司' })).not.toBeInTheDocument()
+    const manager = within(dialog).getByRole('combobox', { name: '部门主管' })
+    const memberNames = initialState.agents.filter((agent) => child.memberAgentIds.includes(agent.id) && agent.companyId === child.companyId).map((agent) => agent.name)
+    expect(within(manager).getAllByRole('option').map((option) => option.textContent)).toEqual(['未设置', ...memberNames])
+    expect(within(dialog).getByText(/设置主管关系不会授予/)).toBeInTheDocument()
     expect(within(dialog).queryByText('Company')).not.toBeInTheDocument()
+  })
+
+  it('公司编辑只允许从同公司 Agent 选择董事长助理', () => {
+    const company = initialState.companies.find((item) => item.id === rootWithChildren.companyId)!
+    renderOrganization(`/organization?company=${company.id}`)
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑公司' }))
+
+    const dialog = screen.getByRole('dialog', { name: '编辑公司' })
+    const assistant = within(dialog).getByRole('combobox', { name: '董事长助理' })
+    const companyAgentNames = initialState.agents.filter((agent) => agent.companyId === company.id).map((agent) => agent.name)
+    expect(within(assistant).getAllByRole('option').map((option) => option.textContent)).toEqual(['未设置', ...companyAgentNames])
+    expect(within(dialog).getByText(/设置治理关系不会授予/)).toBeInTheDocument()
   })
 
   it('深链接自动显示所选部门并展开祖先', () => {
@@ -100,6 +118,55 @@ describe('组织页', () => {
     expect(screen.getByRole('button', { name: `收起${rootWithChildren.name}` })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: child.name })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { name: child.name })).toBeInTheDocument()
+  })
+
+  it('Web 模式保存董事长助理和部门主管治理关系', async () => {
+    const governedDepartment = initialState.departments.find((item) => item.id === 'dev')!
+    const company = initialState.companies.find((item) => item.id === governedDepartment.companyId)!
+    const companyAssistant = initialState.agents.find((agent) => agent.companyId === company.id && agent.id !== company.assistantAgentId)!
+    const departmentManager = initialState.agents.find((agent) => governedDepartment.memberAgentIds.includes(agent.id) && agent.id !== governedDepartment.managerAgentId)!
+    const companyView = renderOrganization(`/organization?company=${company.id}`)
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑公司' }))
+    let dialog = screen.getByRole('dialog', { name: '编辑公司' })
+    fireEvent.change(within(dialog).getByRole('combobox', { name: '董事长助理' }), { target: { value: companyAssistant.id } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存演示配置' }))
+    fireEvent.click(screen.getByRole('button', { name: '编辑公司' }))
+    expect(within(screen.getByRole('dialog', { name: '编辑公司' })).getByRole('combobox', { name: '董事长助理' })).toHaveValue(companyAssistant.id)
+    companyView.unmount()
+
+    renderOrganization(`/organization?company=${governedDepartment.companyId}&department=${governedDepartment.id}`)
+    fireEvent.click(screen.getByRole('button', { name: '编辑部门' }))
+    dialog = screen.getByRole('dialog', { name: '编辑部门' })
+    fireEvent.change(within(dialog).getByRole('combobox', { name: '部门主管' }), { target: { value: departmentManager.id } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存演示配置' }))
+    fireEvent.click(screen.getByRole('button', { name: '编辑部门' }))
+    expect(within(screen.getByRole('dialog', { name: '编辑部门' })).getByRole('combobox', { name: '部门主管' })).toHaveValue(departmentManager.id)
+  })
+
+  it('Desktop 岗位使用后端稳定 ID 并回写规范化结果', async () => {
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    const generateId = vi.spyOn(desktopBridge, 'generateEntityId').mockResolvedValue('role-persisted')
+    const saveRole = vi.spyOn(desktopBridge, 'saveRole').mockImplementation(async (role) => ({
+      ...role,
+      name: `${role.name}（规范化）`,
+    }))
+    renderOrganization(`/organization?company=${child.companyId}&department=${child.id}`)
+
+    fireEvent.click(screen.getByRole('button', { name: '添加岗位' }))
+    const dialog = screen.getByRole('dialog', { name: '添加岗位' })
+    fireEvent.change(within(dialog).getByLabelText('岗位名称'), { target: { value: '质量负责人' } })
+    fireEvent.change(within(dialog).getByLabelText('岗位使命'), { target: { value: '维护交付质量' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存岗位' }))
+
+    await vi.waitFor(() => expect(saveRole).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'role-persisted',
+      companyId: child.companyId,
+      departmentId: child.id,
+      name: '质量负责人',
+    })))
+    expect(generateId).toHaveBeenCalledWith('role', `${child.id}-质量负责人`)
+    expect(await screen.findByText('质量负责人（规范化）')).toBeInTheDocument()
   })
 
   it('成员较多时显示摘要，并可在全部成员中搜索', () => {

@@ -47,7 +47,7 @@ export function EntityTabPanel({ tabId, activeTab, children, scope = 'detail', c
   return <div id={`${scope}-panel-${tabId}`} role="tabpanel" aria-labelledby={`${scope}-tab-${tabId}`} tabIndex={0} className={className}>{children}</div>
 }
 
-export function MockBoundaryNote({ children = '所有业务变更仅保存在当前页面内存；未访问系统、未执行命令、未写入磁盘。' }: { children?: ReactNode }) {
+export function MockBoundaryNote({ children = '所有业务更改仅在当前页面有效；不会访问本机、执行命令或写入文件。' }: { children?: ReactNode }) {
   return <div className="flex gap-3 rounded-lg border border-border bg-muted/45 p-4 text-sm leading-6 text-muted-foreground"><Info size={18} aria-hidden="true" className="mt-0.5 shrink-0" /><div>{children}</div></div>
 }
 
@@ -56,7 +56,7 @@ export function EmptyState({ title, description, action }: { title: string; desc
 }
 
 export function EntityNotFound({ entity, backTo }: { entity: string; backTo: string }) {
-  return <div className="panel mx-auto max-w-2xl p-8 text-center"><h2 className="text-xl font-semibold">未找到{entity}</h2><p className="mt-2 text-sm text-muted-foreground">链接中的 ID 不存在。Bandi 不会用其他对象替代显示。</p><Button className="mt-5" asChild><Link to={backTo}>返回列表</Link></Button></div>
+  return <div className="panel mx-auto max-w-2xl p-8 text-center"><h2 className="text-xl font-semibold">未找到{entity}</h2><p className="mt-2 text-sm text-muted-foreground">请检查链接是否正确，或返回列表重新选择。</p><Button className="mt-5" asChild><Link to={backTo}>返回列表</Link></Button></div>
 }
 
 export function PathActions({ path }: { path: string }) {

@@ -32,6 +32,9 @@ describe('Memory 治理策略', () => {
       agents: initialState.agents.map((agent) => agent.id === 'zhouce'
         ? { ...agent, managerAgentId: undefined }
         : agent),
+      companies: initialState.companies.map((company) => company.id === 'xinghe'
+        ? { ...company, assistantAgentId: undefined }
+        : company),
       memorySpaces: initialState.memorySpaces.map((space) => space.id === 'mem-agent-zhouce'
         ? { ...space, reviewerAgentId: undefined }
         : space),

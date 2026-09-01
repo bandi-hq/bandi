@@ -24,9 +24,29 @@ function isSubset(candidate: string[], root: string[]) {
   return candidate.every((item) => allowed.has(item))
 }
 
+const stableIdPattern = /^[A-Za-z0-9._-]+$/
+
+function hasInvalidIds(values: string[]) {
+  return values.length > 500
+    || new Set(values).size !== values.length
+    || values.some((value) => !stableIdPattern.test(value) || value === '.' || value === '..')
+}
+
+function hasInvalidStatements(values: string[]) {
+  return values.length > 100
+    || values.some((value) => !value.trim() || value.length > 512 || value.includes('\0'))
+}
+
 export function validateOrchestrationPolicy(policy: OrchestrationPolicy): OrchestrationIssue[] {
-  if (!Number.isInteger(policy.maxDelegationDepth) || policy.maxDelegationDepth < 0) {
-    return [{ code: 'invalid-depth', message: '最大委派深度必须是非负整数。' }]
+  if (!Number.isInteger(policy.maxDelegationDepth) || policy.maxDelegationDepth < 0 || policy.maxDelegationDepth > 32) {
+    return [{ code: 'invalid-depth', message: '最大委派深度必须是 0 到 32 的整数。' }]
+  }
+  if (hasInvalidIds(policy.allowedAgentIds) || hasInvalidIds(policy.allowedRoleIds) || hasInvalidIds(policy.allowedDepartmentIds)
+    || (policy.escalationAgentId !== undefined && hasInvalidIds([policy.escalationAgentId]))) {
+    return [{ code: 'expanded-scope', message: '委派范围必须使用不重复的稳定标识，且每类最多 500 项。' }]
+  }
+  if (hasInvalidStatements(policy.escalationConditions) || hasInvalidStatements(policy.prohibitions)) {
+    return [{ code: 'expanded-scope', message: '升级条件和禁止事项必须为非空文本，每类最多 100 项、每项最多 512 字符。' }]
   }
   return []
 }
@@ -37,11 +57,17 @@ export function validateOrchestrationOverride(
 ): OrchestrationIssue[] {
   const issues: OrchestrationIssue[] = []
   if (override.enabled === true && !root.enabled) issues.push({ code: 'expanded-scope', message: '工作区不能启用根策略已禁止的委派。' })
-  if (override.maxDelegationDepth !== undefined && override.maxDelegationDepth > root.maxDelegationDepth) issues.push({ code: 'expanded-scope', message: '工作区最大委派深度不能高于根策略。' })
+  if (override.maxDelegationDepth !== undefined && (!Number.isInteger(override.maxDelegationDepth) || override.maxDelegationDepth < 0 || override.maxDelegationDepth > root.maxDelegationDepth)) issues.push({ code: 'expanded-scope', message: '工作区最大委派深度必须是 0 到根级深度之间的整数。' })
+  for (const values of [override.allowedAgentIds, override.allowedRoleIds, override.allowedDepartmentIds]) {
+    if (values && hasInvalidIds(values)) issues.push({ code: 'expanded-scope', message: '工作区委派范围必须使用不重复的稳定标识，且每类最多 500 项。' })
+  }
+  if (override.escalationAgentId !== undefined && hasInvalidIds([override.escalationAgentId])) issues.push({ code: 'expanded-scope', message: '工作区升级目标必须使用稳定 Agent ID。' })
+  if (override.escalationConditions && hasInvalidStatements(override.escalationConditions)) issues.push({ code: 'expanded-scope', message: '工作区升级条件必须为非空文本，每类最多 100 项、每项最多 512 字符。' })
+  if (override.prohibitions && hasInvalidStatements(override.prohibitions)) issues.push({ code: 'expanded-scope', message: '工作区禁止事项必须为非空文本，每类最多 100 项、每项最多 512 字符。' })
   for (const [candidate, allowed, label] of [
     [override.allowedAgentIds, root.allowedAgentIds, 'Agent'],
-    [override.allowedRoleIds, root.allowedRoleIds, 'Role'],
-    [override.allowedDepartmentIds, root.allowedDepartmentIds, 'Department'],
+    [override.allowedRoleIds, root.allowedRoleIds, '岗位'],
+    [override.allowedDepartmentIds, root.allowedDepartmentIds, '部门'],
   ] as const) {
     if (candidate && !isSubset(candidate, allowed)) issues.push({ code: 'expanded-scope', message: `工作区 ${label} 范围必须是根策略的子集。` })
   }

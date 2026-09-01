@@ -4,17 +4,9 @@ export type Agent = { id: string; name: string; role: string; department: string
 export type Workspace = { id: string; name: string; path: string; company?: string; department?: string; config: string }
 export type Asset = { id: string; name: string; kind: string; owner: string; scope: string; refs: number; path: string; status: string }
 export type Department = { id: string; name: string; parent?: string; manager?: string; mission: string; members: number }
-export type AiClientKind =
-  | 'claude-code'
-  | 'claude-desktop'
-  | 'codex'
-  | 'gemini-cli'
-  | 'grok-build'
-  | 'opencode'
-  | 'openclaw'
-  | 'hermes'
-  | 'pi'
-  | 'custom'
+import type { BuiltInClientId } from './client-adapters'
+
+export type AiClientKind = BuiltInClientId | 'custom'
 export type AiClient = {
   id: string
   kind: AiClientKind

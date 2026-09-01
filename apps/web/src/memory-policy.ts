@@ -2,13 +2,14 @@ import type { FullAgent, MemoryCandidate, MemorySpace } from './domain'
 
 type MemoryPolicyState = {
   agents: FullAgent[]
-  departments: { id: string; managerAgentId?: string }[]
+  companies: { id: string; assistantAgentId?: string }[]
+  departments: { id: string; companyId: string; managerAgentId?: string }[]
   workspaces: {
     id: string
+    companyId?: string
     primaryDepartmentId?: string
+    collaboratorDepartmentIds: string[]
     projectLeadAgentId?: string
-    publicMemorySpaceId: string
-    departmentMemorySpaceIds: string[]
   }[]
   memorySpaces: MemorySpace[]
   memoryCandidates: MemoryCandidate[]
@@ -22,50 +23,63 @@ export type MemoryGovernance = {
   errors: string[]
 }
 
-function workspaceIdForSpace(state: MemoryPolicyState, space: MemorySpace) {
-  return state.workspaces.find((workspace) =>
-    workspace.publicMemorySpaceId === space.id
-    || workspace.departmentMemorySpaceIds.includes(space.id)
-    || space.path.includes(`/workspaces/${workspace.id}/`),
-  )?.id
+function workspaceIdForSpace(space: MemorySpace) {
+  return 'workspaceId' in space.scopeKey ? space.scopeKey.workspaceId : undefined
+}
+
+function hasWorkspaceBinding(agent: FullAgent, workspaceId: string) {
+  return agent.workspaceBindings.some((binding) => binding.workspaceId === workspaceId)
+}
+
+function hasDepartmentAccess(state: MemoryPolicyState, agent: FullAgent, departmentId: string, workspaceId: string) {
+  if (agent.primaryDepartmentId === departmentId) return true
+  return agent.serviceGrants.some((grant) =>
+    grant.departmentId === departmentId
+    && grant.workspaceIds.includes(workspaceId)
+    && grant.status === '有效',
+  )
 }
 
 function belongsToAgent(state: MemoryPolicyState, space: MemorySpace, proposer: FullAgent) {
-  if (space.scopeType === 'Agent 长期') return space.path.includes(`/agt_${proposer.id}/`)
-  if (space.scopeType === 'Agent × Workspace') {
-    const workspaceId = workspaceIdForSpace(state, space)
-    return Boolean(workspaceId && proposer.workspaceBindings.some((binding) => binding.workspaceId === workspaceId) && space.path.includes(`/agt_${proposer.id}/`))
+  const key = space.scopeKey
+  if (key.kind === 'agent_long_term') return key.agentId === proposer.id
+  if (key.kind === 'agent_workspace') {
+    return key.agentId === proposer.id && hasWorkspaceBinding(proposer, key.workspaceId)
   }
+  if (!hasWorkspaceBinding(proposer, key.workspaceId)) return false
+  if (key.kind === 'workspace_shared') return true
 
-  const workspaceId = workspaceIdForSpace(state, space)
-  if (!workspaceId || !proposer.workspaceBindings.some((binding) => binding.workspaceId === workspaceId)) return false
-  if (space.scopeType === 'Workspace 公共') return true
+  const workspace = state.workspaces.find((item) => item.id === key.workspaceId)
+  const departmentParticipates = workspace?.primaryDepartmentId === key.departmentId
+    || workspace?.collaboratorDepartmentIds.includes(key.departmentId)
+  return Boolean(departmentParticipates && hasDepartmentAccess(state, proposer, key.departmentId, key.workspaceId))
+}
 
-  const workspace = state.workspaces.find((item) => item.id === workspaceId)
-  return Boolean(workspace && (
-    workspace.primaryDepartmentId === proposer.primaryDepartmentId
-    || proposer.serviceGrants.some((grant) => grant.departmentId === workspace.primaryDepartmentId && grant.workspaceIds.includes(workspaceId) && grant.status === '有效')
-  ))
+function companyAssistant(state: MemoryPolicyState, workspaceId?: string, agent?: FullAgent) {
+  const companyId = workspaceId
+    ? state.workspaces.find((item) => item.id === workspaceId)?.companyId
+    : state.departments.find((item) => item.id === agent?.primaryDepartmentId)?.companyId
+  return state.companies.find((item) => item.id === companyId)?.assistantAgentId
 }
 
 function resolveReviewer(state: MemoryPolicyState, space: MemorySpace, proposer: FullAgent) {
-  const workspaceId = workspaceIdForSpace(state, space)
+  const key = space.scopeKey
+  const workspaceId = workspaceIdForSpace(space)
   const workspace = state.workspaces.find((item) => item.id === workspaceId)
-  let reviewerAgentId = space.reviewerAgentId
+  let reviewerAgentId: string | undefined
 
-  if (space.scopeType === 'Agent 长期' || space.scopeType === 'Agent × Workspace') {
-    reviewerAgentId = proposer.managerAgentId ?? reviewerAgentId
-  } else if (space.scopeType === 'Workspace 公共') {
-    reviewerAgentId = workspace?.projectLeadAgentId
-      ?? state.departments.find((item) => item.id === workspace?.primaryDepartmentId)?.managerAgentId
-      ?? reviewerAgentId
-  } else {
+  if (key.kind === 'agent_long_term' || key.kind === 'agent_workspace') {
+    reviewerAgentId = proposer.managerAgentId ?? companyAssistant(state, workspaceId, proposer)
+  } else if (key.kind === 'workspace_shared') {
     reviewerAgentId = state.departments.find((item) => item.id === workspace?.primaryDepartmentId)?.managerAgentId
-      ?? reviewerAgentId
+      ?? workspace?.projectLeadAgentId
+  } else {
+    reviewerAgentId = state.departments.find((item) => item.id === key.departmentId)?.managerAgentId
   }
 
   if (reviewerAgentId === proposer.id) {
     reviewerAgentId = state.agents.find((item) => item.id === reviewerAgentId)?.managerAgentId
+      ?? companyAssistant(state, workspaceId, proposer)
   }
 
   return reviewerAgentId

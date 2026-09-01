@@ -55,7 +55,7 @@ export function resolveRouteMetadata(
   if (pathname === '/workspaces/new') return { section: 'workspaces', title: '添加工作区' }
   if (pathname.startsWith('/workspaces/')) return { section: 'workspaces', title: entityName(pathname, '/workspaces/', context.workspaces) ?? '工作区配置' }
   if (pathname === '/workspaces') return { section: 'workspaces', title: '工作区' }
-  if (pathname === '/assets/skills') return { section: 'assets', title: 'Skills' }
+  if (pathname === '/assets/skills') return { section: 'assets', title: '技能' }
   if (pathname.startsWith('/assets/')) return { section: 'assets', title: entityName(pathname, '/assets/', context.assets) ?? '资产详情' }
   if (pathname === '/assets') return { section: 'assets', title: '资产' }
   if (pathname.startsWith('/settings')) return { section: 'settings', title: '设置' }

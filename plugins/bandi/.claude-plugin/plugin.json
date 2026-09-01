@@ -1,0 +1,9 @@
+{
+  "name": "bandi",
+  "version": "0.1.0",
+  "description": "在 Claude Code 中只读检查 Bandi 配置事实与边界，不管理任务或 Session。",
+  "author": {
+    "name": "Bandi"
+  },
+  "keywords": ["bandi", "configuration", "agents", "workspaces"]
+}

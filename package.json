@@ -5,6 +5,11 @@
   "scripts": {
     "dev": "pnpm --filter @bandi/web dev",
     "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "e2e:build": "pnpm --filter @bandi/desktop-e2e build:app",
+    "e2e:typecheck": "pnpm --filter @bandi/desktop-e2e typecheck",
+    "e2e": "pnpm --filter @bandi/desktop-e2e test",
+    "cli": "cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --bin bandi --",
+    "plugin:check": "python3 -m json.tool plugins/bandi/.claude-plugin/plugin.json >/dev/null",
     "lint": "pnpm --filter @bandi/web lint",
     "typecheck": "pnpm --filter @bandi/web typecheck",
     "test": "pnpm --filter @bandi/web test",
