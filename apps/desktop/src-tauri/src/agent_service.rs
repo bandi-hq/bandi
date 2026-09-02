@@ -7,6 +7,8 @@ use serde_json::Value;
 
 use crate::domain_store;
 
+const AGENT_RECOVERY_PAYLOAD_LIMIT: usize = 25 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RegisterExternalAgentRequest {
@@ -80,6 +82,36 @@ fn valid_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
+pub(crate) fn validate_agent_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    let length = trimmed.chars().count();
+    if name != trimmed || !(2..=40).contains(&length) {
+        return Err("Agent 名称必须去除首尾空白，且为 2 到 40 个字符".into());
+    }
+    let uuid = trimmed
+        .strip_prefix("agent-")
+        .or_else(|| trimmed.strip_prefix("agent_"))
+        .unwrap_or(trimmed);
+    let parts = uuid.split('-').collect::<Vec<_>>();
+    if parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(parts.iter())
+            .all(|(length, part)| {
+                part.len() == *length && part.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+    {
+        return Err("Agent 名称不能使用 UUID 或系统生成的 Agent ID".into());
+    }
+    if trimmed.chars().all(char::is_numeric) {
+        return Err("Agent 名称不能全部是数字".into());
+    }
+    if !trimmed.chars().any(char::is_alphabetic) {
+        return Err("Agent 名称至少应包含一个中文或英文字母".into());
+    }
+    Ok(())
+}
+
 fn validate_metadata(agent_id: &str, metadata: &Value) -> Result<(), String> {
     let object = metadata
         .as_object()
@@ -87,6 +119,11 @@ fn validate_metadata(agent_id: &str, metadata: &Value) -> Result<(), String> {
     if object.get("id").and_then(Value::as_str) != Some(agent_id) {
         return Err("外部 Agent metadata 的稳定 ID 与请求不一致".into());
     }
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "外部 Agent metadata 缺少有效名称".to_string())?;
+    validate_agent_name(name)?;
     if serde_json::to_vec(metadata)
         .map_err(|_| "外部 Agent metadata 无法序列化".to_string())?
         .len()
@@ -211,7 +248,7 @@ pub(crate) fn prepare_operation_at(
 ) -> Result<AgentRecoveryOperation, String> {
     if !valid_id(request_id)
         || !valid_id(agent_id)
-        || !matches!(operation_kind, "create" | "identity_update")
+        || !matches!(operation_kind, "create" | "identity_update" | "delete")
         || !expected_manifest_hash.starts_with("sha256:")
         || fixed_revision_id.is_some_and(|id| !valid_id(id))
     {
@@ -219,8 +256,8 @@ pub(crate) fn prepare_operation_at(
     }
     let encoded = serde_json::to_string(payload)
         .map_err(|_| "Agent commit payload 无法序列化".to_string())?;
-    if encoded.len() > 4 * 1024 * 1024 {
-        return Err("Agent commit payload 超过 4 MiB".into());
+    if encoded.len() > AGENT_RECOVERY_PAYLOAD_LIMIT {
+        return Err("Agent commit payload 超过 25 MiB".into());
     }
     let connection = domain_store::open_at(database)?;
     if let Some(existing) = load_operation_by_request(&connection, request_id)? {
@@ -328,6 +365,27 @@ pub(crate) fn get_operation_at(
     ).optional().map_err(|_| "无法读取 Agent commit operation".to_string())?.ok_or_else(|| "Agent commit operation 不存在".to_string())
 }
 
+pub(crate) fn complete_delete_operation_at(
+    database: &Path,
+    operation_id: &str,
+) -> Result<AgentRecoveryOperation, String> {
+    if !valid_id(operation_id) {
+        return Err("Agent delete operation 标识无效".into());
+    }
+    let connection = domain_store::open_at(database)?;
+    if connection
+        .execute(
+            "UPDATE agent_recovery_operations SET status = 'completed', payload_json = '{}', expected_manifest_hash = '', completed_at = ?1 WHERE id = ?2 AND operation_kind = 'delete' AND status = 'database_committed'",
+            params![Utc::now().to_rfc3339(), operation_id],
+        )
+        .map_err(|_| "无法完成 Agent delete operation".to_string())?
+        != 1
+    {
+        return Err("Agent delete operation 状态不允许完成".into());
+    }
+    get_operation_at(database, operation_id)
+}
+
 pub(crate) fn complete_operation_at(
     database: &Path,
     operation_id: &str,
@@ -358,7 +416,11 @@ pub(crate) fn set_operation_status_at(
     if !valid_id(operation_id)
         || !matches!(
             status,
-            "filesystem_committed" | "revision_pending" | "organization_pending" | "blocked"
+            "filesystem_committed"
+                | "revision_pending"
+                | "organization_pending"
+                | "database_committed"
+                | "blocked"
         )
         || fixed_revision_id.is_some_and(|id| !valid_id(id))
     {
@@ -380,9 +442,10 @@ pub(crate) fn set_operation_status_at(
             "filesystem_committed" | "revision_pending" | "blocked"
         ) | (
             Some("filesystem_committed"),
-            "revision_pending" | "organization_pending" | "blocked"
+            "revision_pending" | "organization_pending" | "database_committed" | "blocked"
         ) | (Some("revision_pending"), "organization_pending" | "blocked")
             | (Some("organization_pending"), "blocked")
+            | (Some("database_committed"), "blocked")
     );
     if !allowed {
         return Err("Agent commit operation 状态不允许更新".into());
@@ -401,6 +464,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_name_validation_matches_the_public_rules() {
+        for name in ["周策", "测试工程师 2", &"A".repeat(40)] {
+            assert!(validate_agent_name(name).is_ok());
+        }
+        for name in [
+            "",
+            "周",
+            "123456",
+            "１２３",
+            "---",
+            "！！！",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "agent-550e8400-e29b-41d4-a716-446655440000",
+            " 周策 ",
+        ] {
+            assert!(validate_agent_name(name).is_err(), "应拒绝名称：{name}");
+        }
+        assert!(validate_agent_name(&"A".repeat(41)).is_err());
+    }
+
+    #[test]
     fn external_reference_never_requires_agent_files() {
         let root = tempfile::tempdir().unwrap();
         let external = root.path().join("external");
@@ -411,7 +495,7 @@ mod tests {
             RegisterExternalAgentRequest {
                 agent_id: "external-1".into(),
                 selected_root: external.to_string_lossy().into_owned(),
-                metadata: serde_json::json!({"id": "external-1", "status": "active"}),
+                metadata: serde_json::json!({"id": "external-1", "name": "外部 Agent", "status": "active"}),
             },
         )
         .unwrap();
@@ -484,5 +568,52 @@ mod tests {
             set_operation_status_at(&database, &operation.id, "filesystem_committed", None,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn maximum_avatar_payload_can_be_prepared() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("bandi.db");
+        let mut avatar = vec![255; 5 * 1024 * 1024];
+        avatar[..8].copy_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        let payload = serde_json::json!({
+            "create": { "avatarBytes": avatar },
+            "organization": null,
+        });
+
+        let operation = prepare_operation_at(
+            &database,
+            "request-large-avatar",
+            "agent-large-avatar",
+            "create",
+            "sha256:large-avatar",
+            None,
+            &payload,
+        )
+        .unwrap();
+
+        assert_eq!(operation.payload, payload);
+    }
+
+    #[test]
+    fn recovery_payload_limit_is_still_enforced() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("bandi.db");
+        let payload = serde_json::json!({
+            "content": "x".repeat(AGENT_RECOVERY_PAYLOAD_LIMIT),
+        });
+
+        let error = prepare_operation_at(
+            &database,
+            "request-oversized",
+            "agent-oversized",
+            "create",
+            "sha256:oversized",
+            None,
+            &payload,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "Agent commit payload 超过 25 MiB");
     }
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const DATABASE_SCHEMA_VERSION: i64 = 11;
+const DATABASE_SCHEMA_VERSION: i64 = 12;
 const ORGANIZATION_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -839,6 +839,34 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .execute_batch(crate::tool_configuration::MIGRATION_V11)
             .map_err(|_| "工具方案数据库迁移失败".to_string())?;
     }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
+    if version == 11 {
+        connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE agent_recovery_operations RENAME TO agent_recovery_operations_v11;
+                 CREATE TABLE agent_recovery_operations (
+                   id TEXT PRIMARY KEY,
+                   request_id TEXT NOT NULL UNIQUE,
+                   agent_id TEXT NOT NULL,
+                   operation_kind TEXT NOT NULL CHECK(operation_kind IN ('create', 'identity_update', 'delete')),
+                   status TEXT NOT NULL CHECK(status IN ('prepared', 'filesystem_committed', 'revision_pending', 'organization_pending', 'database_committed', 'blocked', 'completed')),
+                   expected_manifest_hash TEXT NOT NULL,
+                   fixed_revision_id TEXT,
+                   payload_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   completed_at TEXT
+                 );
+                 INSERT INTO agent_recovery_operations SELECT * FROM agent_recovery_operations_v11;
+                 DROP TABLE agent_recovery_operations_v11;
+                 CREATE INDEX agent_recovery_operations_agent ON agent_recovery_operations(agent_id, created_at);
+                 PRAGMA user_version = 12;
+                 COMMIT;",
+            )
+            .map_err(|_| "Agent 删除恢复状态数据库迁移失败".to_string())?;
+    }
     Ok(())
 }
 
@@ -1581,6 +1609,209 @@ pub(crate) fn reconcile_agent_organization_at(
     transaction
         .commit()
         .map_err(|_| "无法提交 Agent 组织 reconcile 事务".to_string())
+}
+
+pub(crate) fn managed_agent_deletion_impact_at(
+    path: &Path,
+    agent_id: &str,
+) -> Result<Value, String> {
+    validate_id(agent_id, "Agent 标识")?;
+    let connection = open_at(path)?;
+    let mut organization = Vec::new();
+    let mut blockers = Vec::new();
+    let mut cleanup = serde_json::Map::new();
+
+    let company_assistants: Vec<String> = {
+        let mut statement = connection
+            .prepare("SELECT id FROM companies WHERE assistant_agent_id = ?1")
+            .map_err(|_| "无法检查 Company 助理职责".to_string())?;
+        let values = statement
+            .query_map([agent_id], |row| row.get(0))
+            .map_err(|_| "无法查询 Company 助理职责".to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|_| "Company 助理职责记录损坏".to_string())?;
+        values
+    };
+    for id in company_assistants {
+        blockers.push(format!("company_assistant:{id}"));
+    }
+
+    let mut department_members = 0usize;
+    let mut statement = connection
+        .prepare("SELECT id, manager_agent_id, member_agent_ids_json FROM departments")
+        .map_err(|_| "无法检查部门关系".to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|_| "无法查询部门关系".to_string())?;
+    for row in rows {
+        let (id, manager, encoded) = row.map_err(|_| "部门关系记录损坏".to_string())?;
+        if manager.as_deref() == Some(agent_id) {
+            blockers.push(format!("department_manager:{id}"));
+        }
+        let members: Vec<String> =
+            parse_json(encoded).map_err(|_| "部门成员索引损坏".to_string())?;
+        if members.iter().any(|value| value == agent_id) {
+            department_members += 1;
+            organization.push(format!("department_member:{id}"));
+        }
+    }
+    drop(statement);
+
+    let mut workspace_indexes = 0usize;
+    let mut statement = connection
+        .prepare("SELECT id, project_lead_agent_id, agent_ids_json FROM workspaces")
+        .map_err(|_| "无法检查 Workspace 关系".to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|_| "无法查询 Workspace 关系".to_string())?;
+    for row in rows {
+        let (id, lead, encoded) = row.map_err(|_| "Workspace 关系记录损坏".to_string())?;
+        if lead.as_deref() == Some(agent_id) {
+            blockers.push(format!("workspace_project_lead:{id}"));
+        }
+        let agents: Vec<String> =
+            parse_json(encoded).map_err(|_| "Workspace Agent 索引损坏".to_string())?;
+        if agents.iter().any(|value| value == agent_id) {
+            workspace_indexes += 1;
+            organization.push(format!("workspace_agent:{id}"));
+        }
+    }
+    drop(statement);
+
+    let service_grants: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM service_grants WHERE agent_id = ?1",
+            [agent_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "无法检查 ServiceGrant".to_string())?;
+    if service_grants > 0 {
+        organization.push(format!("service_grants:{service_grants}"));
+    }
+    cleanup.insert("departmentMemberships".into(), department_members.into());
+    cleanup.insert("workspaceAgentIndexes".into(), workspace_indexes.into());
+    cleanup.insert("serviceGrants".into(), service_grants.into());
+
+    let memory_count: i64 = connection.query_row(
+        "SELECT (SELECT COUNT(*) FROM memory_spaces WHERE agent_id = ?1 OR owner_agent_id = ?1 OR steward_agent_id = ?1 OR (reviewer_principal_kind = 'agent' AND reviewer_principal_id = ?1)) +
+                (SELECT COUNT(*) FROM memory_candidates WHERE proposer_agent_id = ?1 OR (reviewer_principal_kind = 'agent' AND reviewer_principal_id = ?1)) +
+                (SELECT COUNT(*) FROM memory_review_decisions WHERE actor_principal_kind = 'agent' AND actor_principal_id = ?1) +
+                (SELECT COUNT(*) FROM memory_revisions WHERE proposer_agent_id = ?1 OR (reviewer_principal_kind = 'agent' AND reviewer_principal_id = ?1))",
+        [agent_id], |row| row.get(0),
+    ).map_err(|_| "无法检查正式 Memory 引用".to_string())?;
+    if memory_count > 0 {
+        blockers.push(format!("memory_responsibility_or_history:{memory_count}"));
+    }
+    let unfinished: i64 = connection.query_row("SELECT COUNT(*) FROM agent_recovery_operations WHERE agent_id = ?1 AND status NOT IN ('completed', 'blocked')", [agent_id], |row| row.get(0)).map_err(|_| "无法检查 Agent recovery operation".to_string())?;
+    if unfinished > 0 {
+        blockers.push(format!("unfinished_recovery:{unfinished}"));
+    }
+
+    Ok(serde_json::json!({
+        "organizationRelationships": organization,
+        "memoryReferences": memory_count,
+        "cleanup": cleanup,
+        "blockers": blockers,
+    }))
+}
+
+pub(crate) fn delete_agent_relations_at(
+    path: &Path,
+    operation_id: &str,
+    agent_id: &str,
+) -> Result<(), String> {
+    validate_id(operation_id, "Agent operation 标识")?;
+    validate_id(agent_id, "Agent 标识")?;
+    let mut connection = open_at(path)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "无法开始 Agent 删除事务".to_string())?;
+
+    transaction
+        .execute("DELETE FROM service_grants WHERE agent_id = ?1", [agent_id])
+        .map_err(|_| "无法清理 Agent 服务授权".to_string())?;
+
+    let mut statement = transaction
+        .prepare("SELECT id, member_agent_ids_json FROM departments")
+        .map_err(|_| "无法读取部门成员索引".to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|_| "无法查询部门成员索引".to_string())?;
+    let mut departments = Vec::new();
+    for row in rows {
+        let (id, encoded) = row.map_err(|_| "部门成员索引损坏".to_string())?;
+        let mut members: Vec<String> =
+            parse_json(encoded).map_err(|_| "部门成员索引损坏".to_string())?;
+        let before = members.len();
+        members.retain(|value| value != agent_id);
+        if members.len() != before {
+            departments.push((id, members));
+        }
+    }
+    drop(statement);
+    for (id, members) in departments {
+        transaction.execute(
+            "UPDATE departments SET member_agent_ids_json = ?1, members = ?2, updated_at = ?3 WHERE id = ?4",
+            params![json(&members, "部门成员")?, i64::try_from(members.len()).map_err(|_| "部门成员数量无效".to_string())?, Utc::now().to_rfc3339(), id],
+        ).map_err(|_| "无法清理部门成员索引".to_string())?;
+    }
+
+    let mut statement = transaction
+        .prepare("SELECT id, agent_ids_json FROM workspaces")
+        .map_err(|_| "无法读取 Workspace Agent 索引".to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|_| "无法查询 Workspace Agent 索引".to_string())?;
+    let mut workspaces = Vec::new();
+    for row in rows {
+        let (id, encoded) = row.map_err(|_| "Workspace Agent 索引损坏".to_string())?;
+        let mut agents: Vec<String> =
+            parse_json(encoded).map_err(|_| "Workspace Agent 索引损坏".to_string())?;
+        let before = agents.len();
+        agents.retain(|value| value != agent_id);
+        if agents.len() != before {
+            workspaces.push((id, agents));
+        }
+    }
+    drop(statement);
+    for (id, agents) in workspaces {
+        transaction
+            .execute(
+                "UPDATE workspaces SET agent_ids_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    json(&agents, "Workspace Agent")?,
+                    Utc::now().to_rfc3339(),
+                    id
+                ],
+            )
+            .map_err(|_| "无法清理 Workspace Agent 索引".to_string())?;
+    }
+
+    if transaction.execute(
+        "UPDATE agent_recovery_operations SET status = 'database_committed' WHERE id = ?1 AND status = 'filesystem_committed'",
+        [operation_id],
+    ).map_err(|_| "无法更新 Agent 删除恢复状态".to_string())? != 1 {
+        return Err("Agent 删除恢复状态不允许提交数据库".into());
+    }
+    transaction
+        .commit()
+        .map_err(|_| "无法提交 Agent 删除事务".to_string())
 }
 
 pub(crate) fn load_snapshot_at(path: &Path) -> Result<OrganizationSnapshotDto, String> {

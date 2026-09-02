@@ -33,6 +33,7 @@ import { getAgentPackageEditability } from './agent-package-schema'
 import { validateOrchestrationOverride } from './orchestration-policy'
 import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, serializeAgentConfig, snapshotAgentConfig, type AgentConfigPayload, type SaveAgentConfigInput } from './agent-config-model'
 import { appendConfigRevision } from './config-revisions'
+import { memoryScopeLabel } from './presentation'
 import { configurationEnvironmentPath, isConfigurationEnvironment, normalizeConfigurationEnvironment, serializeConfigurationEnvironment, validateConfigurationEnvironment } from './configuration-environment-model'
 import type { AgentRecoveryOperationSummaryDto, Diagnostic, MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
 import type { TerminalId } from './terminal-model'
@@ -158,6 +159,7 @@ export type Action =
   | { type: 'SHEET'; sheet: 'diff' | 'source' | 'shared' | 'conflict' | 'permission' | 'memory' | 'claude' | null }
   | { type: 'CREATE_AGENT'; agent: FullAgent }
   | { type: 'UPSERT_MANAGED_AGENT'; agent: FullAgent; message?: string }
+  | { type: 'REMOVE_MANAGED_AGENT'; agentId: string }
   | { type: 'START_DESKTOP_HYDRATION' }
   | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[]; diagnostics: Diagnostic[] }
   | { type: 'FAIL_MANAGED_AGENTS_HYDRATION'; message: string }
@@ -315,12 +317,7 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
     ? state.agents.find((item) => item.id === principal.agentId)?.name ?? principal.agentId
     : `董事长（${state.companies.find((item) => item.id === principal.companyId)?.name ?? principal.companyId}）`
   const formalStatus = bundle.candidate.status
-  const scopeType = {
-    agent_long_term: 'Agent 长期记忆',
-    agent_workspace: 'Agent 工作区记忆',
-    workspace_shared: '工作区公共记忆',
-    department_workspace: '部门工作区记忆',
-  }[bundle.space.scopeType] as MemorySpace['scopeType']
+  const scopeType = memoryScopeLabel(bundle.space.scopeType) as MemorySpace['scopeType']
   const relativePath = bundle.space.storageLocator.relativePath ?? bundle.space.storageLocator.displayPath
   const path = bundle.space.storageLocator.rootKind === 'managed' && 'agentId' in bundle.space.scopeKey
     ? `~/.bandi/agents/agt_${bundle.space.scopeKey.agentId}/${relativePath}`
@@ -350,7 +347,7 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
         : formalStatus === 'rejected'
           ? '已驳回'
           : formalStatus === 'written'
-            ? '已写入正式 Revision'
+            ? '已保存为正式版本'
             : formalStatus === 'approved_pending_write' || formalStatus === 'revision_pending'
               ? '已批准'
               : '待审核',
@@ -504,9 +501,16 @@ export function reducer(state: State, action: Action): State {
         agents: exists
           ? state.agents.map((item) => item.id === action.agent.id ? action.agent : item)
           : [...state.agents, action.agent],
-        notice: notice('success', 'AgentPackage 已保存', action.message ?? '已写入 Bandi Desktop 受管目录'),
+        notice: notice('success', 'Agent 配置已保存', action.message ?? '已写入 Bandi Desktop 受管目录'),
       }
     }
+    case 'REMOVE_MANAGED_AGENT':
+      return {
+        ...state,
+        agents: state.agents.filter((item) => item.id !== action.agentId),
+        recentAgentIds: state.recentAgentIds.filter((id) => id !== action.agentId),
+        notice: notice('success', 'Agent 已永久删除', 'Agent 配置和相关索引已从 Bandi Desktop 移除'),
+      }
     case 'HYDRATE_MANAGED_AGENTS': {
       const grantsByAgent = new Map<string, FullAgent['serviceGrants']>()
       for (const grant of state.organizationServiceGrants) {
@@ -787,7 +791,7 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         ...mergeFormalMemoryBundles(state, [action.bundle]),
-        notice: notice('success', '正式记忆候选已创建', '已保存到本机审核队列，尚未写入正式 Memory'),
+        notice: notice('success', '正式记忆候选已创建', '已保存到本机审核队列，尚未写入正式记忆'),
       }
     }
     case 'HYDRATE_FORMAL_MEMORY_REVIEWS':
@@ -796,7 +800,7 @@ export function reducer(state: State, action: Action): State {
       const { result } = action
       if (!('candidate' in result)) return state
       const status: MemoryCandidateStatus = result.kind === 'saved'
-        ? '已写入正式 Revision'
+        ? '已保存为正式版本'
         : result.kind === 'review_recorded'
           ? result.candidate.status === 'changes_requested' ? '要求修改' : '已驳回'
           : '已批准'
@@ -812,17 +816,17 @@ export function reducer(state: State, action: Action): State {
       const candidate = state.memoryCandidates.find((item) => item.id === action.candidateId)
       if (!candidate) return { ...state, notice: notice('warning', '无法审核正式记忆候选', '候选不存在') }
       const governance = resolveMemoryGovernance(state, candidate.spaceId, candidate.proposerAgentId)
-      if (action.status === '已写入演示 Revision' && (!governance.canReview || JSON.stringify(governance.reviewPrincipal) !== JSON.stringify(candidate.reviewPrincipal))) {
+      if (action.status === '已写入演示版本' && (!governance.canReview || JSON.stringify(governance.reviewPrincipal) !== JSON.stringify(candidate.reviewPrincipal))) {
         return { ...state, notice: notice('error', '无法批准正式记忆候选', governance.errors.join(' ') || '审核关系已变化，请重新创建或改投候选。') }
       }
-      if (candidate.status === '已写入演示 Revision') return { ...state, notice: notice('warning', '候选已经写入演示 Revision', '不会重复递增 Revision') }
-      const memorySpaces = action.status === '已写入演示 Revision' ? state.memorySpaces.map((space) => space.id === candidate.spaceId ? { ...space, revision: `r${Number(space.revision.replace(/\D/g, '') || 0) + 1}` } : space) : state.memorySpaces
+      if (candidate.status === '已写入演示版本') return { ...state, notice: notice('warning', '候选已经写入演示 Revision', '不会重复递增 Revision') }
+      const memorySpaces = action.status === '已写入演示版本' ? state.memorySpaces.map((space) => space.id === candidate.spaceId ? { ...space, revision: `r${Number(space.revision.replace(/\D/g, '') || 0) + 1}` } : space) : state.memorySpaces
       return {
         ...state,
         memorySpaces,
         memoryCandidates: state.memoryCandidates.map((item) => item.id === action.candidateId ? { ...item, status: action.status } : item),
         dialog: null,
-        notice: action.status === '已写入演示 Revision'
+        notice: action.status === '已写入演示版本'
           ? notice('success', '候选已模拟写入正式记忆', '已创建新 Revision · 未写入磁盘')
           : notice('info', `候选状态已更新为${action.status}`, '仅在当前页面有效'),
       }

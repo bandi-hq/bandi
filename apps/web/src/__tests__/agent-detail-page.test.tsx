@@ -32,8 +32,27 @@ function renderAgent(initialEntry = '/agents/zhouce', state?: State) {
   const router = createMemoryRouter([{
     path: '/agents/:id',
     element: <AppProvider initialState={state}><EditorSessionProvider><AgentDetailPage /><GlobalSheets /><NoticeProbe /></EditorSessionProvider></AppProvider>,
+  }, {
+    path: '/agents',
+    element: <div>Agent 列表</div>,
   }], { initialEntries: [initialEntry] })
   return { router, ...render(<RouterProvider router={router} />) }
+}
+
+function AgentListProbe() {
+  const { state } = useApp()
+  return <><div>Agent 列表</div><NoticeProbe /><output data-testid="remaining-agent">{state.agents.some((item) => item.id === 'zhouce') ? '存在' : '已移除'}</output><output data-testid="delete-recovery">{state.agentRecoveryOperations.map((item) => `${item.id}:${item.status}`).join(',')}</output></>
+}
+
+function renderAgentWithPersistentState(state: State) {
+  const router = createMemoryRouter([{
+    path: '/agents/:id',
+    element: <EditorSessionProvider><AgentDetailPage /><GlobalSheets /><NoticeProbe /></EditorSessionProvider>,
+  }, {
+    path: '/agents',
+    element: <AgentListProbe />,
+  }], { initialEntries: ['/agents/zhouce'] })
+  return { router, ...render(<AppProvider initialState={state}><RouterProvider router={router} /></AppProvider>) }
 }
 
 afterEach(() => {
@@ -50,7 +69,7 @@ describe('Agent 双模式配置工作台', () => {
     expect(screen.getByText('把已确认产品目标交付为可验证的软件成果。')).toBeInTheDocument()
     expect(screen.getAllByText(/\.bandi\/agents\/agt_zhouce/)).toHaveLength(2)
     expect(screen.getByRole('tab', { name: '管理视图' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'AgentPackage' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: '原始文件' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.queryByRole('region', { name: 'Agent 摘要' })).not.toBeInTheDocument()
     expect(screen.queryByText('岗位使命')).not.toBeInTheDocument()
     expect(screen.getByText('配置状态')).toBeInTheDocument()
@@ -76,7 +95,7 @@ describe('Agent 双模式配置工作台', () => {
 
     renderAgent('/agents/zhouce?tab=identity', state)
 
-    expect(screen.getByRole('heading', { name: '当前 AgentPackage 不可编辑' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '当前 Agent 配置不可编辑' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '预览永久删除影响' })).not.toBeInTheDocument()
   })
@@ -91,6 +110,43 @@ describe('Agent 双模式配置工作台', () => {
     expect(screen.getByDisplayValue('周策')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
     expect(router.state.location.search).toBe('?tab=identity')
+  })
+
+  it('身份页短显示并复制完整 Agent ID', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const longId = 'agent-550e8400-e29b-41d4-a716-446655440000'
+    const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, id: longId } : item) }
+
+    renderAgent(`/agents/${longId}?tab=identity`, state)
+
+    expect(screen.getByText('agent-55…0000')).toHaveAttribute('title', longId)
+    fireEvent.click(screen.getByRole('button', { name: '复制完整 Agent ID' }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(longId))
+    expect(await screen.findByRole('status')).toHaveTextContent('Agent ID 已复制')
+  })
+
+  it('Agent ID 复制失败时保留可手动复制的完整值', async () => {
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error('denied'))
+    renderAgent('/agents/zhouce?tab=identity')
+
+    fireEvent.click(screen.getByRole('button', { name: '复制完整 Agent ID' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('系统未允许访问剪贴板')
+    expect(screen.getByText('zhouce')).toHaveAttribute('title', 'zhouce')
+  })
+
+  it('身份编辑阻止低质量名称和重名，并保存裁剪后的名称', async () => {
+    renderAgent('/agents/zhouce?tab=identity')
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    const input = screen.getByDisplayValue('周策')
+
+    fireEvent.change(input, { target: { value: '123456' } })
+    expect(screen.getByText('名称不能全部是数字。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+
+    fireEvent.change(input, { target: { value: initialState.agents.find((item) => item.id !== 'zhouce')!.name } })
+    expect(screen.getByText('已有同名 Agent，请使用其他名称。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
   })
 
   it('Desktop 受管身份从磁盘加载基线并保存 revision', async () => {
@@ -215,7 +271,8 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(name, { target: { value: '周策更新' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('编辑期间发生变化')
+    expect(await screen.findByRole('alert')).toHaveTextContent('已被外部修改')
+    expect(screen.getByRole('alert')).toHaveTextContent('Bandi 不会覆盖当前文件')
     expect(screen.getByDisplayValue('周策更新')).toBeInTheDocument()
     expect(screen.getByText('name: "磁盘更新"')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '基于当前内容重新编辑' })).toBeEnabled()
@@ -300,7 +357,7 @@ describe('Agent 双模式配置工作台', () => {
     renderAgent('/agents/zhouce?tab=memory', state)
 
     expect(await screen.findByText('candidate-hydrated')).toBeInTheDocument()
-    expect(screen.getByText('已写入正式 Revision')).toBeInTheDocument()
+    expect(screen.getByText('已保存为正式版本')).toBeInTheDocument()
     expect(screen.queryByText('正式记忆候选已创建')).not.toBeInTheDocument()
   })
 
@@ -384,7 +441,7 @@ describe('Agent 双模式配置工作台', () => {
   it('双模式 Tab 支持循环键盘切换并同步 URL 与面板', async () => {
     renderAgent()
     const management = screen.getByRole('tab', { name: '管理视图' })
-    const packageTab = screen.getByRole('tab', { name: 'AgentPackage' })
+    const packageTab = screen.getByRole('tab', { name: '原始文件' })
 
     expect(management).toHaveAttribute('aria-controls', 'agent-mode-panel-management')
     expect(screen.getByRole('tabpanel', { name: '管理视图' })).toBeInTheDocument()
@@ -392,7 +449,7 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.keyDown(management, { key: 'ArrowLeft' })
     await waitFor(() => expect(packageTab).toHaveFocus())
     await waitFor(() => expect(packageTab).toHaveAttribute('aria-selected', 'true'))
-    expect(screen.getByRole('tabpanel', { name: 'AgentPackage' })).toBeInTheDocument()
+    expect(screen.getByRole('tabpanel', { name: '原始文件' })).toBeInTheDocument()
 
     fireEvent.keyDown(packageTab, { key: 'Home' })
     await waitFor(() => expect(management).toHaveFocus())
@@ -457,7 +514,7 @@ describe('Agent 双模式配置工作台', () => {
   it('AgentPackage 深链展示文件树和默认文件', () => {
     renderAgent('/agents/zhouce?tab=package&path=agent.yaml&view=preview')
 
-    expect(screen.getByRole('tab', { name: 'AgentPackage' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '原始文件' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tree', { name: '周策 AgentPackage 目录' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'agent.yaml' })).toBeInTheDocument()
     expect(screen.queryByText('关联文件')).not.toBeInTheDocument()
@@ -466,7 +523,7 @@ describe('Agent 双模式配置工作台', () => {
   it('保留源码深链并提供结构化预览切换', () => {
     renderAgent('/agents/zhouce?tab=package&path=config%2Frules.yaml&view=source')
 
-    expect(screen.getByRole('tab', { name: 'AgentPackage' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '原始文件' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText(/只读源码根据当前页面中的配置生成/)).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '预览' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('tab', { name: '源码' })).toHaveAttribute('aria-pressed', 'true')
@@ -577,7 +634,8 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(editor, { target: { value: '# Proposed\n' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('编辑期间发生变化')
+    expect(await screen.findByRole('alert')).toHaveTextContent('已被外部修改')
+    expect(screen.getByRole('alert')).toHaveTextContent('Bandi 不会覆盖当前文件')
     expect(screen.getByRole('textbox', { name: '主指令正文' })).toHaveValue('# Proposed\n')
     expect(screen.getByText('# Base')).toBeInTheDocument()
     expect(screen.getByText('# Current')).toBeInTheDocument()
@@ -595,7 +653,7 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(await screen.findByLabelText('规划上下文窗口（Token）'), { target: { value: '256000' } })
     fireEvent.change(screen.getByDisplayValue(80), { target: { value: '95' } })
     expect(screen.getByText(/约在 243,200 Token/)).toBeInTheDocument()
-    expect(screen.getByText(/当前未应用/)).toBeInTheDocument()
+    expect(screen.getByText(/当前尚未应用到 Claude Code/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
   })
 
@@ -628,6 +686,38 @@ describe('Agent 双模式配置工作台', () => {
     expect(screen.getByText(/当前页面保存位置/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     expect(screen.getByRole('button', { name: '保存到当前页面' })).toBeEnabled()
+  })
+
+  it('Desktop 受管 Rules 缺失时可从空配置开始并在保存时创建', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      runtime: 'desktop',
+      agents: initialState.agents.map((item) => item.id === source.id ? {
+        ...item,
+        packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' },
+        files: item.files.filter((file) => file.path !== 'config/rules.yaml'),
+        ruleRefs: [],
+      } : item),
+    }
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    const hash = `sha256:${'5'.repeat(64)}` as const
+    const asset = { id: 'rules-empty-asset', containerId: 'rules-empty-container', kind: 'rules', officialScope: 'managed', assetContentHash: hash, containerContentHash: hash, writable: true, parseStatus: 'parsed', diagnostics: [{ code: 'rules_not_materialized', severity: 'info', message: '尚未创建 rules.yaml' }] } satisfies import('../contracts').SourceAssetSummaryDto
+    const base = 'schemaVersion: 1\nrules:\n  []\n'
+    const baselineRef = { id: 'rules-empty-base', assetId: asset.id, containerId: asset.containerId, assetContentHash: hash, containerContentHash: hash, targetExists: false }
+    vi.spyOn(desktopBridge, 'discoverConfig').mockResolvedValue({ requestId: 'discover-rules-empty', profileVersion: 'agent-package-v1', containers: [{ id: asset.containerId, locator: { rootKind: 'managed', displayPath: '/tmp/rules.yaml', relativePath: 'agt_zhouce/config/rules.yaml' }, format: 'yaml', contentHash: hash, writable: true }], assets: [asset], sharedAssets: [], references: [], diagnostics: [] })
+    vi.spyOn(desktopBridge, 'loadConfigEditor').mockResolvedValue({ requestId: 'load-rules-empty', asset, canonicalContent: base, redacted: false, baselineRef, diagnostics: asset.diagnostics })
+    const save = vi.spyOn(desktopBridge, 'saveConfig').mockResolvedValue({ kind: 'unchanged', requestId: 'save-rules-zhouce', asset })
+
+    renderAgent('/agents/zhouce?tab=rules', state)
+    expect(screen.getByText('尚未创建规则配置文件')).toBeInTheDocument()
+    expect(screen.getByText(/首次产生变更并保存时会安全创建 config\/rules.yaml/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '开始配置' }))
+    const checkbox = await screen.findByRole('checkbox', { name: /添加/ })
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ assetId: asset.id, expectedBaseline: expect.objectContaining({ targetExists: false }), baseContent: base, change: expect.objectContaining({ kind: 'rules', value: expect.stringContaining('rules:') }) })))
   })
 
   it('Desktop 受管 Rules 通过发现、加载与真实保存闭环', async () => {
@@ -1027,6 +1117,182 @@ describe('Agent 双模式配置工作台', () => {
     expect(restore).toHaveBeenNthCalledWith(2, expect.objectContaining({ revisionId: revision.id, confirmationRef: 'confirmation-restore-permissions' }))
   })
 
+  it('Desktop current 受管 Agent 通过精确确认后永久删除', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      runtime: 'desktop',
+      agents: initialState.agents.map((item) => item.id === source.id ? {
+        ...item,
+        status: 'archived',
+        packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' },
+        packageSchema: { schemaVersion: 1, compatibility: 'current' },
+      } : item),
+    }
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    const preview = vi.spyOn(desktopBridge, 'previewManagedAgentDeletion').mockResolvedValue({
+      requestId: 'delete-agent-zhouce-fixed',
+      agentId: 'zhouce',
+      previewRef: 'preview-delete-zhouce',
+      confirmationText: '永久删除 周策',
+      expiresAt: '2026-09-03T12:00:00Z',
+      packageFingerprint: 'sha256:package',
+      impacts: {
+        workspaceBindings: [{ id: 'bandi', label: 'WorkspaceBinding', detail: '研发 Workspace' }],
+        sharedAssetReferences: [],
+        organizationRelationships: [],
+        reviewResponsibilities: [],
+        formalMemory: [],
+        automaticCleanup: [{ id: 'department_memberships', label: '部门成员索引', detail: '将自动清理 1 项' }],
+        historyAndBackups: [{ id: 'config_revisions', label: '配置版本', detail: '将删除 3 项 ConfigRevision；独立 Backup 不变' }],
+        blockers: [],
+      },
+      canCommit: true,
+    })
+    const commit = vi.spyOn(desktopBridge, 'commitManagedAgentDeletion').mockResolvedValue({ requestId: 'delete-agent-zhouce-fixed', agentId: 'zhouce', operationId: 'operation-delete-zhouce', createdAt: '2026-09-03T10:00:00Z', status: 'completed', deletedConfigRevisions: 3, pendingCleanup: [] })
+
+    const { router } = renderAgent('/agents/zhouce', state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    await waitFor(() => expect(preview).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'zhouce' })))
+    expect(within(dialog).getByText('研发 Workspace')).toBeInTheDocument()
+    expect(within(dialog).getAllByText('工作区专属配置')).toHaveLength(2)
+    expect(within(dialog).getByText(/独立 备份 不变/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/WorkspaceBinding|ConfigRevision|Backup|2026-09-03T12:00:00Z/)).not.toBeInTheDocument()
+    const confirmation = within(dialog).getByLabelText(/输入“永久删除 周策”确认/)
+    const deleteButton = within(dialog).getByRole('button', { name: '永久删除' })
+    fireEvent.change(confirmation, { target: { value: '永久删除 周策 ' } })
+    expect(deleteButton).toBeDisabled()
+    fireEvent.change(confirmation, { target: { value: '永久删除 周策' } })
+    fireEvent.click(deleteButton)
+
+    await waitFor(() => expect(commit).toHaveBeenCalledWith({ requestId: 'delete-agent-zhouce-fixed', agentId: 'zhouce', previewRef: 'preview-delete-zhouce', confirmationText: '永久删除 周策' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/agents'))
+  })
+
+  it('删除已提交但仍待清理时移除 Agent 并保留继续清理入口', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      runtime: 'desktop',
+      agents: initialState.agents.map((item) => item.id === source.id ? {
+        ...item,
+        status: 'archived',
+        packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' },
+        packageSchema: { schemaVersion: 1, compatibility: 'current' },
+      } : item),
+    }
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(desktopBridge, 'previewManagedAgentDeletion').mockResolvedValue({
+      requestId: 'delete-cleanup-pending', agentId: 'zhouce', previewRef: 'cleanup-preview', confirmationText: '永久删除 周策', expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), packageFingerprint: 'sha256:package', canCommit: true,
+      impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [] },
+    })
+    vi.spyOn(desktopBridge, 'commitManagedAgentDeletion').mockResolvedValue({
+      requestId: 'delete-cleanup-pending',
+      agentId: 'zhouce',
+      operationId: 'operation-delete-zhouce',
+      createdAt: '2026-09-03T10:00:00Z',
+      status: 'cleanup_pending',
+      deletedConfigRevisions: 0,
+      safeReason: 'Agent 配置已删除，但部分配置版本仍待清理。请勿重复删除。',
+      pendingCleanup: ['清理配置版本'],
+    })
+
+    const { router } = renderAgentWithPersistentState(state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    fireEvent.change(within(dialog).getByLabelText(/输入“永久删除 周策”确认/), { target: { value: '永久删除 周策' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '永久删除' }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/agents'))
+    expect(screen.getByTestId('remaining-agent')).toHaveTextContent('已移除')
+    expect(screen.getByTestId('delete-recovery')).toHaveTextContent('operation-delete-zhouce:database_committed')
+    const notice = screen.getByText(/部分配置版本仍待清理/).closest('output')
+    expect(notice).toHaveTextContent('Agent 配置已删除')
+    expect(notice).toHaveTextContent('请勿重复删除')
+  })
+
+  it('删除预览存在 blocker 时展示解除建议并禁止提交', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' }, packageSchema: { schemaVersion: 1, compatibility: 'current' } } : item),
+    }
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(desktopBridge, 'previewManagedAgentDeletion').mockResolvedValue({
+      requestId: 'delete-blocked', agentId: 'zhouce', previewRef: 'blocked-preview', confirmationText: '永久删除 周策', expiresAt: '2026-09-03T12:00:00Z', packageFingerprint: 'sha256:package', canCommit: false,
+      impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [{ id: 'agent_static_reference:other-agent', label: '删除阻止项', detail: 'agent_static_reference:other-agent', remediation: '先移除其他 AgentPackage 中的静态引用。' }] },
+    })
+    const commit = vi.spyOn(desktopBridge, 'commitManagedAgentDeletion')
+
+    renderAgent('/agents/zhouce', state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    expect(await within(dialog).findByText('agent_static_reference:other-agent')).toBeInTheDocument()
+    expect(within(dialog).getByText('解除建议：先移除其他 AgentPackage 中的静态引用。')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: '永久删除' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/输入“/)).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '重新检查' })).toBeInTheDocument()
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('重新检查使用新的请求 ID，并在可提交时聚焦确认输入', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed' as const, packageId: 'agt_zhouce', strategy: 'managed' as const }, packageSchema: { schemaVersion: 1, compatibility: 'current' as const } } : item) }
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString()
+    const preview = vi.spyOn(desktopBridge, 'previewManagedAgentDeletion')
+      .mockResolvedValueOnce({ requestId: 'blocked', agentId: 'zhouce', previewRef: 'blocked', confirmationText: '永久删除 周策', expiresAt, packageFingerprint: 'sha256:package', canCommit: false, impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [{ id: 'blocker', label: '阻塞项', detail: '仍被引用' }] } })
+      .mockImplementationOnce(async (request) => ({ requestId: request.requestId, agentId: 'zhouce', previewRef: 'ready', confirmationText: '永久删除 周策', expiresAt, packageFingerprint: 'sha256:package', canCommit: true, impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [] } }))
+
+    renderAgent('/agents/zhouce', state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    fireEvent.click(await within(dialog).findByRole('button', { name: '重新检查' }))
+
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(2))
+    expect(preview.mock.calls[0][0].requestId).not.toBe(preview.mock.calls[1][0].requestId)
+    const confirmation = await within(dialog).findByLabelText(/输入“永久删除 周策”确认/)
+    await waitFor(() => expect(confirmation).toHaveFocus())
+  })
+
+  it('删除目标变化后清除旧确认并只提供重新检查', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed' as const, packageId: 'agt_zhouce', strategy: 'managed' as const }, packageSchema: { schemaVersion: 1, compatibility: 'current' as const } } : item) }
+    vi.spyOn(desktopBridge, 'previewManagedAgentDeletion').mockResolvedValue({ requestId: 'changed', agentId: 'zhouce', previewRef: 'changed', confirmationText: '永久删除 周策', expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), packageFingerprint: 'sha256:package', canCommit: true, impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [] } })
+    vi.spyOn(desktopBridge, 'commitManagedAgentDeletion').mockRejectedValue(new Error('AGENT_DELETE_TARGET_CHANGED: 删除目标或影响已变化，请重新预览'))
+
+    renderAgent('/agents/zhouce', state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    fireEvent.change(await within(dialog).findByLabelText(/输入“永久删除 周策”确认/), { target: { value: '永久删除 周策' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '永久删除' }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('删除目标已变化')
+    expect(within(dialog).getByText(/Agent 配置没有变化/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/AGENT_DELETE_TARGET_CHANGED/)).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/输入“/)).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: '永久删除' })).not.toBeInTheDocument()
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '重新检查' })).toHaveFocus())
+  })
+
+  it('删除提交失败时保留详情页且不移除 Agent', async () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, status: 'archived' as const, packageSource: { kind: 'bandi-managed' as const, packageId: 'agt_zhouce', strategy: 'managed' as const }, packageSchema: { schemaVersion: 1, compatibility: 'current' as const } } : item) }
+    vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
+    vi.spyOn(desktopBridge, 'previewManagedAgentDeletion').mockResolvedValue({ requestId: 'delete-fails', agentId: 'zhouce', previewRef: 'fails-preview', confirmationText: '永久删除 周策', expiresAt: '2026-09-03T12:00:00Z', packageFingerprint: 'sha256:package', canCommit: true, impacts: { workspaceBindings: [], sharedAssetReferences: [], organizationRelationships: [], reviewResponsibilities: [], formalMemory: [], automaticCleanup: [], historyAndBackups: [], blockers: [] } })
+    vi.spyOn(desktopBridge, 'commitManagedAgentDeletion').mockRejectedValue(new Error('AgentPackage 已变化，请重新预览'))
+
+    const { router } = renderAgent('/agents/zhouce', state)
+    fireEvent.click(screen.getByRole('button', { name: '预览永久删除影响' }))
+    const dialog = await screen.findByRole('dialog', { name: '永久删除 周策' })
+    fireEvent.change(within(dialog).getByLabelText(/输入“永久删除 周策”确认/), { target: { value: '永久删除 周策' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '永久删除' }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('AgentPackage 已变化，请重新预览')
+    expect(router.state.location.pathname).toBe('/agents/zhouce')
+    expect(within(dialog).getByRole('heading', { name: '永久删除 周策' })).toBeInTheDocument()
+  })
+
   it('Desktop Context 外部变化保留草稿并展示三方 YAML', async () => {
     const source = initialState.agents.find((item) => item.id === 'zhouce')!
     const state: State = { ...initialState, agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' } } : item) }
@@ -1043,7 +1309,8 @@ describe('Agent 双模式配置工作台', () => {
     fireEvent.change(await screen.findByDisplayValue(80), { target: { value: '85' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('编辑期间发生变化')
+    expect(await screen.findByRole('alert')).toHaveTextContent('已被外部修改')
+    expect(screen.getByRole('alert')).toHaveTextContent('Bandi 不会覆盖当前文件')
     expect(screen.getByDisplayValue(85)).toHaveValue(85)
     expect(screen.getByText(/triggerRatio: 0.9/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '基于当前内容重新编辑' })).toBeEnabled()

@@ -48,6 +48,8 @@ const COMMANDS: &[&str] = &[
     "recover_managed_agent_identity",
     "restore_managed_agent_identity",
     "list_managed_agents",
+    "preview_managed_agent_deletion",
+    "commit_managed_agent_deletion",
     "register_external_agent",
     "remove_external_agent",
     "list_agents",

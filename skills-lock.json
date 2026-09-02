@@ -13,6 +13,12 @@
       "skillPath": "skills/migrate-radix-to-base/SKILL.md",
       "computedHash": "e1f2030ee5059be3dff0812ca0e4b995ee9fa3132176f049ebe6c90346a6755e"
     },
+    "product-content-strategist": {
+      "source": "xzjh/product-content-strategist",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "ee5df2c1e7e812eb9e97159ce588547acb153c82055df400e7eacfa308b31c32"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",

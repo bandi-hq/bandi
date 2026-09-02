@@ -83,7 +83,7 @@ describe('演示状态', () => {
     const result = reducer(state, { type: 'HYDRATE_FORMAL_MEMORY_REVIEWS', bundles: [bundle] })
 
     expect(result.notice).toBe(state.notice)
-    expect(result.memoryCandidates.find((item) => item.id === bundle.candidate.id)?.status).toBe('已写入正式 Revision')
+    expect(result.memoryCandidates.find((item) => item.id === bundle.candidate.id)?.status).toBe('已保存为正式版本')
     expect(result.memorySpaces.find((item) => item.id === bundle.space.id)?.revision).toBe('memory-revision-1')
   })
 

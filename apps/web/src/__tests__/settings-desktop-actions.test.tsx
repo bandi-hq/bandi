@@ -76,13 +76,32 @@ describe('Desktop 工具方案', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '新建方案' }))
     fireEvent.change(screen.getByRole('textbox', { name: '名称' }), { target: { value: '评审方案' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '创建方案' }))
 
     await waitFor(() => expect(screen.getByRole('combobox', { name: '当前方案' })).toHaveValue('review'))
     expect(bridge.createToolPlan).toHaveBeenCalledWith(
       expect.objectContaining({ name: '评审方案', toolIds: [] }),
       2,
     )
+  })
+
+  it('按操作显示进行态和成功反馈', async () => {
+    let resolve!: (value: typeof initialSnapshot) => void
+    bridge.selectToolPlan.mockReturnValue(new Promise((done) => { resolve = done }))
+    renderTools()
+    fireEvent.change(screen.getByRole('combobox', { name: '当前方案' }), { target: { value: 'default' } })
+    expect(screen.getByRole('status')).toHaveTextContent('正在更新工具方案')
+    resolve(initialSnapshot)
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('工具方案已切换'))
+  })
+
+  it('重名错误与名称字段关联', () => {
+    renderTools()
+    fireEvent.click(screen.getByRole('button', { name: '新建方案' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '名称' }), { target: { value: '默认方案' } })
+    const input = screen.getByRole('textbox', { name: '名称' })
+    expect(input).toHaveAttribute('aria-describedby', 'tool-editor-name-error')
+    expect(screen.getByText('已有名为“默认方案”的方案，请使用其他名称。')).toHaveAttribute('id', 'tool-editor-name-error')
   })
 
   it('写入失败时保留当前方案并显示错误', async () => {
@@ -102,7 +121,11 @@ describe('恢复出厂状态面板', () => {
     previewRef: 'preview-1',
     expiresAt: '2026-09-03T12:00:00Z',
     confirmationText: '恢复出厂状态',
-    targets: [{ id: 'database', state: 'present' }],
+    targets: [
+      { id: 'database', kind: 'file', state: 'present' },
+      { id: 'databaseWal', kind: 'file', state: 'present' },
+      { id: 'databaseShm', kind: 'file', state: 'absent' },
+    ],
     canCommit: true,
   }
 
@@ -118,10 +141,21 @@ describe('恢复出厂状态面板', () => {
   async function openAndConfirm() {
     fireEvent.click(screen.getByRole('button', { name: '预览恢复范围' }))
     const input = await screen.findByRole('textbox', { name: '输入“恢复出厂状态”确认' })
+    expect(screen.queryByText(preview.expiresAt, { exact: false })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认恢复' })).toBeDisabled()
     fireEvent.change(input, { target: { value: '恢复出厂状态' } })
     fireEvent.click(screen.getByRole('button', { name: '确认恢复' }))
   }
+
+  it('默认合并本机数据库文件并按需显示技术目标', async () => {
+    render(<FactoryResetPanel />)
+    fireEvent.click(screen.getByRole('button', { name: '预览恢复范围' }))
+
+    expect(await screen.findByText('Bandi 本机数据')).toBeInTheDocument()
+    expect(screen.queryByText('数据库写入日志')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('查看技术目标'))
+    expect(screen.getByText(/databaseWal/)).toBeInTheDocument()
+  })
 
   it('提交成功后只清理三个白名单偏好并要求重启', async () => {
     bridge.commitFactoryReset.mockResolvedValue({ requiresRestart: true })

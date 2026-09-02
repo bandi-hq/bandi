@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
-import type { BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, SourceAssetSummaryDto } from '../../contracts'
+import type { BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, Diagnostic, SourceAssetSummaryDto } from '../../contracts'
 import { AppDialog } from '../../components/ui/dialog'
 import { Button } from '../../components/ui/button'
 import { MonoPath, StatusBadge } from '../../components/app/page'
+import { DiagnosticList, ErrorNotice, errorFromCause, type UserFacingError } from '../../components/app/error-notice'
 import {
   createBackupSnapshot,
   discoverConfig,
@@ -11,6 +12,7 @@ import {
   previewBackupRestore,
   restoreBackupSnapshot,
 } from '../../desktop-bridge'
+import { assetKindLabel, formatDisplayTimestamp } from '../../presentation'
 
 function requestId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`
@@ -32,6 +34,10 @@ const restoreStatusLabels: Record<BackupRestoreResultDto['entries'][number]['sta
   skipped: '已跳过',
 }
 
+function Diagnostics({ items }: { items?: Diagnostic[] }) {
+  return <DiagnosticList items={items} className="mt-2 text-xs" />
+}
+
 export function DesktopBackupPanel() {
   const [snapshots, setSnapshots] = useState<BackupSnapshotDto[]>([])
   const [assets, setAssets] = useState<SourceAssetSummaryDto[]>([])
@@ -44,7 +50,7 @@ export function DesktopBackupPanel() {
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<UserFacingError>()
   const createTriggerRef = useRef<HTMLButtonElement>(null)
 
   const writableAssets = useMemo(
@@ -54,7 +60,7 @@ export function DesktopBackupPanel() {
 
   const refresh = async () => {
     setLoading(true)
-    setError('')
+    setError(undefined)
     try {
       const [history, discovery] = await Promise.all([
         listBackupSnapshots(),
@@ -63,7 +69,11 @@ export function DesktopBackupPanel() {
       setSnapshots(history)
       setAssets(discovery.assets)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorFromCause(
+        cause,
+        '无法读取本地快照',
+        '快照和配置没有变化。请检查本地服务后重新读取。',
+      ))
     } finally {
       setLoading(false)
     }
@@ -74,14 +84,14 @@ export function DesktopBackupPanel() {
   const closeCreate = () => {
     setCreateOpen(false)
     setSelectedAssetIds([])
-    setError('')
+    setError(undefined)
     requestAnimationFrame(() => createTriggerRef.current?.focus())
   }
 
   const create = async () => {
     if (!selectedAssetIds.length || saving) return
     setSaving(true)
-    setError('')
+    setError(undefined)
     try {
       const snapshot = await createBackupSnapshot({
         requestId: requestId('create-backup'),
@@ -90,7 +100,11 @@ export function DesktopBackupPanel() {
       setSnapshots((current) => [snapshot, ...current.filter((item) => item.id !== snapshot.id)])
       closeCreate()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorFromCause(
+        cause,
+        '无法创建本地快照',
+        '没有创建快照。请检查所选配置和本地服务后重试。',
+      ))
     } finally {
       setSaving(false)
     }
@@ -102,7 +116,7 @@ export function DesktopBackupPanel() {
     setPreview(undefined)
     setResult(undefined)
     setConfirmed(false)
-    setError('')
+    setError(undefined)
   }
 
   const closeRestore = () => {
@@ -111,13 +125,13 @@ export function DesktopBackupPanel() {
     setPreview(undefined)
     setResult(undefined)
     setConfirmed(false)
-    setError('')
+    setError(undefined)
   }
 
   const previewRestore = async () => {
     if (!restoreTarget || !restoreAssetIds.length || saving) return
     setSaving(true)
-    setError('')
+    setError(undefined)
     try {
       setPreview(await previewBackupRestore({
         requestId: requestId('preview-backup'),
@@ -125,7 +139,11 @@ export function DesktopBackupPanel() {
         assetIds: restoreAssetIds,
       }))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorFromCause(
+        cause,
+        '无法检查恢复内容',
+        '配置没有变化。请检查所选快照和本地服务后重试。',
+      ))
     } finally {
       setSaving(false)
     }
@@ -134,7 +152,7 @@ export function DesktopBackupPanel() {
   const restore = async () => {
     if (!restoreTarget || !preview?.canRestore || !confirmed || saving) return
     setSaving(true)
-    setError('')
+    setError(undefined)
     try {
       const next = await restoreBackupSnapshot({
         requestId: requestId('restore-backup'),
@@ -146,7 +164,11 @@ export function DesktopBackupPanel() {
       setResult(next)
       setSnapshots(await listBackupSnapshots())
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorFromCause(
+        cause,
+        '无法完成快照恢复',
+        '部分配置可能已恢复。请查看恢复结果或重新读取快照，不要直接重复提交。',
+      ))
     } finally {
       setSaving(false)
     }
@@ -154,15 +176,15 @@ export function DesktopBackupPanel() {
 
   return <div className="space-y-5">
     <section className="panel flex flex-wrap items-start justify-between gap-4 p-5">
-      <div><b>快照与恢复</b><p className="mt-1 text-sm leading-6 text-muted-foreground">快照只包含 Bandi 当前发现并由你选中的可写受管配置文件，可按资产安全恢复。</p><p className="mt-1 text-xs leading-5 text-muted-foreground">不包含公司、部门、岗位、工作区注册信息、服务授权或领域数据；当前也不提供正式记忆文件。</p></div>
+      <div><b>快照与恢复</b><p className="mt-1 text-sm leading-6 text-muted-foreground">保存所选受管配置文件，并可按资产恢复。</p><details className="mt-1"><summary className="cursor-pointer text-xs text-muted-foreground">查看安全范围</summary><p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">只包含 Bandi 当前发现并由你选中的可写受管配置文件。不包含公司、部门、岗位、工作区注册信息、服务授权、领域数据或正式记忆文件；凭据、Token、Cookie、私钥、钥匙串和执行过程也不会加入。</p></details></div>
       <Button ref={createTriggerRef} disabled={loading || !writableAssets.length} onClick={() => setCreateOpen(true)}><Plus size={15} aria-hidden="true" />创建本地快照</Button>
     </section>
-    {error && <div className="rounded-lg border border-danger/30 bg-danger/8 p-4 text-sm text-danger" role="alert">{error}</div>}
+    {error && <ErrorNotice error={error} />}
     <section className="panel overflow-hidden">
       <div className="border-b border-border p-5"><b>快照历史</b><p className="mt-1 text-xs text-muted-foreground">历史保存在本机；恢复前会重新校验条目并创建安全快照。</p></div>
       {loading ? <p className="p-5 text-sm text-muted-foreground">正在加载本地快照…</p> : <div className="divide-y divide-border">
         {snapshots.map((snapshot) => <div key={snapshot.id} className="grid min-w-0 gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b>{snapshot.kind === 'pre_restore' ? '恢复前安全快照' : '手动快照'}</b><StatusBadge tone={snapshot.integrity === 'verified' ? 'success' : 'danger'}>{snapshot.integrity === 'verified' ? '清单已校验' : '清单异常'}</StatusBadge></div><p className="mt-1 text-xs text-muted-foreground">{snapshot.createdAt} · {snapshot.entryCount} 项</p><MonoPath>{snapshot.id}</MonoPath></div>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b>{snapshot.kind === 'pre_restore' ? '恢复前安全快照' : '手动快照'}</b><StatusBadge tone={snapshot.integrity === 'verified' ? 'success' : 'danger'}>{snapshot.integrity === 'verified' ? '清单已校验' : '清单异常'}</StatusBadge></div><p className="mt-1 text-xs text-muted-foreground">{formatDisplayTimestamp(snapshot.createdAt)} · {snapshot.entryCount} 项</p><MonoPath>{snapshot.id}</MonoPath></div>
           <Button variant="outline" size="sm" disabled={snapshot.integrity !== 'verified'} onClick={() => openRestore(snapshot)}>预览恢复</Button>
         </div>)}
         {!snapshots.length && <p className="p-5 text-sm text-muted-foreground">尚未创建本地快照。</p>}
@@ -175,13 +197,13 @@ export function DesktopBackupPanel() {
     </AppDialog>
 
     <AppDialog open={Boolean(restoreTarget)} onOpenChange={(open) => { if (!open) closeRestore() }} title="恢复本地快照" description={restoreTarget?.id} size="lg" footer={<><Button variant="outline" onClick={closeRestore}>{result ? '关闭' : '取消'}</Button>{!result && (!preview ? <Button disabled={!restoreAssetIds.length || saving} onClick={previewRestore}>{saving ? '校验中…' : '校验并预览'}</Button> : <Button variant="danger" disabled={!preview.canRestore || !confirmed || saving} onClick={restore}>{saving ? '恢复中…' : '确认恢复'}</Button>)}</>}>
-      {restoreTarget && !preview && <fieldset><legend className="text-sm font-medium">选择恢复资产</legend><div className="mt-2 max-h-72 space-y-2 overflow-auto rounded-lg border border-border p-3">{restoreTarget.entries.map((entry) => <label key={entry.assetId} className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={restoreAssetIds.includes(entry.assetId)} onChange={(event) => setRestoreAssetIds((current) => event.target.checked ? [...current, entry.assetId] : current.filter((id) => id !== entry.assetId))} /><span className="min-w-0"><b>{entry.kind}</b><MonoPath>{entry.locator.displayPath}</MonoPath></span></label>)}</div></fieldset>}
-      {preview && !result && <div className="space-y-3">{preview.entries.map((entry) => <div key={entry.assetId} className="rounded-lg border border-border p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><MonoPath>{entry.assetId}</MonoPath><StatusBadge tone={entry.status === 'ready' ? 'success' : 'danger'}>{statusLabels[entry.status]}</StatusBadge></div>{entry.diagnostics?.map((item) => <p key={item.code} className="mt-2 text-xs text-danger">{item.message}</p>)}</div>)}<p className="text-xs text-muted-foreground">预览有效期至 {preview.expiresAt}。配置将逐项恢复；如果部分项目失败，可使用自动创建的恢复前安全快照回退。</p><label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>我确认恢复这些配置资产。恢复仍会校验当前版本、文件格式和权限变化。</span></label></div>}
-      {result && <div className="space-y-3"><StatusBadge tone={result.kind === 'restored' ? 'success' : 'warning'}>{result.kind === 'restored' ? '恢复完成' : result.kind === 'partial_failure' ? '部分恢复' : '恢复失败'}</StatusBadge><p className="text-sm text-muted-foreground">恢复前安全快照：<span className="font-mono">{result.preRestoreSnapshotId}</span></p>{result.entries.map((entry) => <div key={entry.assetId} className="rounded-lg border border-border p-3 text-sm"><b>{restoreStatusLabels[entry.status]}</b><MonoPath>{entry.assetId}</MonoPath>{entry.revisionId && <p className="mt-1 text-xs text-muted-foreground">新版本：{entry.revisionId}</p>}{entry.diagnostics?.map((item) => <p key={item.code} className="mt-1 text-xs text-danger">{item.message}</p>)}</div>)}</div>}
+      {restoreTarget && !preview && <fieldset><legend className="text-sm font-medium">选择恢复资产</legend><div className="mt-2 max-h-72 space-y-2 overflow-auto rounded-lg border border-border p-3">{restoreTarget.entries.map((entry) => <label key={entry.assetId} className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={restoreAssetIds.includes(entry.assetId)} onChange={(event) => setRestoreAssetIds((current) => event.target.checked ? [...current, entry.assetId] : current.filter((id) => id !== entry.assetId))} /><span className="min-w-0"><b>{assetKindLabel(entry.kind)}</b><MonoPath>{entry.locator.displayPath}</MonoPath></span></label>)}</div></fieldset>}
+      {preview && !result && <div className="space-y-3">{preview.entries.map((entry) => <div key={entry.assetId} className="rounded-lg border border-border p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><MonoPath>{entry.assetId}</MonoPath><StatusBadge tone={entry.status === 'ready' ? 'success' : 'danger'}>{statusLabels[entry.status]}</StatusBadge></div><Diagnostics items={entry.diagnostics} /></div>)}<p className="text-xs text-muted-foreground">预览有效期至 {formatDisplayTimestamp(preview.expiresAt)}。配置将逐项恢复；如果部分项目失败，可使用自动创建的恢复前安全快照回退。</p><label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>我确认恢复这些配置资产。恢复仍会校验当前版本、文件格式和权限变化。</span></label></div>}
+      {result && <div className="space-y-3"><StatusBadge tone={result.kind === 'restored' ? 'success' : 'warning'}>{result.kind === 'restored' ? '恢复完成' : result.kind === 'partial_failure' ? '部分恢复' : '恢复失败'}</StatusBadge><p className="text-sm text-muted-foreground">已恢复 {result.entries.filter((entry) => entry.status === 'restored').length} 项；其余 {result.entries.filter((entry) => entry.status !== 'restored').length} 项保持原状。</p><p className="text-sm text-muted-foreground">恢复前安全快照：<span className="font-mono">{result.preRestoreSnapshotId}</span></p>{result.entries.map((entry) => <div key={entry.assetId} className="rounded-lg border border-border p-3 text-sm"><b>{restoreStatusLabels[entry.status]}</b><MonoPath>{entry.assetId}</MonoPath>{entry.revisionId && <p className="mt-1 text-xs text-muted-foreground">新版本：{entry.revisionId}</p>}<Diagnostics items={entry.diagnostics} /></div>)}</div>}
     </AppDialog>
   </div>
 }
 
 function AssetChecklist({ assets, selected, onChange }: { assets: SourceAssetSummaryDto[]; selected: string[]; onChange: (ids: string[]) => void }) {
-  return <fieldset><legend className="text-sm font-medium">配置资产（至少一项）</legend><div className="mt-2 max-h-72 space-y-2 overflow-auto rounded-lg border border-border p-3">{assets.map((asset) => <label key={asset.id} className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={selected.includes(asset.id)} onChange={(event) => onChange(event.target.checked ? [...selected, asset.id] : selected.filter((id) => id !== asset.id))} /><span className="min-w-0"><b>{asset.kind}</b><MonoPath>{asset.id}</MonoPath></span></label>)}{!assets.length && <p className="text-sm text-muted-foreground">没有可加入快照的受管配置资产。</p>}</div></fieldset>
+  return <fieldset><legend className="text-sm font-medium">配置资产（至少一项）</legend><div className="mt-2 max-h-72 space-y-2 overflow-auto rounded-lg border border-border p-3">{assets.map((asset) => <label key={asset.id} className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={selected.includes(asset.id)} onChange={(event) => onChange(event.target.checked ? [...selected, asset.id] : selected.filter((id) => id !== asset.id))} /><span className="min-w-0"><b>{assetKindLabel(asset.kind)}</b><MonoPath>{asset.id}</MonoPath></span></label>)}{!assets.length && <p className="text-sm text-muted-foreground">没有可加入快照的受管配置资产。</p>}</div></fieldset>
 }

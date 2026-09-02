@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-managed-agent-deletion"
+description = "Enables the preview_managed_agent_deletion command without any pre-configured scope."
+commands.allow = ["preview_managed_agent_deletion"]
+
+[[permission]]
+identifier = "deny-preview-managed-agent-deletion"
+description = "Denies the preview_managed_agent_deletion command without any pre-configured scope."
+commands.deny = ["preview_managed_agent_deletion"]

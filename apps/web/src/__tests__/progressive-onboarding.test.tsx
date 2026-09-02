@@ -6,7 +6,7 @@ import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HomePage } from '../pages/home-page'
 import { OrganizationPage } from '../pages/organization/organization-pages'
-import { WorkspaceDetailPage, WorkspaceWizardPage } from '../pages/workspaces/workspace-pages'
+import { WorkspaceDetailPage, WorkspaceWizardPage, WorkspacesPage } from '../pages/workspaces/workspace-pages'
 import { GlobalSheets } from '../sheets'
 import { AppProvider, initialState, type State } from '../state'
 
@@ -79,6 +79,7 @@ function renderRoutes(initialEntry: string, state: State) {
     children: [
       { index: true, element: <HomePage /> },
       { path: 'organization', element: <OrganizationPage /> },
+      { path: 'workspaces', element: <WorkspacesPage /> },
       { path: 'workspaces/new', element: <WorkspaceWizardPage /> },
       { path: 'workspaces/:id', element: <WorkspaceDetailPage /> },
     ],
@@ -95,6 +96,28 @@ const emptyState: State = {
 }
 
 describe('渐进式首次体验', () => {
+  it('工作区状态筛选使用稳定值并兼容旧 URL 标签', () => {
+    const { router } = renderRoutes('/workspaces?health=%E5%A4%96%E9%83%A8%E5%8F%98%E5%8C%96', initialState)
+
+    expect(screen.getByRole('combobox', { name: '状态' })).toHaveValue('warning')
+    expect(screen.getByRole('link', { name: 'Bandi' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '独立研究' })).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('combobox', { name: '状态' }), { target: { value: 'healthy' } })
+    expect(router.state.location.search).toBe('?health=healthy')
+    expect(screen.getByRole('link', { name: '独立研究' })).toBeInTheDocument()
+  })
+
+  it('工作区关联页签分别说明空 Agent、资产和记忆', () => {
+    renderRoutes('/workspaces/lab?tab=agents', initialState)
+    expect(screen.getByText('暂无关联 Agent。')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '资产' }))
+    expect(screen.getByText('暂无关联资产。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '记忆' }))
+    expect(screen.getByText('暂无正式记忆范围。')).toBeInTheDocument()
+  })
+
   it('Desktop 等待全部 hydration，只有 Workspace 时仍进入 Agent-first 首次使用页', async () => {
     desktopBridge.desktop = true
     let resolveSnapshot!: (value: { schemaVersion: 1; companies: []; departments: []; roles: []; workspaces: State['workspaces']; serviceGrants: [] }) => void

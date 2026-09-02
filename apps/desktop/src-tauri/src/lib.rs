@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -163,6 +164,50 @@ struct RestoreManagedAgentIdentityRequest {
     expected_baseline: local_service::BaselineRefDto,
     base_content: String,
     confirmed: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PreviewManagedAgentDeletionRequest {
+    request_id: String,
+    agent_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommitManagedAgentDeletionRequest {
+    request_id: String,
+    agent_id: String,
+    preview_ref: String,
+    confirmation_text: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedAgentDeletionPreviewDto {
+    request_id: String,
+    agent_id: String,
+    preview_ref: String,
+    confirmation_text: String,
+    expires_at: String,
+    package_fingerprint: String,
+    impacts: serde_json::Value,
+    can_commit: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedAgentDeletionResultDto {
+    request_id: String,
+    agent_id: String,
+    operation_id: String,
+    created_at: String,
+    status: String,
+    deleted_config_revisions: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safe_reason: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pending_cleanup: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -915,6 +960,39 @@ fn write_package_file(root: &Path, file: &AgentPackageFile) -> Result<(), String
     )
 }
 
+const REQUIRED_AGENT_PACKAGE_FILES: &[&str] = &[
+    "agent.yaml",
+    "instructions.md",
+    "config/context.yaml",
+    "config/skills.yaml",
+    "config/rules.yaml",
+    "config/mcp.yaml",
+    "config/permissions.yaml",
+    "config/sop.yaml",
+    "config/orchestration.yaml",
+    "config/hooks.yaml",
+    "config/commands.yaml",
+];
+
+fn validate_agent_package_files(files: &[AgentPackageFile]) -> Result<(), String> {
+    let mut paths = HashSet::new();
+    for file in files {
+        validate_package_path(&file.path)?;
+        if !paths.insert(file.path.as_str()) {
+            return Err(format!(
+                "INVALID_AGENT_PACKAGE: 文件路径重复：{}",
+                file.path
+            ));
+        }
+    }
+    for required in REQUIRED_AGENT_PACKAGE_FILES {
+        if !paths.contains(required) {
+            return Err(format!("INVALID_AGENT_PACKAGE: 缺少 {required}"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_agent_record(
     agent_id: &str,
     agent: &serde_json::Value,
@@ -926,6 +1004,12 @@ fn validate_agent_record(
     if object.get("id").and_then(serde_json::Value::as_str) != Some(agent_id) {
         return Err("INVALID_AGENT_RECORD: Agent ID 与请求不一致".into());
     }
+    let name = object
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "INVALID_AGENT_RECORD: Agent 名称必须是字符串".to_string())?;
+    agent_service::validate_agent_name(name)
+        .map_err(|message| format!("INVALID_AGENT_RECORD: {message}"))?;
     let avatar = object.get("avatarPath").and_then(serde_json::Value::as_str);
     if avatar.is_some_and(|value| value != "avatar.png")
         || has_avatar != (avatar == Some("avatar.png"))
@@ -959,6 +1043,7 @@ fn create_managed_agent_at(
         &request.agent,
         request.avatar_bytes.is_some(),
     )?;
+    validate_agent_package_files(&request.files)?;
     let manifest = request
         .files
         .iter()
@@ -988,6 +1073,7 @@ fn create_managed_agent_at(
             )?;
         }
         write_agent_record(&staging, &request.agent)?;
+        local_service::project_managed_agent_at(&staging, &request.agent_id)?;
         fs::rename(&staging, &target)
             .map_err(|_| "AGENT_WRITE_FAILED: 无法提交 AgentPackage".to_string())?;
         let (_, _, _, baseline_ref) = identity_asset_facts(&target, &request.agent_id, &manifest);
@@ -1000,6 +1086,264 @@ fn create_managed_agent_at(
         let _ = fs::remove_dir_all(&staging);
     }
     result
+}
+
+fn collect_package_fingerprint_entries(
+    root: &Path,
+    directory: &Path,
+    entries: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(directory)
+        .map_err(|_| "AGENT_READ_FAILED: 无法扫描 AgentPackage".to_string())?
+    {
+        let entry = entry.map_err(|_| "AGENT_READ_FAILED: 无法枚举 AgentPackage".to_string())?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| "AGENT_READ_FAILED: 无法检查 AgentPackage 内容".to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err("AGENT_PACKAGE_REJECTED: AgentPackage 不允许符号链接".into());
+        }
+        if metadata.is_dir() {
+            collect_package_fingerprint_entries(root, &entry.path(), entries)?;
+        } else if metadata.is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .map_err(|_| "AGENT_PACKAGE_REJECTED: AgentPackage 路径越界".to_string())?
+                .to_string_lossy()
+                .into_owned();
+            let bytes = fs::read(entry.path())
+                .map_err(|_| "AGENT_READ_FAILED: 无法读取 AgentPackage 内容".to_string())?;
+            entries.push((relative, local_service::hash_bytes(&bytes)));
+        } else {
+            return Err("AGENT_PACKAGE_REJECTED: AgentPackage 包含非普通文件".into());
+        }
+    }
+    Ok(())
+}
+
+fn managed_agent_deletion_facts(
+    database: &Path,
+    agents_root: &Path,
+    revisions_root: &Path,
+    agent_id: &str,
+) -> Result<(String, serde_json::Value), String> {
+    validate_agent_id(agent_id)?;
+    let root = agents_root.join(format!("agt_{agent_id}"));
+    let metadata = fs::symlink_metadata(&root)
+        .map_err(|_| "AGENT_NOT_FOUND: 受管 AgentPackage 不存在".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("AGENT_PACKAGE_REJECTED: AgentPackage 必须是受管根内普通目录".into());
+    }
+    let canonical_root = fs::canonicalize(&root)
+        .map_err(|_| "AGENT_READ_FAILED: 无法规范化 AgentPackage".to_string())?;
+    let canonical_parent = fs::canonicalize(agents_root)
+        .map_err(|_| "AGENT_READ_FAILED: 无法规范化受管 Agent 根".to_string())?;
+    if canonical_root.parent() != Some(canonical_parent.as_path()) {
+        return Err("AGENT_PACKAGE_REJECTED: AgentPackage 不在受管根直属目录".into());
+    }
+    local_service::project_managed_agent_at(&root, agent_id)?;
+    let mut entries = Vec::new();
+    collect_package_fingerprint_entries(&root, &root, &mut entries)?;
+    entries.sort();
+    let fingerprint = local_service::hash_bytes(
+        serde_json::to_string(&entries)
+            .map_err(|_| "AGENT_READ_FAILED: 无法生成 AgentPackage 指纹".to_string())?
+            .as_bytes(),
+    );
+    let impacts = domain_store::managed_agent_deletion_impact_at(database, agent_id)?;
+    let workspace_bindings = entries
+        .iter()
+        .filter_map(|(path, _)| {
+            path.strip_prefix("workspaces/")
+                .and_then(|value| value.strip_suffix("/config.yaml"))
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    let outbound_shared = entries
+        .iter()
+        .filter_map(|(path, _)| fs::read_to_string(root.join(path)).ok())
+        .filter_map(|content| serde_yaml::from_str::<serde_json::Value>(&content).ok())
+        .flat_map(|value| {
+            let mut refs = Vec::new();
+            collect_ref_ids(&value, &mut refs);
+            refs
+        })
+        .collect::<Vec<_>>();
+    let prefix = format!("agt_{agent_id}/");
+    let config_revisions = fs::read_dir(revisions_root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| fs::read(entry.path()).ok())
+        .filter_map(|bytes| serde_json::from_slice::<local_service::ConfigRevisionDto>(&bytes).ok())
+        .filter(|revision| {
+            revision.locator.root_kind == local_service::RootKind::Managed
+                && revision
+                    .locator
+                    .relative_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with(&prefix))
+        })
+        .count();
+    let mut static_referrers = Vec::new();
+    if let Ok(packages) = fs::read_dir(agents_root) {
+        for package in packages.flatten() {
+            let name = package.file_name().to_string_lossy().into_owned();
+            if name == format!("agt_{agent_id}") || !name.starts_with("agt_") {
+                continue;
+            }
+            let metadata = match fs::symlink_metadata(package.path()) {
+                Ok(value) if value.is_dir() && !value.file_type().is_symlink() => value,
+                _ => continue,
+            };
+            let _ = metadata;
+            let mut files = Vec::new();
+            if collect_package_fingerprint_entries(&package.path(), &package.path(), &mut files)
+                .is_ok()
+                && files.iter().any(|(path, _)| {
+                    fs::read_to_string(package.path().join(path))
+                        .ok()
+                        .and_then(|content| {
+                            serde_yaml::from_str::<serde_json::Value>(&content).ok()
+                        })
+                        .is_some_and(|value| contains_agent_reference(&value, agent_id))
+                })
+            {
+                static_referrers.push(name.trim_start_matches("agt_").to_string());
+            }
+        }
+    }
+    let raw = impacts;
+    let impact = |id: String, label: &str, detail: String, remediation: Option<&str>| {
+        serde_json::json!({
+            "id": id,
+            "label": label,
+            "detail": detail,
+            "remediation": remediation,
+        })
+    };
+    let organization_relationships = raw["organizationRelationships"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|value| impact(value.into(), "组织关系", value.into(), None))
+        .collect::<Vec<_>>();
+    let cleanup = &raw["cleanup"];
+    let automatic_cleanup = [
+        (
+            "department_memberships",
+            "部门成员索引",
+            cleanup["departmentMemberships"].as_u64().unwrap_or(0),
+        ),
+        (
+            "workspace_agent_indexes",
+            "Workspace Agent 索引",
+            cleanup["workspaceAgentIndexes"].as_u64().unwrap_or(0),
+        ),
+        (
+            "service_grants",
+            "ServiceGrant",
+            cleanup["serviceGrants"].as_u64().unwrap_or(0),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, _, count)| *count > 0)
+    .map(|(id, label, count)| impact(id.into(), label, format!("将自动清理 {count} 项"), None))
+    .collect::<Vec<_>>();
+    let mut blocker_codes = raw["blockers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    blocker_codes.extend(
+        static_referrers
+            .into_iter()
+            .map(|id| format!("agent_static_reference:{id}")),
+    );
+    let review_responsibilities = blocker_codes
+        .iter()
+        .filter(|value| value.starts_with("memory_responsibility_or_history:"))
+        .map(|value| {
+            impact(
+                value.clone(),
+                "正式 Memory 审核责任或审计历史",
+                value.clone(),
+                Some("先转移职责；已有审计历史不能删除"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let formal_memory = if raw["memoryReferences"].as_i64().unwrap_or(0) > 0 {
+        vec![impact(
+            "formal_memory".into(),
+            "正式 Memory",
+            format!("存在 {} 项责任或历史引用", raw["memoryReferences"]),
+            Some("先转移职责；审计历史引用会阻止删除"),
+        )]
+    } else {
+        Vec::new()
+    };
+    let blockers = blocker_codes
+        .into_iter()
+        .map(|value| {
+            impact(
+                value.clone(),
+                "删除阻止项",
+                value,
+                Some("解除该关键职责或引用后重新预览"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let impacts = serde_json::json!({
+        "workspaceBindings": workspace_bindings.into_iter().map(|id| impact(id.clone(), "WorkspaceBinding", id, None)).collect::<Vec<_>>(),
+        "sharedAssetReferences": outbound_shared.into_iter().map(|id| impact(id.clone(), "共享资产引用", id, None)).collect::<Vec<_>>(),
+        "organizationRelationships": organization_relationships,
+        "reviewResponsibilities": review_responsibilities,
+        "formalMemory": formal_memory,
+        "automaticCleanup": automatic_cleanup,
+        "historyAndBackups": [impact("config_revisions".into(), "配置版本", format!("将删除 {config_revisions} 项 ConfigRevision；独立 Backup 不变"), None)],
+        "blockers": blockers,
+    });
+    Ok((fingerprint, impacts))
+}
+
+fn contains_agent_reference(value: &serde_json::Value, agent_id: &str) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object.iter().any(|(key, child)| {
+            ((key == "agentId" || key.ends_with("AgentId")) && child.as_str() == Some(agent_id))
+                || ((key == "agentIds" || key.ends_with("AgentIds"))
+                    && child.as_array().is_some_and(|values| {
+                        values.iter().any(|value| value.as_str() == Some(agent_id))
+                    }))
+                || contains_agent_reference(child, agent_id)
+        }),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|child| contains_agent_reference(child, agent_id)),
+        _ => false,
+    }
+}
+
+fn collect_ref_ids(value: &serde_json::Value, output: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(id) = object.get("refId").and_then(serde_json::Value::as_str) {
+                output.push(id.to_string());
+            }
+            for child in object.values() {
+                collect_ref_ids(child, output);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                collect_ref_ids(child, output);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn identity_asset_facts(
@@ -1717,6 +2061,222 @@ fn list_managed_agents(app: tauri::AppHandle) -> Result<AgentListResult, String>
     list_managed_agents_at(&managed_agents_root(&app)?)
 }
 
+fn deletion_preview_ref(
+    expires_at: i64,
+    request_id: &str,
+    agent_id: &str,
+    fingerprint: &str,
+    impacts: &serde_json::Value,
+) -> String {
+    let digest = local_service::stable_id(
+        "agent-delete-preview",
+        &format!(
+            "{expires_at}:{request_id}:{agent_id}:{fingerprint}:{}",
+            local_service::hash_bytes(impacts.to_string().as_bytes())
+        ),
+    );
+    format!("{expires_at}-{digest}")
+}
+
+fn preview_managed_agent_deletion_at(
+    database: &Path,
+    agents_root: &Path,
+    revisions_root: &Path,
+    request: PreviewManagedAgentDeletionRequest,
+    fixed_expires_at: Option<i64>,
+) -> Result<ManagedAgentDeletionPreviewDto, String> {
+    if !validate_identifier(&request.request_id) {
+        return Err("AGENT_DELETE_INVALID: requestId 无效".into());
+    }
+    let (fingerprint, impacts) =
+        managed_agent_deletion_facts(database, agents_root, revisions_root, &request.agent_id)?;
+    let canonical_agent = local_service::project_managed_agent_at(
+        &agents_root.join(format!("agt_{}", request.agent_id)),
+        &request.agent_id,
+    )?;
+    let canonical_name = canonical_agent
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "AGENT_CANONICAL_INVALID: Agent 名称缺失".to_string())?;
+    agent_service::validate_agent_name(canonical_name)
+        .map_err(|message| format!("AGENT_CANONICAL_INVALID: {message}"))?;
+    let expires_at = fixed_expires_at
+        .unwrap_or_else(|| (Utc::now() + chrono::Duration::minutes(15)).timestamp());
+    let preview_ref = deletion_preview_ref(
+        expires_at,
+        &request.request_id,
+        &request.agent_id,
+        &fingerprint,
+        &impacts,
+    );
+    let can_commit = impacts
+        .get("blockers")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(Vec::is_empty);
+    Ok(ManagedAgentDeletionPreviewDto {
+        confirmation_text: format!("永久删除 {canonical_name}"),
+        expires_at: chrono::DateTime::from_timestamp(expires_at, 0)
+            .ok_or_else(|| "AGENT_DELETE_INVALID: 预览有效期无效".to_string())?
+            .to_rfc3339(),
+        request_id: request.request_id,
+        agent_id: request.agent_id,
+        preview_ref,
+        package_fingerprint: fingerprint,
+        impacts,
+        can_commit,
+    })
+}
+
+#[tauri::command]
+fn preview_managed_agent_deletion(
+    app: tauri::AppHandle,
+    request: PreviewManagedAgentDeletionRequest,
+) -> Result<ManagedAgentDeletionPreviewDto, String> {
+    preview_managed_agent_deletion_at(
+        &domain_database_path(&app)?,
+        &managed_agents_root(&app)?,
+        &revisions_root(&app)?,
+        request,
+        None,
+    )
+}
+
+fn finish_managed_agent_deletion(
+    database: &Path,
+    agents_root: &Path,
+    revisions_root: &Path,
+    operation: &agent_service::AgentRecoveryOperation,
+) -> Result<ManagedAgentDeletionResultDto, String> {
+    let live = agents_root.join(format!("agt_{}", operation.agent_id));
+    let quarantine = agents_root.join(format!(".agt_{}.delete", operation.agent_id));
+    let mut current = operation.clone();
+    if current.status == "prepared" {
+        match (live.exists(), quarantine.exists()) {
+            (true, false) => fs::rename(&live, &quarantine)
+                .map_err(|_| "AGENT_DELETE_FAILED: 无法隔离 AgentPackage".to_string())?,
+            (false, true) => {}
+            _ => return Err("AGENT_DELETE_BLOCKED: AgentPackage 与隔离目录状态冲突".into()),
+        }
+        match agent_service::set_operation_status_at(
+            database,
+            &current.id,
+            "filesystem_committed",
+            None,
+        ) {
+            Ok(operation) => current = operation,
+            Err(error) => {
+                let _ = fs::rename(&quarantine, &live);
+                return Err(error);
+            }
+        }
+    }
+    if current.status == "filesystem_committed" {
+        if !quarantine.exists() || live.exists() {
+            return Err("AGENT_DELETE_BLOCKED: 隔离后的 AgentPackage 状态冲突".into());
+        }
+        if let Err(error) =
+            domain_store::delete_agent_relations_at(database, &current.id, &current.agent_id)
+        {
+            let _ = agent_service::set_operation_status_at(database, &current.id, "blocked", None);
+            let _ = fs::rename(&quarantine, &live);
+            return Err(error);
+        }
+        current = agent_service::get_operation_at(database, &current.id)?;
+    }
+    let mut deleted_config_revisions = 0;
+    let mut safe_reason = None;
+    let mut pending_cleanup = Vec::new();
+    if current.status == "database_committed" {
+        if !quarantine.exists() || live.exists() {
+            safe_reason =
+                Some("Agent 配置已删除，但隔离目录状态需要人工检查。请勿重复删除。".into());
+            pending_cleanup.push("检查受管配置隔离目录".into());
+        } else {
+            match local_service::remove_managed_agent_revisions_at(
+                revisions_root,
+                &current.agent_id,
+            ) {
+                Ok(count) => deleted_config_revisions = count,
+                Err(_) => {
+                    safe_reason =
+                        Some("Agent 配置已删除，但部分配置版本仍待清理。请勿重复删除。".into());
+                    pending_cleanup.push("清理配置版本".into());
+                }
+            }
+            if pending_cleanup.is_empty() && fs::remove_dir_all(&quarantine).is_err() {
+                safe_reason =
+                    Some("Agent 配置已删除，但部分本机文件仍待清理。请勿重复删除。".into());
+                pending_cleanup.push("清理受管配置文件".into());
+            }
+            if pending_cleanup.is_empty() {
+                current = agent_service::complete_delete_operation_at(database, &current.id)?;
+            }
+        }
+    }
+    let status = if current.status == "database_committed" {
+        "cleanup_pending".to_string()
+    } else {
+        current.status.clone()
+    };
+    Ok(ManagedAgentDeletionResultDto {
+        request_id: current.request_id,
+        agent_id: current.agent_id,
+        operation_id: current.id,
+        created_at: current.created_at,
+        status,
+        deleted_config_revisions,
+        safe_reason,
+        pending_cleanup,
+    })
+}
+
+#[tauri::command]
+fn commit_managed_agent_deletion(
+    app: tauri::AppHandle,
+    request: CommitManagedAgentDeletionRequest,
+) -> Result<ManagedAgentDeletionResultDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    let database = domain_database_path(&app)?;
+    let agents_root = managed_agents_root(&app)?;
+    let revisions = revisions_root(&app)?;
+    let expires_at = request
+        .preview_ref
+        .split_once('-')
+        .and_then(|(value, _)| value.parse::<i64>().ok())
+        .ok_or_else(|| "AGENT_DELETE_PREVIEW_INVALID: previewRef 无效".to_string())?;
+    if Utc::now().timestamp() > expires_at {
+        return Err("AGENT_DELETE_PREVIEW_EXPIRED: 删除预览已过期".into());
+    }
+    let preview = preview_managed_agent_deletion_at(
+        &database,
+        &agents_root,
+        &revisions,
+        PreviewManagedAgentDeletionRequest {
+            request_id: request.request_id.clone(),
+            agent_id: request.agent_id.clone(),
+        },
+        Some(expires_at),
+    )?;
+    if !preview.can_commit || request.preview_ref != preview.preview_ref {
+        return Err("AGENT_DELETE_TARGET_CHANGED: 删除目标或影响已变化，请重新预览".into());
+    }
+    if request.confirmation_text != preview.confirmation_text {
+        return Err("AGENT_DELETE_CONFIRMATION_MISMATCH: 确认文字不匹配".into());
+    }
+    let payload =
+        serde_json::json!({ "previewRef": preview.preview_ref, "impacts": preview.impacts });
+    let operation = agent_service::prepare_operation_at(
+        &database,
+        &request.request_id,
+        &request.agent_id,
+        "delete",
+        &preview.package_fingerprint,
+        None,
+        &payload,
+    )?;
+    finish_managed_agent_deletion(&database, &agents_root, &revisions, &operation)
+}
+
 #[tauri::command]
 fn register_external_agent(
     app: tauri::AppHandle,
@@ -2106,6 +2666,18 @@ fn continue_agent_recovery(
     let database = domain_database_path(&app)?;
     let agents_root = managed_agents_root(&app)?;
     let operation = agent_service::get_operation_at(&database, &request.operation_id)?;
+    if operation.operation_kind == "delete" {
+        let _ = finish_managed_agent_deletion(
+            &database,
+            &agents_root,
+            &revisions_root(&app)?,
+            &operation,
+        )?;
+        return Ok(AgentCommitResult::new(
+            agent_service::get_operation_at(&database, &request.operation_id)?,
+            None,
+        ));
+    }
     if matches!(operation.status.as_str(), "completed" | "blocked") {
         let agent = if operation.status == "completed" {
             Some(load_committed_agent(&agents_root, &operation.agent_id)?)
@@ -2438,6 +3010,8 @@ pub fn run() {
             recover_managed_agent_identity,
             restore_managed_agent_identity,
             list_managed_agents,
+            preview_managed_agent_deletion,
+            commit_managed_agent_deletion,
             register_external_agent,
             remove_external_agent,
             list_agents,
@@ -2508,17 +3082,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::{
         asset_name, create_managed_agent_at, image_mime, list_managed_agents_at,
-        load_managed_agent_identity_at, recover_managed_agent_identity_at,
-        restore_managed_agent_identity_at, save_managed_agent_identity_at, validate_agent_id,
-        validate_avatar, validate_identifier, AgentPackageFile, AvatarChange,
-        CreateManagedAgentRequest, DiagnosticDto, LocalServiceEventDto,
+        load_managed_agent_identity_at, preview_managed_agent_deletion_at,
+        recover_managed_agent_identity_at, restore_managed_agent_identity_at,
+        save_managed_agent_identity_at, validate_agent_id, validate_avatar, validate_identifier,
+        AgentPackageFile, AvatarChange, CreateManagedAgentRequest, DiagnosticDto,
+        LocalServiceEventDto, PreviewManagedAgentDeletionRequest,
         RecoverManagedAgentIdentityRequest, RestoreManagedAgentIdentityRequest,
         SaveManagedAgentIdentityRequest, SaveManagedAgentIdentityResult, AGENT_AVATAR_LIMIT,
-        COMMAND_IDS,
+        COMMAND_IDS, REQUIRED_AGENT_PACKAGE_FILES,
     };
 
     #[test]
@@ -2782,6 +3360,114 @@ mod tests {
         assert!(validate_avatar(&vec![0; AGENT_AVATAR_LIMIT + 1]).is_err());
     }
 
+    fn minimal_agent_package_files(manifest: &str) -> Vec<AgentPackageFile> {
+        [
+            ("agent.yaml", manifest),
+            ("instructions.md", ""),
+            (
+                "config/context.yaml",
+                "schemaVersion: 1\ncontextPolicy:\n  enabled: false\n  triggerRatio: 0.8\n  targetRatio: 0.5\n  protectRecentTurns: 6\n  protectOpeningTurns: 2\ncontextWindowTokens: 200000\noutputProfileId: \"\"\noutputParameterBindings: []\n",
+            ),
+            ("config/skills.yaml", "schemaVersion: 1\nskills:\n  []\n"),
+            ("config/rules.yaml", "schemaVersion: 1\nrules:\n  []\n"),
+            ("config/mcp.yaml", "schemaVersion: 1\nmcp:\n  []\n"),
+            (
+                "config/permissions.yaml",
+                "schemaVersion: 1\npermissions:\n  files: \"未授予\"\n  commands: \"未授予\"\n  network: \"未授予\"\n  delegation: \"未授予\"\n",
+            ),
+            ("config/sop.yaml", "schemaVersion: 1\nsop:\n  []\n"),
+            (
+                "config/orchestration.yaml",
+                "schemaVersion: 1\norchestration: { enabled: false, maxDelegationDepth: 0, allowedAgentIds: [], allowedRoleIds: [], allowedDepartmentIds: [], requireWorkspaceBinding: true, requireSopMatch: true, requireServiceGrantForCrossDepartment: true, escalationConditions: [], prohibitions: [] }\n",
+            ),
+            ("config/hooks.yaml", "schemaVersion: 1\nhooks: []\n"),
+            ("config/commands.yaml", "schemaVersion: 1\ncommands: []\n"),
+        ]
+        .into_iter()
+        .map(|(path, content)| AgentPackageFile {
+            path: path.into(),
+            content: content.into(),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn managed_agent_creation_requires_complete_unique_canonical_files() {
+        let manifest = "schemaVersion: 1\nid: test-agent\n";
+        for required in REQUIRED_AGENT_PACKAGE_FILES {
+            let root = tempfile::tempdir().unwrap();
+            let files = minimal_agent_package_files(manifest)
+                .into_iter()
+                .filter(|file| file.path != *required)
+                .collect();
+            let result = create_managed_agent_at(
+                root.path(),
+                CreateManagedAgentRequest {
+                    agent_id: "test-agent".into(),
+                    agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent", "avatarPath": null }),
+                    files,
+                    avatar_bytes: None,
+                },
+            );
+            assert!(
+                result.err().unwrap().contains(&format!("缺少 {required}")),
+                "{required} 缺失时应拒绝创建"
+            );
+            assert!(!root.path().join("agt_test-agent").exists());
+            assert!(!root.path().join(".agt_test-agent.staging").exists());
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let mut files = minimal_agent_package_files(manifest);
+        files.push(
+            files
+                .iter()
+                .find(|file| file.path == "config/rules.yaml")
+                .unwrap()
+                .clone(),
+        );
+        let result = create_managed_agent_at(
+            root.path(),
+            CreateManagedAgentRequest {
+                agent_id: "test-agent".into(),
+                agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent", "avatarPath": null }),
+                files,
+                avatar_bytes: None,
+            },
+        );
+        assert!(result
+            .err()
+            .unwrap()
+            .contains("文件路径重复：config/rules.yaml"));
+        assert!(!root.path().join("agt_test-agent").exists());
+    }
+
+    #[test]
+    fn managed_agent_creation_validates_staging_before_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = "schemaVersion: 1\nid: test-agent\n";
+        let mut files = minimal_agent_package_files(manifest);
+        files
+            .iter_mut()
+            .find(|file| file.path == "config/rules.yaml")
+            .unwrap()
+            .content = "rules: [".into();
+
+        let result = create_managed_agent_at(
+            root.path(),
+            CreateManagedAgentRequest {
+                agent_id: "test-agent".into(),
+                agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent", "avatarPath": null }),
+                files,
+                avatar_bytes: None,
+            },
+        );
+
+        assert!(result.err().unwrap().contains("AGENT_CANONICAL_INVALID"));
+        assert!(!root.path().join("agt_test-agent").exists());
+        assert!(!root.path().join(".agt_test-agent.staging").exists());
+    }
+
     #[test]
     fn managed_agent_identity_saves_revision_and_checks_baseline() {
         let root = tempfile::tempdir().expect("应创建隔离目录");
@@ -2790,11 +3476,8 @@ mod tests {
             root.path(),
             CreateManagedAgentRequest {
                 agent_id: "test-agent".into(),
-                agent: serde_json::json!({ "id": "test-agent", "avatarPath": "avatar.png" }),
-                files: vec![AgentPackageFile {
-                    path: "agent.yaml".into(),
-                    content: manifest.into(),
-                }],
+                agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent", "avatarPath": "avatar.png" }),
+                files: minimal_agent_package_files(manifest),
                 avatar_bytes: Some(b"\x89PNG\r\n\x1a\nrest".to_vec()),
             },
         )
@@ -2815,7 +3498,7 @@ mod tests {
             SaveManagedAgentIdentityRequest {
                 request_id: "save-identity".into(),
                 agent_id: "test-agent".into(),
-                agent: serde_json::json!({ "id": "test-agent", "avatarPath": null }),
+                agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent", "avatarPath": null }),
                 manifest: updated.into(),
                 expected_baseline: loaded.baseline_ref.clone(),
                 base_content: loaded.canonical_content.clone(),
@@ -2852,7 +3535,7 @@ mod tests {
             SaveManagedAgentIdentityRequest {
                 request_id: "save-conflict".into(),
                 agent_id: "test-agent".into(),
-                agent: serde_json::json!({ "id": "test-agent" }),
+                agent: serde_json::json!({ "id": "test-agent", "name": "测试 Agent" }),
                 manifest: "schemaVersion: 1\nid: test-agent\nname: proposed\n".into(),
                 expected_baseline: reloaded.baseline_ref,
                 base_content: reloaded.canonical_content,
@@ -2910,6 +3593,128 @@ mod tests {
         )
         .unwrap();
         root.join("agt_alpha")
+    }
+
+    #[test]
+    fn deletion_preview_accepts_active_agent_and_changes_with_target() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        fs::create_dir(&agents).unwrap();
+        let package = canonical_agent_fixture(&agents);
+        let database = root.path().join("bandi.db");
+        let revisions = root.path().join("revisions");
+        let request = || PreviewManagedAgentDeletionRequest {
+            request_id: "delete-alpha".into(),
+            agent_id: "alpha".into(),
+        };
+
+        let first = preview_managed_agent_deletion_at(
+            &database,
+            &agents,
+            &revisions,
+            request(),
+            Some(1_900_000_000),
+        )
+        .unwrap();
+        assert!(first.can_commit);
+        assert_eq!(first.confirmation_text, "永久删除 Canonical");
+        assert_eq!(first.agent_id, "alpha");
+        assert_eq!(first.impacts["workspaceBindings"][0]["id"], "ws-1");
+        let manifest = fs::read_to_string(package.join("agent.yaml"))
+            .unwrap()
+            .replace("name: Canonical", "name: Renamed");
+        fs::write(package.join("agent.yaml"), manifest).unwrap();
+        let second = preview_managed_agent_deletion_at(
+            &database,
+            &agents,
+            &revisions,
+            request(),
+            Some(1_900_000_000),
+        )
+        .unwrap();
+        assert_eq!(second.confirmation_text, "永久删除 Renamed");
+        assert_eq!(second.agent_id, "alpha");
+        assert_ne!(first.preview_ref, second.preview_ref);
+    }
+
+    #[test]
+    fn managed_agent_deletion_quarantines_and_completes() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        fs::create_dir(&agents).unwrap();
+        let package = canonical_agent_fixture(&agents);
+        let manifest = fs::read_to_string(package.join("agent.yaml"))
+            .unwrap()
+            .replace("status: active", "status: archived");
+        fs::write(package.join("agent.yaml"), manifest).unwrap();
+        let database = root.path().join("bandi.db");
+        let revisions = root.path().join("revisions");
+        let (fingerprint, impacts) =
+            super::managed_agent_deletion_facts(&database, &agents, &revisions, "alpha").unwrap();
+        let operation = crate::agent_service::prepare_operation_at(
+            &database,
+            "delete-alpha",
+            "alpha",
+            "delete",
+            &fingerprint,
+            None,
+            &serde_json::json!({"impacts": impacts}),
+        )
+        .unwrap();
+
+        let result =
+            super::finish_managed_agent_deletion(&database, &agents, &revisions, &operation)
+                .unwrap();
+
+        assert_eq!(result.status, "completed");
+        assert!(!agents.join("agt_alpha").exists());
+        assert!(!agents.join(".agt_alpha.delete").exists());
+    }
+
+    #[test]
+    fn managed_agent_deletion_reports_cleanup_pending_after_database_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        fs::create_dir(&agents).unwrap();
+        let package = canonical_agent_fixture(&agents);
+        let manifest = fs::read_to_string(package.join("agent.yaml"))
+            .unwrap()
+            .replace("status: active", "status: archived");
+        fs::write(package.join("agent.yaml"), manifest).unwrap();
+        let database = root.path().join("bandi.db");
+        let revisions = root.path().join("revisions");
+        fs::create_dir(&revisions).unwrap();
+        let (fingerprint, impacts) =
+            super::managed_agent_deletion_facts(&database, &agents, &revisions, "alpha").unwrap();
+        let operation = crate::agent_service::prepare_operation_at(
+            &database,
+            "delete-alpha-pending",
+            "alpha",
+            "delete",
+            &fingerprint,
+            None,
+            &serde_json::json!({"impacts": impacts}),
+        )
+        .unwrap();
+        fs::remove_dir(&revisions).unwrap();
+        fs::write(&revisions, "not a directory").unwrap();
+
+        let result =
+            super::finish_managed_agent_deletion(&database, &agents, &revisions, &operation)
+                .unwrap();
+
+        assert_eq!(result.status, "cleanup_pending");
+        assert_eq!(result.operation_id, operation.id);
+        assert_eq!(result.pending_cleanup, vec!["清理配置版本"]);
+        assert!(result.safe_reason.unwrap().contains("请勿重复删除"));
+        assert!(!agents.join("agt_alpha").exists());
+        assert!(agents.join(".agt_alpha.delete").exists());
+        assert_eq!(
+            crate::agent_service::get_operation_at(&database, &operation.id)
+                .unwrap()
+                .status,
+            "database_committed"
+        );
     }
 
     #[test]
@@ -3076,10 +3881,7 @@ mod tests {
             CreateManagedAgentRequest {
                 agent_id: "test-agent".into(),
                 agent: serde_json::json!({ "id": "test-agent", "name": "original", "avatarPath": null }),
-                files: vec![AgentPackageFile {
-                    path: "agent.yaml".into(),
-                    content: manifest.into(),
-                }],
+                files: minimal_agent_package_files(manifest),
                 avatar_bytes: None,
             },
         )

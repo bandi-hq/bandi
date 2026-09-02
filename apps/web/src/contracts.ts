@@ -27,6 +27,52 @@ export type AgentListResult = {
   diagnostics: Diagnostic[]
 }
 
+export type ManagedAgentDeletionImpactDto = {
+  id: Id
+  label: string
+  detail: string
+  remediation?: string
+}
+
+export type ManagedAgentDeletionImpactsDto = {
+  workspaceBindings: ManagedAgentDeletionImpactDto[]
+  sharedAssetReferences: ManagedAgentDeletionImpactDto[]
+  organizationRelationships: ManagedAgentDeletionImpactDto[]
+  reviewResponsibilities: ManagedAgentDeletionImpactDto[]
+  formalMemory: ManagedAgentDeletionImpactDto[]
+  automaticCleanup: ManagedAgentDeletionImpactDto[]
+  historyAndBackups: ManagedAgentDeletionImpactDto[]
+  blockers: ManagedAgentDeletionImpactDto[]
+}
+
+export type PreviewManagedAgentDeletionRequest = {
+  requestId: Id
+  agentId: Id
+}
+
+export type ManagedAgentDeletionPreviewDto = PreviewManagedAgentDeletionRequest & {
+  previewRef: Id
+  confirmationText: string
+  expiresAt: Timestamp
+  packageFingerprint: string
+  impacts: ManagedAgentDeletionImpactsDto
+  canCommit: boolean
+}
+
+export type CommitManagedAgentDeletionRequest = PreviewManagedAgentDeletionRequest & {
+  previewRef: Id
+  confirmationText: string
+}
+
+export type ManagedAgentDeletionResultDto = PreviewManagedAgentDeletionRequest & {
+  operationId: Id
+  createdAt: Timestamp
+  status: 'completed' | 'cleanup_pending'
+  deletedConfigRevisions: number
+  safeReason?: string
+  pendingCleanup: string[]
+}
+
 export type CreateWorkspaceBindingRequest = {
   requestId: Id
   agentId: Id
@@ -234,13 +280,14 @@ export type AgentRecoveryStatus =
   | 'filesystem_committed'
   | 'revision_pending'
   | 'organization_pending'
+  | 'database_committed'
   | 'blocked'
   | 'completed'
 
 export type AgentRecoveryOperationSummaryDto = {
   id: Id
   agentId: Id
-  operationKind: 'create' | 'identity_update'
+  operationKind: 'create' | 'identity_update' | 'delete'
   status: AgentRecoveryStatus
   createdAt: Timestamp
   completedAt?: Timestamp

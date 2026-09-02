@@ -57,6 +57,8 @@
     "allow-recover-managed-agent-identity",
     "allow-restore-managed-agent-identity",
     "allow-list-managed-agents",
+    "allow-preview-managed-agent-deletion",
+    "allow-commit-managed-agent-deletion",
     "allow-register-external-agent",
     "allow-remove-external-agent",
     "allow-list-agents",

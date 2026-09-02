@@ -65,6 +65,7 @@ describe('组织页', () => {
     expect(screen.getByRole('heading', { name: child.name })).toBeInTheDocument()
     expect(screen.getByText(child.mission)).toBeInTheDocument()
     expect(screen.getByText('部门职责')).toBeInTheDocument()
+    expect(screen.getByText('部门层级')).toBeInTheDocument()
     expect(screen.getByText('岗位设置')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '添加岗位' })).toBeInTheDocument()
     expect(screen.getByText('部门成员')).toBeInTheDocument()
@@ -142,6 +143,17 @@ describe('组织页', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '保存演示配置' }))
     fireEvent.click(screen.getByRole('button', { name: '编辑部门' }))
     expect(within(screen.getByRole('dialog', { name: '编辑部门' })).getByRole('combobox', { name: '部门主管' })).toHaveValue(departmentManager.id)
+  })
+
+  it('岗位重名错误具体说明并关联名称字段', () => {
+    renderOrganization(`/organization?company=${child.companyId}&department=${child.id}`)
+    fireEvent.click(screen.getByRole('button', { name: '添加岗位' }))
+    const dialog = screen.getByRole('dialog', { name: '添加岗位' })
+    const existing = initialState.roles.find((role) => role.companyId === child.companyId)!
+    const nameInput = within(dialog).getByRole('textbox', { name: '岗位名称' })
+    fireEvent.change(nameInput, { target: { value: existing.name } })
+    expect(nameInput).toHaveAttribute('aria-describedby', 'role-name-error')
+    expect(within(dialog).getByText(`同一公司内已有名为“${existing.name}”的岗位，请使用其他名称。`)).toHaveAttribute('id', 'role-name-error')
   })
 
   it('Desktop 岗位使用后端稳定 ID 并回写规范化结果', async () => {

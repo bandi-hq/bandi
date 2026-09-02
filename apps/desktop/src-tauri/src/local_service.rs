@@ -2806,6 +2806,74 @@ pub(crate) fn list_revisions_at(
     Ok(revisions)
 }
 
+pub(crate) fn remove_managed_agent_revisions_at(
+    revisions_root: &Path,
+    agent_id: &str,
+) -> Result<usize, String> {
+    if !validate_identifier(agent_id) {
+        return Err("Agent 标识无效".into());
+    }
+    let entries = match fs::read_dir(revisions_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(_) => return Err("无法读取 ConfigRevision 目录".into()),
+    };
+    let prefix = format!("agt_{agent_id}/");
+    let mut revision_ids = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|_| "无法检查 ConfigRevision 记录".to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 1024 * 1024
+        {
+            return Err("ConfigRevision 记录不安全，拒绝清理".into());
+        }
+        let revision: ConfigRevisionDto = serde_json::from_slice(
+            &fs::read(&path).map_err(|_| "无法读取 ConfigRevision".to_string())?,
+        )
+        .map_err(|_| "ConfigRevision 记录无效，拒绝清理".to_string())?;
+        if revision.locator.root_kind == RootKind::Managed
+            && revision
+                .locator
+                .relative_path
+                .as_deref()
+                .is_some_and(|value| value.starts_with(&prefix))
+        {
+            revision_ids.push(revision.id);
+        }
+    }
+    for revision_id in &revision_ids {
+        for extension in ["json", "content"] {
+            let path = revisions_root.join(format!("{revision_id}.{extension}"));
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                Err(_) => return Err("无法检查 ConfigRevision 内容".into()),
+            };
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err("ConfigRevision 内容不安全，拒绝清理".into());
+            }
+        }
+    }
+    for revision_id in &revision_ids {
+        for (extension, error_message) in [
+            ("content", "无法删除 ConfigRevision 内容"),
+            ("json", "无法删除 ConfigRevision 索引"),
+        ] {
+            let path = revisions_root.join(format!("{revision_id}.{extension}"));
+            if let Err(error) = fs::remove_file(path) {
+                if error.kind() != ErrorKind::NotFound {
+                    return Err(error_message.into());
+                }
+            }
+        }
+    }
+    Ok(revision_ids.len())
+}
+
 pub(crate) fn read_revision_content_at(
     revisions_root: &Path,
     revision_id: &str,

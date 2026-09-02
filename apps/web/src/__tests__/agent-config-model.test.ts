@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, parseAgentComponentRefs, parseAgentContextConfig, parseAgentMcpRefs, parseAgentOrchestrationPolicy, parseAgentPermissions, parseAgentRuleRefs, parseAgentSkillRefs, parseAgentSopRefs, parseWorkspaceBindingConfig, serializeAgentConfig, snapshotAgentConfig, validateContextPolicy, validateContextWindowTokens, workspaceConfigPath } from '../agent-config-model'
+import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, normalizeAgentName, parseAgentComponentRefs, parseAgentContextConfig, parseAgentMcpRefs, parseAgentOrchestrationPolicy, parseAgentPermissions, parseAgentRuleRefs, parseAgentSkillRefs, parseAgentSopRefs, parseWorkspaceBindingConfig, serializeAgentConfig, snapshotAgentConfig, validateAgentName, validateContextPolicy, validateContextWindowTokens, workspaceConfigPath } from '../agent-config-model'
 import { initialAgents } from '../domain'
 
 const agent = initialAgents.find((item) => item.id === 'zhouce')!
 
 describe('Agent 配置模型', () => {
+  it('统一校验和规范化 Agent 名称', () => {
+    for (const value of ['周策', '测试工程师 2', 'A'.repeat(40)]) expect(validateAgentName(value)).toBeUndefined()
+    for (const value of ['', '周', '1'.repeat(41), '123456', '１２３', '---', '！！！', '550e8400-e29b-41d4-a716-446655440000', 'agent-550e8400-e29b-41d4-a716-446655440000']) expect(validateAgentName(value)).toBeDefined()
+    expect(normalizeAgentName('  测试工程师 2  ')).toBe('测试工程师 2')
+    const identity = snapshotAgentConfig(agent, 'identity')!
+    expect(identity.kind).toBe('identity')
+    if (identity.kind !== 'identity') throw new Error('身份快照类型错误')
+    expect(applyAgentConfig(agent, { ...identity, value: { ...identity.value, name: '123' } })).toBeUndefined()
+    expect(isAgentConfigPayload({ ...identity, value: { ...identity.value, name: '---' } })).toBe(false)
+  })
+
   it('把普通配置映射到唯一规范路径', () => {
     expect(getAgentConfigPath({ kind: 'instructions', value: 'x' })).toBe('instructions.md')
     expect(getAgentConfigPath({ kind: 'rules', value: [] })).toBe('config/rules.yaml')

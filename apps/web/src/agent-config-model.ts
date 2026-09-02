@@ -59,6 +59,23 @@ export const defaultContextPolicy: ContextPolicy = {
 
 export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
+const agentUuidPattern = /^(?:agent[-_])?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+
+export function normalizeAgentName(value: string): string {
+  return value.trim()
+}
+
+export function validateAgentName(value: string): string | undefined {
+  const name = normalizeAgentName(value)
+  const length = Array.from(name).length
+  if (!length) return '请输入 Agent 名称。'
+  if (length < 2 || length > 40) return '名称应为 2～40 个字符。'
+  if (agentUuidPattern.test(name)) return '名称不能使用 UUID 或系统生成的 Agent ID。'
+  if (/^\p{N}+$/u.test(name)) return '名称不能全部是数字。'
+  if (!/\p{L}/u.test(name)) return '名称至少应包含一个中文或英文字母。'
+  return undefined
+}
+
 export function validateContextWindowTokens(value: number): string[] {
   return Number.isInteger(value) && value >= 1_000 && value <= 2_000_000
     ? []
@@ -327,7 +344,7 @@ export function snapshotAgentConfig(agent: FullAgent, kind: AgentConfigPayload['
 
 export function applyAgentConfig(agent: FullAgent, payload: AgentConfigPayload): FullAgent | undefined {
   switch (payload.kind) {
-    case 'identity': return payload.value.id !== agent.id || payload.value.schemaVersion !== AGENT_PACKAGE_SCHEMA_VERSION ? undefined : { ...agent, ...payload.value }
+    case 'identity': return payload.value.id !== agent.id || payload.value.schemaVersion !== AGENT_PACKAGE_SCHEMA_VERSION || validateAgentName(payload.value.name) ? undefined : { ...agent, ...payload.value, name: normalizeAgentName(payload.value.name) }
     case 'instructions': return { ...agent, instructions: payload.value }
     case 'context': return validateContextPolicy(payload.value.policy).length || validateContextWindowTokens(payload.value.contextWindowTokens).length ? undefined : { ...agent, contextPolicy: { ...payload.value.policy }, contextWindowTokens: payload.value.contextWindowTokens, outputProfileId: payload.value.outputProfileId, outputParameterBindings: payload.value.outputParameterBindings ?? [] }
     case 'skills': return { ...agent, skillRefs: [...payload.value] }
@@ -490,6 +507,7 @@ export function isAgentConfigPayload(value: unknown): value is AgentConfigPayloa
     const organizationCount = organizationFields.filter((key) => typeof payloadValue[key] === 'string' && payloadValue[key] !== '').length
     return payloadValue.schemaVersion === AGENT_PACKAGE_SCHEMA_VERSION
       && ['id', 'name', 'mission'].every((key) => typeof payloadValue[key] === 'string')
+      && !validateAgentName(String(payloadValue.name))
       && (organizationCount === 0 || organizationCount === organizationFields.length)
       && organizationFields.every((key) => payloadValue[key] === undefined || typeof payloadValue[key] === 'string')
       && ['active', 'inactive', 'archived'].includes(String(payloadValue.status))

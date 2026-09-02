@@ -268,7 +268,7 @@ export type MemorySpace = {
   revision: string
   path: string
 }
-export type MemoryCandidateStatus = '待审核' | '要求修改' | '已驳回' | '已批准' | '已写入演示 Revision' | '已写入正式 Revision'
+export type MemoryCandidateStatus = '待审核' | '要求修改' | '已驳回' | '已批准' | '已写入演示版本' | '已保存为正式版本'
 export type MemoryCandidate = {
   id: string
   spaceId: string

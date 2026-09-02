@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-managed-agent-deletion"
+description = "Enables the commit_managed_agent_deletion command without any pre-configured scope."
+commands.allow = ["commit_managed_agent_deletion"]
+
+[[permission]]
+identifier = "deny-commit-managed-agent-deletion"
+description = "Denies the commit_managed_agent_deletion command without any pre-configured scope."
+commands.deny = ["commit_managed_agent_deletion"]

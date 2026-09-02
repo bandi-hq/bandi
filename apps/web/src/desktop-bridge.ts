@@ -1,7 +1,7 @@
 import type { AppCommandId } from './app-commands'
 import type { RequestClientHandoff } from './client-adapters'
 import type { FullAgent } from './domain'
-import type { AgentCommitResultDto, AgentListResult, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ClaudeAgentPreviewDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult } from './contracts'
+import type { AgentCommitResultDto, AgentListResult, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ClaudeAgentPreviewDto, CommitManagedAgentDeletionRequest, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentDeletionPreviewDto, ManagedAgentDeletionResultDto, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, PreviewManagedAgentDeletionRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult } from './contracts'
 import type { Company, FullDepartment, FullWorkspace, Role, ServiceGrant } from './domain'
 
 const commandEvent = 'bandi://app-command'
@@ -419,4 +419,16 @@ export async function registerExternalAgent(agent: FullAgent, selectedRoot: stri
 
 export async function listAgents(): Promise<AgentListResult> {
   return invokeDesktop('list_agents', {})
+}
+
+export async function previewManagedAgentDeletion(
+  input: PreviewManagedAgentDeletionRequest,
+): Promise<ManagedAgentDeletionPreviewDto> {
+  return invokeDesktop('preview_managed_agent_deletion', { request: input })
+}
+
+export async function commitManagedAgentDeletion(
+  input: CommitManagedAgentDeletionRequest,
+): Promise<ManagedAgentDeletionResultDto> {
+  return invokeDesktop('commit_managed_agent_deletion', { request: input })
 }

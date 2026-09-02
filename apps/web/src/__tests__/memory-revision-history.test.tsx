@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as desktopBridge from '../desktop-bridge'
 import { MemoryRevisionHistory } from '../pages/agents/memory-revision-history'
 import type { MemoryRevisionDto } from '../contracts'
+import { formatDisplayTimestamp } from '../presentation'
 
 const hash = `sha256:${'a'.repeat(64)}` as const
 const revision: MemoryRevisionDto = {
@@ -54,11 +55,15 @@ describe('正式记忆版本历史', () => {
     render(<MemoryRevisionHistory spaceId="memory-agent-zhouce" currentRevisionId={revision.id} />)
     fireEvent.click(screen.getByRole('button', { name: '正式版本历史' }))
 
-    expect(await screen.findByText(revision.id)).toBeInTheDocument()
+    expect(await screen.findByText(formatDisplayTimestamp(revision.writtenAt))).toBeInTheDocument()
     expect(screen.getByText('当前正式版本')).toBeInTheDocument()
+    expect(screen.getByText(revision.id).closest('details')).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText('版本详情'))
+    expect(screen.getByText(revision.id)).toBeInTheDocument()
     expect(screen.getByText(revision.parentRevisionId!)).toBeInTheDocument()
     expect(screen.getByText(revision.candidateId)).toBeInTheDocument()
-    expect(screen.getByText(revision.reviewPrincipal.kind === 'agent' ? revision.reviewPrincipal.agentId : revision.reviewPrincipal.companyId)).toBeInTheDocument()
+    expect(screen.queryByText(revision.writtenAt)).not.toBeInTheDocument()
+    expect(screen.getByText(new RegExp(revision.reviewPrincipal.kind === 'agent' ? revision.reviewPrincipal.agentId : revision.reviewPrincipal.companyId))).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /恢复/ })).not.toBeInTheDocument()
   })
 

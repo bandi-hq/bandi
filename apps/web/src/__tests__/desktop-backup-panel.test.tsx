@@ -89,17 +89,20 @@ describe('Desktop Backup 面板', () => {
   it('准确说明快照只包含 Bandi 发现并选中的受管配置文件', async () => {
     render(<DesktopBackupPanel />)
 
-    expect(await screen.findByText(/快照只包含 Bandi 当前发现并由你选中的可写受管配置文件/)).toBeInTheDocument()
-    expect(screen.getByText(/不包含公司、部门、岗位、工作区注册信息、服务授权或领域数据/)).toBeInTheDocument()
-    expect(screen.getByText(/当前也不提供正式记忆文件/)).toBeInTheDocument()
+    expect(await screen.findByText(/保存所选受管配置文件/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('查看安全范围'))
+    expect(screen.getByText(/只包含 Bandi 当前发现并由你选中的可写受管配置文件/)).toBeInTheDocument()
+    expect(screen.getByText(/不包含公司、部门、岗位、工作区注册信息、服务授权、领域数据或正式记忆文件/)).toBeInTheDocument()
+    expect(screen.getByText(/凭据、Token、Cookie、私钥、钥匙串和执行过程也不会加入/)).toBeInTheDocument()
   })
 
   it('从本地服务加载历史，并只用稳定资产 ID 创建快照', async () => {
     render(<DesktopBackupPanel />)
     await screen.findByText('手动快照')
+    expect(screen.queryByText(snapshot.createdAt)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '创建本地快照' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /instructions/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /主指令/ }))
     fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
 
     await waitFor(() => expect(bridge.createBackupSnapshot).toHaveBeenCalledWith({
@@ -117,6 +120,7 @@ describe('Desktop Backup 面板', () => {
     fireEvent.click(screen.getByRole('button', { name: '预览恢复' }))
     fireEvent.click(screen.getByRole('button', { name: '校验并预览' }))
     await screen.findByText('可恢复')
+    expect(screen.queryByText('2026-09-01T00:10:00Z', { exact: false })).not.toBeInTheDocument()
 
     const restoreButton = screen.getByRole('button', { name: '确认恢复' })
     expect(restoreButton).toBeDisabled()
