@@ -3,6 +3,7 @@ import {
   parseMainMenuLayoutPreference,
   type MainMenuLayoutPreference,
 } from './navigation-layout'
+import type { TerminalId } from './terminal-model'
 
 export const UI_PREFERENCES_STORAGE_KEY = 'bandi-ui-preferences-v1'
 export const LEGACY_THEME_STORAGE_KEY = 'bandi-theme'
@@ -34,6 +35,7 @@ export type UiPreferences = {
   backgroundStyle: BackgroundStyle
   backgroundFit: BackgroundFit
   backgroundDim: number
+  terminal: TerminalId
   shellLabel?: string
   logoAsset?: LocalUiAssetRef
   backgroundAsset?: LocalUiAssetRef
@@ -51,6 +53,7 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   backgroundStyle: 'plain',
   backgroundFit: 'cover',
   backgroundDim: 36,
+  terminal: 'terminal',
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -95,6 +98,7 @@ export function parseUiPreferences(value: unknown): UiPreferences {
     backgroundStyle: oneOf(value.backgroundStyle, ['plain', 'soft'], DEFAULT_UI_PREFERENCES.backgroundStyle),
     backgroundFit: oneOf(value.backgroundFit, ['cover', 'contain'], DEFAULT_UI_PREFERENCES.backgroundFit),
     backgroundDim: dim,
+    terminal: oneOf(value.terminal, ['system', 'terminal', 'iterm2', 'warp', 'ghostty', 'wezterm', 'kitty', 'alacritty'], DEFAULT_UI_PREFERENCES.terminal),
     shellLabel: normalizeShellLabel(value.shellLabel),
     logoAsset: parseAssetRef(value.logoAsset, 'logo'),
     backgroundAsset: parseAssetRef(value.backgroundAsset, 'background'),

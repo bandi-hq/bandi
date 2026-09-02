@@ -93,10 +93,15 @@ export function getAgentConfigStatus(state: Pick<SelectorState, 'agents' | 'work
   if (agent.packageSchema.compatibility === 'future') issues.push({ code: 'package-future', label: 'AgentPackage 来自更高版本，禁止降级保存' })
   if (agent.packageSchema.compatibility === 'unverified') issues.push({ code: 'package-unverified', label: '外部 AgentPackage 未读取和验证，仅保留引用' })
   if (!getAgentPackageEditability(agent.packageSchema).editable && agent.packageSchema.compatibility === 'current') issues.push({ code: 'manifest-invalid', label: 'AgentPackage schema 元数据不一致' })
-  const role = state.roles.find((item) => item.id === agent.roleId)
-  if (!role) issues.push({ code: 'role-missing', label: `Role ${agent.roleId} 不存在` })
-  else if (role.companyId !== agent.companyId || (role.departmentId && role.departmentId !== agent.primaryDepartmentId)) issues.push({ code: 'role-scope-mismatch', label: `Role ${role.name} 与 Agent 的公司或部门作用域不匹配` })
-  if (!agent.ruleRefs.length) issues.push({ code: 'missing-rules', label: 'Agent 未引用 Rules' })
+  const organizationFields = [agent.roleId, agent.companyId, agent.primaryDepartmentId]
+  const organizationCount = organizationFields.filter(Boolean).length
+  if (organizationCount > 0 && organizationCount < organizationFields.length) {
+    issues.push({ code: 'role-scope-mismatch', label: '组织关联必须同时包含公司、主属部门和岗位' })
+  } else if (agent.roleId) {
+    const role = state.roles.find((item) => item.id === agent.roleId)
+    if (!role) issues.push({ code: 'role-missing', label: `Role ${agent.roleId} 不存在` })
+    else if (role.companyId !== agent.companyId || (role.departmentId && role.departmentId !== agent.primaryDepartmentId)) issues.push({ code: 'role-scope-mismatch', label: `Role ${role.name} 与 Agent 的公司或部门作用域不匹配` })
+  }
   const missingRootRefs = missingReferences([...agent.ruleRefs, ...agent.skillRefs, ...agent.mcpRefs, ...agent.sopRefs], state.assets)
   if (missingRootRefs.length) issues.push({ code: 'missing-reference', label: `存在失效引用：${missingRootRefs.join('、')}` })
   const orchestrationIssues = validateOrchestrationPolicy(agent.orchestrationPolicy)

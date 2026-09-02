@@ -28,6 +28,7 @@ function SnapshotProbe() {
     <span data-testid="agents">{state.agents.map((item) => `${item.name}:${item.serviceGrants.length}`).join(',')}</span>
     <span data-testid="workspaces">{state.workspaces.map((item) => item.name).join(',')}</span>
     <span data-testid="hydration">{state.hydration.managedAgents},{state.hydration.organization}</span>
+    <span data-testid="hydration-errors">{Object.entries(state.hydrationErrors).map(([key, value]) => `${key}:${value}`).join('|')}</span>
     <span data-testid="onboarding">{state.onboarding.status}</span>
     {state.notice && <span role="alert">{state.notice.title}：{state.notice.description}</span>}
   </>
@@ -84,7 +85,7 @@ describe('Desktop 组织事实恢复', () => {
     expect(screen.getByTestId('agents')).toHaveTextContent('持久化 Agent:1')
     expect(screen.getByTestId('workspaces')).toBeEmptyDOMElement()
     expect(screen.getByTestId('hydration')).toHaveTextContent('succeeded,succeeded')
-    expect(screen.getByTestId('onboarding')).toHaveTextContent('active')
+    expect(screen.getByTestId('onboarding')).toHaveTextContent('completed')
   })
 
   it('受管 Agent discovery 是 authoritative replace，不保留旧 Agent', async () => {
@@ -105,10 +106,11 @@ describe('Desktop 组织事实恢复', () => {
 
     expect(await screen.findByTestId('agents')).toHaveTextContent('真实 Agent:0')
     expect(screen.getByTestId('hydration')).toHaveTextContent('succeeded,failed')
-    expect(screen.getByRole('alert')).toHaveTextContent('无法恢复本机组织配置事实：organization unavailable')
+    expect(screen.getByTestId('hydration-errors')).toHaveTextContent('organization:organization unavailable')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('Agent 失败不阻断 Organization 成功事实，并由真实 Workspace 完成 onboarding', async () => {
+  it('Agent 失败不阻断 Organization 成功事实，但不会由 Workspace 伪装完成 onboarding', async () => {
     desktopBridge.listManagedAgents.mockRejectedValue(new Error('agent root unavailable'))
     desktopBridge.loadOrganizationSnapshot.mockResolvedValue({
       schemaVersion: 1,
@@ -120,15 +122,19 @@ describe('Desktop 组织事实恢复', () => {
 
     expect(await screen.findByTestId('workspaces')).toHaveTextContent('真实工作区')
     expect(screen.getByTestId('hydration')).toHaveTextContent('failed,succeeded')
-    expect(screen.getByTestId('onboarding')).toHaveTextContent('completed')
+    expect(screen.getByTestId('onboarding')).toHaveTextContent('active')
   })
 
-  it('恢复失败时展示诊断且不伪报成功', async () => {
-    desktopBridge.listManagedAgents.mockResolvedValue([])
+  it('并发失败分别保留诊断且不写入瞬时 notice', async () => {
+    desktopBridge.listManagedAgents.mockRejectedValue(new Error('agent root unavailable'))
     desktopBridge.loadOrganizationSnapshot.mockRejectedValue(new Error('database migration failed'))
+    desktopBridge.listAgentRecoveryOperations.mockRejectedValue(new Error('recovery unavailable'))
 
     render(<AppProvider><SnapshotProbe /></AppProvider>)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('无法恢复本机组织配置事实：database migration failed')
+    await vi.waitFor(() => expect(screen.getByTestId('hydration-errors')).toHaveTextContent('managedAgents:agent root unavailable'))
+    expect(screen.getByTestId('hydration-errors')).toHaveTextContent('organization:database migration failed')
+    expect(screen.getByTestId('hydration-errors')).toHaveTextContent('agentRecovery:recovery unavailable')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

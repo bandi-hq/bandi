@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-entity-id"
+description = "Enables the generate_entity_id command without any pre-configured scope."
+commands.allow = ["generate_entity_id"]
+
+[[permission]]
+identifier = "deny-generate-entity-id"
+description = "Denies the generate_entity_id command without any pre-configured scope."
+commands.deny = ["generate_entity_id"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-managed-agent-identity"
+description = "Enables the commit_managed_agent_identity command without any pre-configured scope."
+commands.allow = ["commit_managed_agent_identity"]
+
+[[permission]]
+identifier = "deny-commit-managed-agent-identity"
+description = "Denies the commit_managed_agent_identity command without any pre-configured scope."
+commands.deny = ["commit_managed_agent_identity"]

@@ -29,16 +29,24 @@ describe('资产索引', () => {
       sharedAssets: [],
       assets: [{ id: 'asset-skills', containerId: 'container-1', kind: 'skills', officialScope: 'managed', assetContentHash: hash, containerContentHash: hash, writable: true, parseStatus: 'parsed', diagnostics: [] }],
       references: [{ sourceAssetId: 'asset-skills', sourceContainerId: 'container-1', referrerKind: 'agent', referrerId: 'zhouce', targetAssetId: 'skill-review', targetKind: 'skill', state: 'unresolved', sourcePath: 'config/skills.yaml' }],
-      diagnostics: [{ code: 'claude_user_root_not_checked', severity: 'info', message: 'Claude 用户根尚未检查' }],
+      diagnostics: [{ code: 'shared_asset_root_not_initialized', severity: 'info', message: '共享资产根未初始化' }],
     })
 
     renderPage()
 
-    expect(await screen.findByText('asset-skills')).toBeInTheDocument()
-    expect(screen.getByText('config/skills.yaml')).toBeInTheDocument()
-    expect(screen.getByText('Claude 用户根尚未检查')).toBeInTheDocument()
-    expect(screen.getByText('1 条引用异常')).toBeInTheDocument()
+    expect(await screen.findByText('skills.yaml')).toBeInTheDocument()
+    expect(screen.getAllByText('config/skills.yaml')).toHaveLength(2)
+    expect(screen.getByText('说明 1 项')).toBeInTheDocument()
+    expect(screen.queryByText('共享资产根未初始化')).not.toBeInTheDocument()
+    expect(screen.getByText('1 条需处理')).toBeInTheDocument()
     expect(screen.getAllByText('技能')).toHaveLength(2)
+    expect(screen.getByText('asset-skills')).not.toBeVisible()
+    expect(screen.getByText('允许受控写入')).not.toBeVisible()
+    expect(discover).toHaveBeenCalledWith(expect.objectContaining({ includeClaudeUserRoot: false }))
+    fireEvent.click(screen.getByText('说明 1 项'))
+    expect(screen.getByText('共享资产尚未启用，不影响受管 AgentPackage 查看')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('查看详情'))
+    expect(screen.getByText('asset-skills')).toBeInTheDocument()
     expect(screen.getByText('允许受控写入')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '新建演示资产' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /管理.*Skills/ })).not.toBeInTheDocument()

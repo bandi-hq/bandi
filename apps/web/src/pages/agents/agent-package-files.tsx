@@ -15,6 +15,7 @@ export function AgentPackageBrowser({ agent, context, path, view, onSelect, onVi
   const compatibilityTone = agent.packageSchema.compatibility === 'current' ? 'success' : 'warning'
   const sourceDetails = {
     'bandi-managed': { label: 'Bandi Desktop 创建', note: '目录来自 Bandi Desktop 已加载的受管配置。' },
+    'claude-agent-import': { label: 'Claude Agent 受管副本', note: '目录是导入后的 Bandi 受管副本；原始 Claude Agent 文件保持只读。' },
     'bandi-demo': { label: '当前页面演示', note: '目录只展示当前页面已登记的文件，不读取或写入本机文件。' },
     'external-reference': { label: '外部只读引用', note: '这里只展示已登记的外部引用，未读取对应目录内容。' },
   }[agent.packageSource.kind]

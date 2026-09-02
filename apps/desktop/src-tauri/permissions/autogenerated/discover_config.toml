@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discover-config"
+description = "Enables the discover_config command without any pre-configured scope."
+commands.allow = ["discover_config"]
+
+[[permission]]
+identifier = "deny-discover-config"
+description = "Denies the discover_config command without any pre-configured scope."
+commands.deny = ["discover_config"]

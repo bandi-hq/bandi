@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-claude-agent"
+description = "Enables the import_claude_agent command without any pre-configured scope."
+commands.allow = ["import_claude_agent"]
+
+[[permission]]
+identifier = "deny-import-claude-agent"
+description = "Denies the import_claude_agent command without any pre-configured scope."
+commands.deny = ["import_claude_agent"]

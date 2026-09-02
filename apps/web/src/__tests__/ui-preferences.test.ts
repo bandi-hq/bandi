@@ -14,8 +14,9 @@ import { MAIN_MENU_LAYOUT_STORAGE_KEY } from '../navigation-layout'
 
 describe('UiPreferences', () => {
   it('逐字段回退非法值并保留合法字段', () => {
-    const result = parseUiPreferences({ version: 1, theme: 'dark', density: 'invalid', accentColor: '#2563EB', shellLabel: '  我的工作台  ' })
+    const result = parseUiPreferences({ version: 1, theme: 'dark', density: 'invalid', terminal: 'ghostty', accentColor: '#2563EB', shellLabel: '  我的工作台  ' })
     expect(result.theme).toBe('dark')
+    expect(result.terminal).toBe('ghostty')
     expect(result.density).toBe(DEFAULT_UI_PREFERENCES.density)
     expect(result.accentColor).toBe('#2563eb')
     expect(result.shellLabel).toBe('我的工作台')

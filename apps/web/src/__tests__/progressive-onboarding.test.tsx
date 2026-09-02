@@ -16,13 +16,14 @@ const desktopBridge = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   generateEntityId: vi.fn(),
   loadOrganizationSnapshot: vi.fn(),
+  listAgents: vi.fn(),
   listAgentRecoveryOperations: vi.fn(),
   continueAgentRecovery: vi.fn(),
 }))
 
 vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => desktopBridge.desktop,
-  listAgents: () => Promise.resolve([]),
+  listAgents: desktopBridge.listAgents,
   listManagedAgents: () => Promise.resolve([]),
   loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
   selectWorkspaceDirectory: desktopBridge.selectWorkspaceDirectory,
@@ -39,11 +40,13 @@ beforeEach(() => {
   storage.clear()
   desktopBridge.desktop = false
   desktopBridge.selectWorkspaceDirectory.mockReset()
+  desktopBridge.listAgents.mockReset()
   desktopBridge.createWorkspace.mockReset()
   desktopBridge.generateEntityId.mockReset()
   desktopBridge.loadOrganizationSnapshot.mockReset()
   desktopBridge.listAgentRecoveryOperations.mockReset()
   desktopBridge.continueAgentRecovery.mockReset()
+  desktopBridge.listAgents.mockResolvedValue([])
   desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
   desktopBridge.loadOrganizationSnapshot.mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
   desktopBridge.generateEntityId.mockResolvedValue('workspace-generated')
@@ -89,22 +92,43 @@ const emptyState: State = {
 }
 
 describe('渐进式首次体验', () => {
-  it('Desktop 等待真实 Workspace hydration，加载时不闪现 Web demo 或首次使用页', async () => {
+  it('Desktop 等待全部 hydration，只有 Workspace 时仍进入 Agent-first 首次使用页', async () => {
     desktopBridge.desktop = true
     let resolveSnapshot!: (value: { schemaVersion: 1; companies: []; departments: []; roles: []; workspaces: State['workspaces']; serviceGrants: [] }) => void
     desktopBridge.loadOrganizationSnapshot.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve }))
     const router = createMemoryRouter([{ path: '/', element: <AppProvider><HomePage /></AppProvider> }], { initialEntries: ['/'] })
     render(<RouterProvider router={router} />)
 
-    expect(screen.getByRole('heading', { name: '恢复你的工作区' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '恢复你的 Agent 配置' })).toBeInTheDocument()
     expect(screen.queryByText('星河科技')).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '先建立你的个人工作区' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '先导入或创建一个长期 Agent' })).not.toBeInTheDocument()
 
     resolveSnapshot({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [{ ...initialState.workspaces[0], id: 'hydrated', name: '真实工作区' }], serviceGrants: [] })
 
-    expect(await screen.findByRole('heading', { name: '配置概览' })).toBeInTheDocument()
-    expect(screen.getByText('真实工作区')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '先建立你的个人工作区' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '先导入或创建一个长期 Agent' })).toBeInTheDocument()
+    expect(screen.getByText(/首次启动不会扫描电脑或申请宽泛磁盘访问/)).toBeInTheDocument()
+    expect(screen.queryByText('真实工作区')).not.toBeInTheDocument()
+  })
+
+  it('Desktop 持久展示多项读取失败并允许重试', async () => {
+    desktopBridge.desktop = true
+    desktopBridge.listAgents.mockRejectedValueOnce(new Error('agent root unavailable')).mockResolvedValue([])
+    desktopBridge.loadOrganizationSnapshot.mockRejectedValueOnce(new Error('database unavailable')).mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
+    desktopBridge.listAgentRecoveryOperations.mockImplementation(() => new Promise(() => undefined))
+    const router = createMemoryRouter([{ path: '/', element: <AppProvider><HomePage /></AppProvider> }], { initialEntries: ['/'] })
+    render(<RouterProvider router={router} />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('无法完整读取本机配置')
+    expect(alert).toHaveTextContent('agent root unavailable')
+    expect(alert).toHaveTextContent('database unavailable')
+    expect(alert).toHaveTextContent('仍在读取')
+    expect(alert).not.toHaveTextContent('页面顶部错误提示')
+
+    desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: '重新读取' }))
+    expect(await screen.findByRole('heading', { name: '先导入或创建一个长期 Agent' })).toBeInTheDocument()
+    expect(desktopBridge.listAgents).toHaveBeenCalledTimes(2)
   })
 
   it('首页可继续未完成 Agent 配置，blocked 状态只允许查看', async () => {
@@ -133,12 +157,14 @@ describe('渐进式首次体验', () => {
     expect(desktopBridge.continueAgentRecovery).toHaveBeenCalledWith('operation-pending')
   })
 
-  it('允许从现有项目目录开始', () => {
-    renderRoutes('/', emptyState)
+  it('首次使用从 Agent 导入或创建开始', () => {
+    renderRoutes('/', { ...emptyState, agents: [] })
 
-    expect(screen.getByRole('heading', { name: '先建立你的个人工作区' })).toBeInTheDocument()
-    expect(screen.getByText('无需预先创建 Agent 或设置组织。')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '选择目录开始' })).toHaveAttribute('href', '/workspaces/new?onboarding=1')
+    expect(screen.getByRole('heading', { name: '先导入或创建一个长期 Agent' })).toBeInTheDocument()
+    expect(screen.getByText('无需预先创建工作区、公司、部门或岗位。')).toBeInTheDocument()
+    expect(screen.getByText(/浏览器演示不会读取或写入本机文件/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '导入已有 Agent' })).toHaveAttribute('href', '/agents/new?mode=import')
+    expect(screen.getByRole('link', { name: '创建个人 Agent' })).toHaveAttribute('href', '/agents/new')
   })
 
   it('无 Company 时可登记未验证 Workspace 并直接查看 Claude Code 指引', async () => {
@@ -165,7 +191,7 @@ describe('渐进式首次体验', () => {
     expect(screen.getAllByText('未关联组织').length).toBeGreaterThan(0)
 
     expect(screen.getByRole('button', { name: '在 Claude Code 中继续' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '添加外部 AgentPackage 页面引用' })).toHaveAttribute('href', '/agents/new?mode=import&workspace=workspace-1')
+    expect(screen.getByRole('link', { name: '导入 Claude Agent' })).toHaveAttribute('href', '/agents/new?mode=import&workspace=workspace-1')
     fireEvent.click(screen.getByRole('button', { name: '让 AI 帮我规划协作方式' }))
     expect(screen.getByRole('dialog', { name: '让 AI 帮我规划协作方式' })).toBeInTheDocument()
     expect(screen.getByLabelText('你的场景与目标')).toBeInTheDocument()

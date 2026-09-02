@@ -14,6 +14,7 @@ export type Diagnostic = {
   code: string
   severity: 'error' | 'warning' | 'info'
   message: string
+  source?: string
   field?: string
   path?: string
   range?: { startLine: number; startColumn: number; endLine: number; endColumn: number }
@@ -202,6 +203,16 @@ export type WorkspaceRegistrationResult = {
     evidence: string[]
     remediation: string[]
   }
+}
+
+export type ClaudeAgentPreviewDto = {
+  sourcePath: string
+  sourceBaselineHash: ContentHash
+  name: string
+  description?: string
+  instructions: string
+  recognizedFields: string[]
+  ignoredFields: string[]
 }
 
 export type ExternalAgentReferenceDto = {

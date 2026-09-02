@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-managed-agent-identity"
+description = "Enables the load_managed_agent_identity command without any pre-configured scope."
+commands.allow = ["load_managed_agent_identity"]
+
+[[permission]]
+identifier = "deny-load-managed-agent-identity"
+description = "Denies the load_managed_agent_identity command without any pre-configured scope."
+commands.deny = ["load_managed_agent_identity"]

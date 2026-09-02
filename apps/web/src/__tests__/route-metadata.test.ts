@@ -5,7 +5,9 @@ describe('route metadata', () => {
   it('统一配置概览标题并排除新建页的最近 Agent 身份', () => {
     expect(resolveRouteMetadata('/')).toEqual({ section: 'home', title: '配置概览' })
     expect(formatWindowTitle('配置概览')).toBe('配置概览 · Bandi')
-    expect(resolveRouteMetadata('/agents/new')).toEqual({ section: 'agents', title: '创建 Agent' })
+    expect(resolveRouteMetadata('/agents/new')).toEqual({ section: 'agents', title: '创建个人 Agent' })
+    expect(resolveRouteMetadata('/agents/new?mode=import')).toEqual({ section: 'agents', title: '导入 Claude Agent' })
+    expect(resolveRouteMetadata('/agents/new?mode=reference')).toEqual({ section: 'agents', title: '仅登记外部引用' })
   })
 
   it('解析实体名称和主导航归属', () => {

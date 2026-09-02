@@ -24,6 +24,8 @@ pub(crate) struct DiagnosticDto {
     pub(crate) severity: String,
     pub(crate) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) path: Option<String>,
@@ -604,9 +606,24 @@ pub(crate) fn diagnostic(
         code: code.into(),
         severity: severity.into(),
         message: message.into(),
+        source: None,
         field: None,
         path,
         remediation: remediation.map(str::to_owned),
+    }
+}
+
+fn diagnostic_for_source(
+    source: &str,
+    code: &str,
+    severity: &str,
+    message: &str,
+    path: Option<String>,
+    remediation: Option<&str>,
+) -> DiagnosticDto {
+    DiagnosticDto {
+        source: Some(source.into()),
+        ..diagnostic(code, severity, message, path, remediation)
     }
 }
 
@@ -1531,7 +1548,8 @@ fn discover_managed_yaml_asset(
     let metadata = match fs::symlink_metadata(&target) {
         Ok(value) => value,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            diagnostics.push(diagnostic(
+            diagnostics.push(diagnostic_for_source(
+                &format!("agt_{agent_id}"),
                 &format!("{kind}_missing"),
                 "warning",
                 &format!("AgentPackage 缺少 {relative_path}"),
@@ -2041,7 +2059,8 @@ fn discover_managed_assets(managed_root: &Path) -> (Vec<DiscoveredAsset>, Vec<Di
         let metadata = match fs::symlink_metadata(&instructions_path) {
             Ok(value) => value,
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                diagnostics.push(diagnostic(
+                diagnostics.push(diagnostic_for_source(
+                    &format!("agt_{agent_id}"),
                     "instructions_missing",
                     "warning",
                     "AgentPackage 缺少 instructions.md",
@@ -7011,6 +7030,15 @@ mod tests {
             .iter()
             .any(|item| item.code == "stable_id_directory_mismatch"
                 || item.code == "instructions_missing"));
+        let missing = result
+            .diagnostics
+            .iter()
+            .filter(|item| item.code.ends_with("_missing"))
+            .collect::<Vec<_>>();
+        assert!(!missing.is_empty());
+        assert!(missing
+            .iter()
+            .all(|item| item.source.as_deref() == Some("agt_duplicate")));
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-managed-agent-identity"
+description = "Enables the recover_managed_agent_identity command without any pre-configured scope."
+commands.allow = ["recover_managed_agent_identity"]
+
+[[permission]]
+identifier = "deny-recover-managed-agent-identity"
+description = "Denies the recover_managed_agent_identity command without any pre-configured scope."
+commands.deny = ["recover_managed_agent_identity"]

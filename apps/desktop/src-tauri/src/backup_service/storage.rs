@@ -52,6 +52,7 @@ pub(super) fn diagnostic(code: &str, message: &str, remediation: &str) -> Diagno
         code: code.into(),
         severity: "error".into(),
         message: message.into(),
+        source: None,
         field: None,
         path: None,
         remediation: Some(remediation.into()),

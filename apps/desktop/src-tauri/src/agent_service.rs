@@ -328,6 +328,27 @@ pub(crate) fn get_operation_at(
     ).optional().map_err(|_| "无法读取 Agent commit operation".to_string())?.ok_or_else(|| "Agent commit operation 不存在".to_string())
 }
 
+pub(crate) fn complete_operation_at(
+    database: &Path,
+    operation_id: &str,
+) -> Result<AgentRecoveryOperation, String> {
+    if !valid_id(operation_id) {
+        return Err("Agent commit operation 标识无效".into());
+    }
+    let connection = domain_store::open_at(database)?;
+    if connection
+        .execute(
+            "UPDATE agent_recovery_operations SET status = 'completed', payload_json = '{}', expected_manifest_hash = '', fixed_revision_id = NULL, completed_at = ?1 WHERE id = ?2 AND status = 'organization_pending'",
+            params![Utc::now().to_rfc3339(), operation_id],
+        )
+        .map_err(|_| "无法完成 Agent commit operation".to_string())?
+        != 1
+    {
+        return Err("Agent commit operation 状态不允许完成".into());
+    }
+    get_operation_at(database, operation_id)
+}
+
 pub(crate) fn set_operation_status_at(
     database: &Path,
     operation_id: &str,

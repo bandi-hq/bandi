@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-config-revision"
+description = "Enables the restore_config_revision command without any pre-configured scope."
+commands.allow = ["restore_config_revision"]
+
+[[permission]]
+identifier = "deny-restore-config-revision"
+description = "Denies the restore_config_revision command without any pre-configured scope."
+commands.deny = ["restore_config_revision"]

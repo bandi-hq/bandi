@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-agent-recovery-summaries"
+description = "Enables the list_agent_recovery_summaries command without any pre-configured scope."
+commands.allow = ["list_agent_recovery_summaries"]
+
+[[permission]]
+identifier = "deny-list-agent-recovery-summaries"
+description = "Denies the list_agent_recovery_summaries command without any pre-configured scope."
+commands.deny = ["list_agent_recovery_summaries"]

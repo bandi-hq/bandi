@@ -1,3 +1,57 @@
+const COMMANDS: &[&str] = &[
+    "create_workspace",
+    "load_organization_snapshot",
+    "save_company",
+    "save_department",
+    "save_role",
+    "save_workspace",
+    "remove_workspace",
+    "save_service_grants",
+    "generate_entity_id",
+    "discover_eligible_memory_spaces",
+    "create_memory_candidate",
+    "list_memory_reviews",
+    "list_memory_revisions",
+    "load_memory_review",
+    "review_memory_candidate",
+    "recover_memory_revision",
+    "create_backup_snapshot",
+    "list_backup_snapshots",
+    "preview_backup_restore",
+    "restore_backup_snapshot",
+    "discover_config",
+    "load_config_editor",
+    "list_config_revisions",
+    "read_config_revision_content",
+    "create_workspace_binding",
+    "save_config",
+    "recover_config_revision",
+    "restore_config_revision",
+    "request_client_handoff",
+    "import_ui_asset",
+    "read_ui_asset",
+    "delete_ui_asset",
+    "read_agent_avatar",
+    "preview_claude_agent",
+    "import_claude_agent",
+    "create_managed_agent",
+    "load_managed_agent_identity",
+    "recover_managed_agent_identity",
+    "restore_managed_agent_identity",
+    "list_managed_agents",
+    "register_external_agent",
+    "remove_external_agent",
+    "list_agents",
+    "commit_managed_agent_creation",
+    "commit_managed_agent_identity",
+    "continue_agent_recovery",
+    "list_agent_recovery_summaries",
+];
+
 fn main() {
-    tauri_build::build()
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
+    )
+    .expect("生成 Bandi Tauri 权限清单失败");
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-agent-avatar"
+description = "Enables the read_agent_avatar command without any pre-configured scope."
+commands.allow = ["read_agent_avatar"]
+
+[[permission]]
+identifier = "deny-read-agent-avatar"
+description = "Denies the read_agent_avatar command without any pre-configured scope."
+commands.deny = ["read_agent_avatar"]

@@ -1,6 +1,6 @@
 import { expect } from '@wdio/globals'
 
-const welcomeTitle = '先建立你的个人工作区'
+const welcomeTitle = '先导入或创建一个长期 Agent'
 const demoAgent = '知衡'
 
 async function assertFreshFirstPage(session: WebdriverIO.Browser) {

@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::Utc;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     Emitter, Manager,
@@ -11,6 +12,7 @@ use tauri::{
 mod agent_service;
 mod ai_adapters;
 mod backup_service;
+mod claude_agent_import;
 pub mod cli_service;
 mod config_fs;
 mod domain_store;
@@ -55,14 +57,29 @@ struct AgentOrganizationReconcileRequest {
 struct CommitManagedAgentCreationRequest {
     request_id: String,
     create: CreateManagedAgentRequest,
-    organization: AgentOrganizationReconcileRequest,
+    organization: Option<AgentOrganizationReconcileRequest>,
 }
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CommitManagedAgentIdentityRequest {
     save: SaveManagedAgentIdentityRequest,
-    organization: AgentOrganizationReconcileRequest,
+    organization: Option<AgentOrganizationReconcileRequest>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportClaudeAgentRequest {
+    source_path: String,
+    expected_source_baseline_hash: String,
+    confirmed: bool,
+    commit: CommitManagedAgentCreationRequest,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportClaudeAgentPreviewResult {
+    preview: claude_agent_import::ClaudeAgentPreviewDto,
 }
 
 #[derive(serde::Deserialize)]
@@ -225,6 +242,8 @@ struct DiagnosticDto {
     severity: String,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
@@ -309,26 +328,6 @@ struct CreateWorkspaceRequest {
     request_id: String,
     selected_path: String,
     workspace: domain_store::WorkspaceDto,
-}
-
-#[tauri::command]
-fn register_workspace(
-    app: tauri::AppHandle,
-    request: local_service::RegisterWorkspaceRequest,
-) -> Result<local_service::WorkspaceRegistrationResult, String> {
-    let registry = workspace_registry_root(&app)?;
-    let outcome = local_service::register_workspace_with_status_at(&registry, request)?;
-    if let Err(error) = domain_store::import_workspace_record_at(
-        &domain_database_path(&app)?,
-        &outcome.result.workspace_id,
-        Path::new(&outcome.result.canonical_path),
-    ) {
-        if outcome.created {
-            let _ = local_service::unregister_workspace_at(&registry, &outcome.result.workspace_id);
-        }
-        return Err(error);
-    }
-    Ok(outcome.result)
 }
 
 #[tauri::command]
@@ -987,6 +986,7 @@ fn identity_validation_failed(
     }
 }
 
+#[cfg(test)]
 fn save_managed_agent_identity_at(
     root: &Path,
     revisions_root: &Path,
@@ -1485,19 +1485,6 @@ fn restore_managed_agent_identity_at(
 }
 
 #[tauri::command]
-fn save_managed_agent_identity(
-    app: tauri::AppHandle,
-    request: SaveManagedAgentIdentityRequest,
-) -> Result<SaveManagedAgentIdentityResult, String> {
-    let root = managed_agent_dir(&app, &request.agent_id)?;
-    Ok(save_managed_agent_identity_at(
-        &root,
-        &revisions_root(&app)?,
-        request,
-    ))
-}
-
-#[tauri::command]
 fn recover_managed_agent_identity(
     app: tauri::AppHandle,
     request: RecoverManagedAgentIdentityRequest,
@@ -1614,24 +1601,26 @@ fn finish_agent_organization(
     agents_root: &Path,
     operation: &agent_service::AgentRecoveryOperation,
 ) -> Result<agent_service::AgentRecoveryOperation, String> {
-    let organization: AgentOrganizationReconcileRequest = serde_json::from_value(
-        operation
-            .payload
-            .get("organization")
-            .cloned()
-            .ok_or_else(|| "Agent commit payload 缺少 organization".to_string())?,
-    )
-    .map_err(|_| "Agent commit organization payload 已损坏".to_string())?;
-    domain_store::reconcile_agent_organization_at(
-        database,
-        agents_root,
-        &operation.id,
-        &operation.agent_id,
-        &organization.company_id,
-        &organization.primary_department_id,
-        organization.grants,
-    )?;
-    agent_service::get_operation_at(database, &operation.id)
+    let organization = operation.payload.get("organization").cloned();
+    match organization {
+        None | Some(serde_json::Value::Null) => {
+            agent_service::complete_operation_at(database, &operation.id)
+        }
+        Some(value) => {
+            let organization: AgentOrganizationReconcileRequest = serde_json::from_value(value)
+                .map_err(|_| "Agent commit organization payload 已损坏".to_string())?;
+            domain_store::reconcile_agent_organization_at(
+                database,
+                agents_root,
+                &operation.id,
+                &operation.agent_id,
+                &organization.company_id,
+                &organization.primary_department_id,
+                organization.grants,
+            )?;
+            agent_service::get_operation_at(database, &operation.id)
+        }
+    }
 }
 
 fn append_agent_commit_revision(
@@ -1695,6 +1684,58 @@ fn block_if_manifest_changed(
         return Ok(true);
     }
     Ok(false)
+}
+
+#[tauri::command]
+fn preview_claude_agent(
+    request: claude_agent_import::PreviewClaudeAgentRequest,
+) -> Result<ImportClaudeAgentPreviewResult, String> {
+    Ok(ImportClaudeAgentPreviewResult {
+        preview: claude_agent_import::preview(request)?,
+    })
+}
+
+#[tauri::command]
+fn import_claude_agent(
+    app: tauri::AppHandle,
+    mut request: ImportClaudeAgentRequest,
+) -> Result<AgentCommitResult, String> {
+    if !request.confirmed {
+        return Err("CLAUDE_AGENT_CONFIRMATION_REQUIRED: 导入受管副本前必须明确确认".into());
+    }
+    let preview =
+        claude_agent_import::verify(&request.source_path, &request.expected_source_baseline_hash)?;
+    let instructions = request
+        .commit
+        .create
+        .files
+        .iter()
+        .find(|file| file.path == "instructions.md")
+        .ok_or_else(|| "INVALID_AGENT_PACKAGE: 缺少 instructions.md".to_string())?;
+    if instructions.content != preview.instructions {
+        return Err("CLAUDE_AGENT_INVALID: 受管 Instructions 必须来自已复核的来源正文".into());
+    }
+    if request.commit.create.avatar_bytes.is_some() {
+        return Err("CLAUDE_AGENT_INVALID: 单文件导入不接受额外头像内容".into());
+    }
+    let agent = request
+        .commit
+        .create
+        .agent
+        .as_object_mut()
+        .ok_or_else(|| "INVALID_AGENT_RECORD: Agent 记录必须是对象".to_string())?;
+    agent.insert(
+        "packageSource".into(),
+        serde_json::json!({
+            "kind": "claude-agent-import",
+            "packageId": format!("agt_{}", request.commit.create.agent_id),
+            "strategy": "managed-copy",
+            "sourcePath": preview.source_path,
+            "sourceBaselineHash": preview.source_baseline_hash,
+            "importedAt": Utc::now().to_rfc3339(),
+        }),
+    );
+    commit_managed_agent_creation(app, request.commit)
 }
 
 #[tauri::command]
@@ -1911,9 +1952,14 @@ fn continue_agent_recovery(
                 let request_id = operation.request_id.clone();
                 let create = serde_json::from_value(operation.payload["create"].clone())
                     .map_err(|_| "Agent create recovery payload 已损坏".to_string())?;
-                let organization =
-                    serde_json::from_value(operation.payload["organization"].clone())
-                        .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
+                let organization = serde_json::from_value(
+                    operation
+                        .payload
+                        .get("organization")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
                 commit_managed_agent_creation(
                     app,
                     CommitManagedAgentCreationRequest {
@@ -1996,9 +2042,14 @@ fn continue_agent_recovery(
             if operation.status == "prepared" {
                 let save = serde_json::from_value(operation.payload["save"].clone())
                     .map_err(|_| "Agent identity recovery payload 已损坏".to_string())?;
-                let organization =
-                    serde_json::from_value(operation.payload["organization"].clone())
-                        .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
+                let organization = serde_json::from_value(
+                    operation
+                        .payload
+                        .get("organization")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .map_err(|_| "Agent organization recovery payload 已损坏".to_string())?;
                 commit_managed_agent_identity(
                     app,
                     CommitManagedAgentIdentityRequest { save, organization },
@@ -2151,7 +2202,6 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            register_workspace,
             create_workspace,
             load_organization_snapshot,
             save_company,
@@ -2185,9 +2235,10 @@ pub fn run() {
             read_ui_asset,
             delete_ui_asset,
             read_agent_avatar,
+            preview_claude_agent,
+            import_claude_agent,
             create_managed_agent,
             load_managed_agent_identity,
-            save_managed_agent_identity,
             recover_managed_agent_identity,
             restore_managed_agent_identity,
             list_managed_agents,
@@ -2278,6 +2329,47 @@ mod tests {
     fn menu_commands_are_whitelisted() {
         assert!(COMMAND_IDS.contains(&"editor.save"));
         assert!(!COMMAND_IDS.contains(&"shell.exec"));
+    }
+
+    #[test]
+    fn tauri_commands_require_explicit_main_window_permissions() {
+        let build_script = include_str!("../build.rs");
+        let source = include_str!("lib.rs");
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("默认 capability 应为有效 JSON");
+        assert_eq!(capability["windows"], serde_json::json!(["main"]));
+
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("capability permissions 应为数组");
+        assert!(permissions.iter().all(|permission| {
+            permission
+                .as_str()
+                .is_some_and(|value| !value.contains('*'))
+        }));
+
+        let commands = build_script
+            .lines()
+            .filter_map(|line| {
+                let value = line.trim().strip_suffix(',')?;
+                value.strip_prefix('"')?.strip_suffix('"')
+            })
+            .collect::<Vec<_>>();
+        assert!(!commands.is_empty());
+        for command in commands {
+            assert!(
+                source.contains(&format!("            {command},"))
+                    || source.contains(&format!("            {command}\n")),
+                "{command} 未注册到 invoke_handler"
+            );
+            assert!(
+                permissions
+                    .iter()
+                    .any(|permission| permission == &format!("allow-{}", command.replace('_', "-"))),
+                "{command} 未向主窗口显式授权"
+            );
+        }
     }
 
     #[test]

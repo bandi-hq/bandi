@@ -25,7 +25,7 @@ export function AgentsPage() {
   const [params, setParams] = useSearchParams()
   const value = (key: typeof filterKeys[number]) => params.get(key) ?? ''
   const set = (key: typeof filterKeys[number], next: string) => { const copy = new URLSearchParams(params); if (next) copy.set(key, next); else copy.delete(key); setParams(copy) }
-  const roleName = (roleId: string) => state.roles.find((role) => role.id === roleId)?.name ?? '岗位引用缺失'
+  const roleName = (roleId?: string) => roleId ? state.roles.find((role) => role.id === roleId)?.name ?? '岗位引用缺失' : '未关联组织'
   const rows = state.agents.filter((agent) => {
     const q = value('q').toLocaleLowerCase()
     const workspaceMatch = !value('workspace') || agent.workspaceBindings.some((binding) => binding.workspaceId === value('workspace'))
@@ -41,7 +41,7 @@ export function AgentsPage() {
   const roles = state.roles.filter((role) => state.agents.some((agent) => agent.roleId === role.id))
 
   return <>
-    <PageHeader title="Agent" description="管理可长期使用的 Agent、所属组织和配置状态。这里不显示正在运行的会话。" action={<Button asChild><Link to="/agents/new"><Plus size={16} />创建 Agent</Link></Button>} />
+    <PageHeader title="Agent" description="导入或创建长期 Agent，安全管理配置与版本；组织关系可按需设置。" action={<div className="flex flex-wrap gap-2"><Button asChild><Link to="/agents/new?mode=import"><Plus size={16} />导入 Claude Agent</Link></Button><Button variant="outline" asChild><Link to="/agents/new">创建个人 Agent</Link></Button><Button variant="ghost" asChild><Link to="/agents/new?mode=reference">仅登记外部引用</Link></Button></div>} />
     <section className="panel overflow-hidden">
       <div className="grid gap-3 border-b border-border p-4 md:grid-cols-2 xl:grid-cols-4">
         <label className="relative md:col-span-2"><span className="sr-only">搜索 Agent</span><Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} /><input value={value('q')} onChange={(event) => set('q', event.target.value)} className="h-9 w-full pl-9 pr-3" placeholder="搜索名称、岗位、部门或服务范围…" /></label>

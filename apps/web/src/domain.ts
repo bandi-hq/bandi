@@ -85,6 +85,7 @@ export type WorkspaceBinding = WorkspaceBindingConfig & {
 export type AgentPackageSource =
   | { kind: 'bandi-demo'; strategy: 'create-demo' }
   | { kind: 'bandi-managed'; packageId: string; strategy: 'managed'; identityBaseline?: string }
+  | { kind: 'claude-agent-import'; packageId: string; strategy: 'managed-copy'; sourcePath: string; sourceBaselineHash: string; importedAt: string }
   | { kind: 'external-reference'; externalPath: string; strategy: 'reference-only' }
 
 export type AgentFileScope =
@@ -101,7 +102,7 @@ export type AgentFile = {
 }
 
 export type FullAgent = Omit<Agent, 'status'> & {
-  roleId: string
+  roleId?: string
   status: AgentLifecycle
   packageSchema: AgentPackageSchema
   companyId?: string

@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillsPage } from '../pages/assets/skills-page'
-import { AppProvider } from '../state'
+import { AppProvider, initialState, type State } from '../state'
 
 const NativeRequest = globalThis.Request
 
@@ -17,10 +17,10 @@ beforeEach(() => {
   })
 })
 
-function renderSkills(initialEntry = '/assets/skills') {
+function renderSkills(initialEntry = '/assets/skills', state?: State) {
   const router = createMemoryRouter([{
     path: '/assets/skills',
-    element: <AppProvider><SkillsPage /></AppProvider>,
+    element: <AppProvider initialState={state}><SkillsPage /></AppProvider>,
   }], { initialEntries: [initialEntry] })
   return { router, ...render(<RouterProvider router={router} />) }
 }
@@ -57,6 +57,13 @@ describe('Skills 视图 Tab', () => {
     fireEvent.keyDown(updates, { key: 'ArrowRight' })
     await waitFor(() => expect(browse).toHaveFocus())
     expect(installed).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('Desktop 深链只显示只读边界，不暴露模拟操作', () => {
+    renderSkills('/assets/skills', { ...initialState, runtime: 'desktop' })
+
+    expect(screen.getByText(/只提供受管配置资产的只读索引/)).toBeInTheDocument()
+    expect(screen.queryByText(/模拟安装|模拟更新|模拟回滚|模拟卸载/)).not.toBeInTheDocument()
   })
 
   it('非法视图回退浏览，并保留搜索与来源筛选', () => {

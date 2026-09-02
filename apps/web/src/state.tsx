@@ -100,6 +100,7 @@ export type OnboardingState = {
 }
 
 export type HydrationStatus = 'idle' | 'loading' | 'succeeded' | 'failed'
+export type HydrationKey = 'managedAgents' | 'organization' | 'agentRecovery'
 
 type OrganizationServiceGrant = {
   agentId: string
@@ -113,7 +114,8 @@ type OrganizationServiceGrant = {
 
 export type State = {
   runtime: 'web' | 'desktop'
-  hydration: { managedAgents: HydrationStatus; organization: HydrationStatus; agentRecovery: HydrationStatus }
+  hydration: Record<HydrationKey, HydrationStatus>
+  hydrationErrors: Partial<Record<HydrationKey, string>>
   agentRecoveryOperations: AgentRecoveryOperationSummaryDto[]
   organizationServiceGrants: OrganizationServiceGrant[]
   onboarding: OnboardingState
@@ -153,6 +155,7 @@ export type Action =
   | { type: 'SHEET'; sheet: 'diff' | 'source' | 'shared' | 'conflict' | 'permission' | 'memory' | 'claude' | null }
   | { type: 'CREATE_AGENT'; agent: FullAgent }
   | { type: 'UPSERT_MANAGED_AGENT'; agent: FullAgent; message?: string }
+  | { type: 'START_DESKTOP_HYDRATION' }
   | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[] }
   | { type: 'FAIL_MANAGED_AGENTS_HYDRATION'; message: string }
   | { type: 'HYDRATE_AGENT_RECOVERY'; operations: AgentRecoveryOperationSummaryDto[] }
@@ -217,6 +220,7 @@ const initialUiPreferences = getInitialUiPreferences()
 export const initialState: State = {
   runtime: 'web',
   hydration: { managedAgents: 'idle', organization: 'idle', agentRecovery: 'idle' },
+  hydrationErrors: {},
   agentRecoveryOperations: [],
   organizationServiceGrants: [],
   onboarding: { status: 'active' },
@@ -235,7 +239,7 @@ export const initialState: State = {
   settings: {
     language: '简体中文',
     agentRoot: '~/.bandi/agents',
-    terminal: 'terminal',
+    terminal: initialUiPreferences.terminal,
     externalChangeInterval: '5 分钟',
     autoSnapshot: true,
     networkProxy: { mode: 'system', httpProxy: '', httpsProxy: '', socksProxy: '', noProxy: '' },
@@ -256,6 +260,7 @@ function createDesktopInitialState(): State {
     ...initialState,
     runtime: 'desktop',
     hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading' },
+    hydrationErrors: {},
     agentRecoveryOperations: [],
     agents: [],
     companies: [],
@@ -338,6 +343,12 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
   }
 }
 
+function withoutHydrationError(errors: State['hydrationErrors'], key: HydrationKey) {
+  const next = { ...errors }
+  delete next[key]
+  return next
+}
+
 function mergeFormalMemoryBundles(state: State, bundles: MemoryReviewBundleDto[]): Pick<State, 'memorySpaces' | 'memoryCandidates'> {
   const mapped = bundles.map((bundle) => mapFormalMemoryBundle(state, bundle))
   const spaceIds = new Set(mapped.map(({ space }) => space.id))
@@ -382,8 +393,13 @@ function saveAgentConfig(state: State, agentId: string, payload: AgentConfigPayl
   const editability = getAgentPackageEditability(agent.packageSchema)
   if (!editability.editable) return { ...state, notice: notice('warning', '无法更新 Agent 配置', editability.reason) }
   if (payload.kind === 'identity') {
-    const role = state.roles.find((item) => item.id === payload.value.roleId)
-    if (payload.value.id !== agent.id || !role || role.status !== 'active' || role.companyId !== payload.value.companyId || (role.departmentId && role.departmentId !== payload.value.primaryDepartmentId)) {
+    const organizationFields = [payload.value.roleId, payload.value.companyId, payload.value.primaryDepartmentId]
+    const organizationCount = organizationFields.filter(Boolean).length
+    const role = payload.value.roleId ? state.roles.find((item) => item.id === payload.value.roleId) : undefined
+    if (payload.value.id !== agent.id
+      || (organizationCount > 0 && organizationCount < organizationFields.length)
+      || (role && (role.status !== 'active' || role.companyId !== payload.value.companyId || (role.departmentId && role.departmentId !== payload.value.primaryDepartmentId)))
+      || (payload.value.roleId && !role)) {
       return { ...state, notice: notice('error', '无法更新 Agent 配置', 'Agent ID、岗位或组织作用域无效') }
     }
   }
@@ -459,6 +475,12 @@ export function reducer(state: State, action: Action): State {
       const initialized = initializeAgentConfigRecords(action.agent, state.configRevisions)
       return { ...state, agents: [...state.agents, initialized.agent], configRevisions: initialized.revisions, notice: notice('success', `${action.agent.name} 已添加到演示配置`, action.agent.packageSource.kind === 'external-reference' ? '只登记外部只读引用 · 未读取或创建真实 AgentPackage' : '已记录当前页面配置版本 · 未创建真实 AgentPackage') }
     }
+    case 'START_DESKTOP_HYDRATION':
+      return {
+        ...state,
+        hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading' },
+        hydrationErrors: {},
+      }
     case 'UPSERT_MANAGED_AGENT': {
       const exists = state.agents.some((item) => item.id === action.agent.id)
       return {
@@ -478,6 +500,10 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         hydration: { ...state.hydration, managedAgents: 'succeeded' },
+        hydrationErrors: withoutHydrationError(state.hydrationErrors, 'managedAgents'),
+        onboarding: state.runtime === 'desktop'
+          ? { status: action.agents.length ? 'completed' : 'active' }
+          : state.onboarding,
         agents: action.agents.map((agent) => ({ ...agent, serviceGrants: grantsByAgent.get(agent.id) ?? [] })),
       }
     }
@@ -485,12 +511,13 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         hydration: { ...state.hydration, managedAgents: 'failed' },
-        notice: notice('error', '无法恢复本机 Agent 配置事实', action.message),
+        hydrationErrors: { ...state.hydrationErrors, managedAgents: action.message },
       }
     case 'HYDRATE_AGENT_RECOVERY':
       return {
         ...state,
         hydration: { ...state.hydration, agentRecovery: 'succeeded' },
+        hydrationErrors: withoutHydrationError(state.hydrationErrors, 'agentRecovery'),
         agentRecoveryOperations: action.operations.filter((item) => item.status !== 'completed'),
       }
     case 'SYNC_AGENT_RECOVERY': {
@@ -508,7 +535,7 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         hydration: { ...state.hydration, agentRecovery: 'failed' },
-        notice: notice('error', '无法读取待恢复的 Agent 配置', action.message),
+        hydrationErrors: { ...state.hydrationErrors, agentRecovery: action.message },
       }
     case 'HYDRATE_ORGANIZATION': {
       const grantsByAgent = new Map<string, FullAgent['serviceGrants']>()
@@ -519,9 +546,10 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         hydration: { ...state.hydration, organization: 'succeeded' },
+        hydrationErrors: withoutHydrationError(state.hydrationErrors, 'organization'),
         organizationServiceGrants: action.serviceGrants,
         onboarding: state.runtime === 'desktop'
-          ? { status: action.workspaces.length ? 'completed' : 'active' }
+          ? { status: state.agents.length ? 'completed' : 'active' }
           : state.onboarding,
         companies: action.companies,
         departments: action.departments,
@@ -535,7 +563,7 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         hydration: { ...state.hydration, organization: 'failed' },
-        notice: notice('error', '无法恢复本机组织配置事实', action.message),
+        hydrationErrors: { ...state.hydrationErrors, organization: action.message },
       }
     case 'SYNC_PERSISTED_COMPANIES': {
       const persisted = new Map(action.companies.map((company) => [company.id, company]))
@@ -580,6 +608,7 @@ export function reducer(state: State, action: Action): State {
     case 'SAVE_INSTRUCTIONS':
       return saveAgentConfig(state, action.agentId ?? 'zhouce', { kind: 'instructions', value: action.text }, '保存主指令演示配置')
     case 'SAVE_AGENT_CONFIG': {
+      if (state.runtime === 'desktop') return { ...state, notice: notice('warning', '未保存配置', 'Desktop 正式配置必须通过本地服务保存。') }
       const { agentId, ...payload } = action.input
       return saveAgentConfig(state, agentId, payload, action.summary ?? `保存 ${payload.kind} 演示配置`)
     }
@@ -690,6 +719,7 @@ export function reducer(state: State, action: Action): State {
       if (state.assets.some((item) => item.id === action.asset.id)) return state
       return { ...state, assets: [...state.assets, action.asset], notice: notice('success', '资产已创建在演示内存中', '未创建真实文件') }
     case 'APPLY_SKILL_ACTION': {
+      if (state.runtime === 'desktop') return { ...state, notice: notice('warning', '未执行技能操作', 'Desktop 当前只读索引技能，不提供安装、更新、回滚或卸载。') }
       const asset = state.assets.find((item) => item.id === action.skillId)
       if (!asset?.skill) return { ...state, notice: notice('warning', '无法更新技能演示状态', '目标不存在或不是可管理的技能') }
       const installation = applySkillAction(asset.skill.installation, action.action, action.version)
@@ -698,6 +728,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, assets: state.assets.map((item) => item.id === asset.id && item.skill ? { ...item, status: action.action === 'uninstall' ? '可演示安装' : '演示已安装', skill: { ...item.skill, installation } } : item), notice: notice('success', `技能已模拟${labels[action.action]}`, '仅更新当前页面内存 · 未下载、复制或删除文件 · 未执行安装脚本 · 未自动分配给 Agent') }
     }
     case 'APPLY_PLUGIN_ACTION': {
+      if (state.runtime === 'desktop') return { ...state, notice: notice('warning', '未执行插件操作', 'Desktop 当前只读索引插件，不提供安装、更新、回滚或卸载。') }
       const installation = state.pluginInstallations.find((item) => item.pluginId === action.pluginId)
       if (!installation) return { ...state, notice: notice('warning', '无法更新插件演示状态', '目标没有独立的插件安装记录') }
       const next = applyPluginAction(installation, action.action, action.version)
@@ -854,6 +885,7 @@ type AppContextValue = {
   effectiveUiPreferences: UiPreferences
   effectiveTheme: EffectiveTheme
   uiPreviewAssets?: UiPreviewAssets
+  hydrateDesktop: () => void
   setUiPreferencesPreview: (preferences?: UiPreferences, assets?: UiPreviewAssets) => void
 }
 
@@ -868,9 +900,9 @@ export function AppProvider({ children, initialState: providedState }: { childre
   const setUiPreferencesPreview = useCallback((preferences?: UiPreferences, assets?: UiPreviewAssets) => {
     setPreview(preferences ? { preferences, assets } : undefined)
   }, [])
-
-  useEffect(() => {
+  const hydrateDesktop = useCallback(() => {
     if (providedState || !isDesktopRuntime()) return
+    dispatch({ type: 'START_DESKTOP_HYDRATION' })
     const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
     void listAgents()
       .then((agents) => dispatch({ type: 'HYDRATE_MANAGED_AGENTS', agents }))
@@ -882,6 +914,10 @@ export function AppProvider({ children, initialState: providedState }: { childre
       .then((operations) => dispatch({ type: 'HYDRATE_AGENT_RECOVERY', operations }))
       .catch((error) => dispatch({ type: 'FAIL_AGENT_RECOVERY_HYDRATION', message: errorMessage(error) }))
   }, [providedState])
+
+  useEffect(() => {
+    hydrateDesktop()
+  }, [hydrateDesktop])
 
   useEffect(() => {
     if (providedState) return
@@ -921,8 +957,9 @@ export function AppProvider({ children, initialState: providedState }: { childre
     effectiveUiPreferences,
     effectiveTheme,
     uiPreviewAssets: preview?.assets,
+    hydrateDesktop,
     setUiPreferencesPreview,
-  }), [effectiveTheme, effectiveUiPreferences, preview?.assets, setUiPreferencesPreview, state])
+  }), [effectiveTheme, effectiveUiPreferences, hydrateDesktop, preview?.assets, setUiPreferencesPreview, state])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

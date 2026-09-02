@@ -262,7 +262,8 @@ function ClientGuideDialog({ client, workspace, agent, planning = false, close }
   const descriptor = handoffDescriptor(client.id)
   const supportsHandoff = supportsWorkspaceHandoff(client)
   const desktop = isDesktopRuntime()
-  const terminal = terminalLabel(state.settings.terminal)
+  const terminalId = state.runtime === 'desktop' ? state.uiPreferences.terminal : state.settings.terminal
+  const terminal = terminalLabel(terminalId)
   const planningPrompt = buildCollaborationPlanningPrompt(goal, participants, boundaries)
   const binding = agent && workspace ? agent.workspaceBindings.find((item) => item.workspaceId === workspace.id) : undefined
   const notify = (tone: 'success' | 'error', title: string, description: string) => dispatch({ type: 'SHOW_NOTICE', notice: { tone, title, description, duration: 5000 } })
@@ -280,7 +281,7 @@ function ClientGuideDialog({ client, workspace, agent, planning = false, close }
     setError('')
     setCapability(undefined)
     try {
-      const result = await requestClientHandoff({ clientId: descriptor.clientId, adapterId: descriptor.adapterId, workspaceId: workspace.id, terminalId: normalizeTerminalId(state.settings.terminal), intent: descriptor.intent })
+      const result = await requestClientHandoff({ clientId: descriptor.clientId, adapterId: descriptor.adapterId, workspaceId: workspace.id, terminalId: normalizeTerminalId(terminalId), intent: descriptor.intent })
       setCapability(result.capability)
       if (result.outcome !== 'accepted') {
         setError(result.capability.reason)

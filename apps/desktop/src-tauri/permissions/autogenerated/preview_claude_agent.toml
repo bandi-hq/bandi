@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-claude-agent"
+description = "Enables the preview_claude_agent command without any pre-configured scope."
+commands.allow = ["preview_claude_agent"]
+
+[[permission]]
+identifier = "deny-preview-claude-agent"
+description = "Denies the preview_claude_agent command without any pre-configured scope."
+commands.deny = ["preview_claude_agent"]

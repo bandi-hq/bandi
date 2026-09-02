@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { projectDiscoveredAssets } from '../discovered-assets'
+import { groupAssetReferences, groupDiscoveryDiagnostics, projectDiscoveredAssets } from '../discovered-assets'
 
 const hash = `sha256:${'a'.repeat(64)}` as const
 
@@ -17,6 +17,39 @@ describe('真实资产发现投影', () => {
 
     expect(rows[0]).toMatchObject({ path: 'config/mcp.yaml', writable: false, readOnlyReason: 'future schema', parseStatus: 'unsupported', outgoingReferences: 1, unresolvedReferences: 1 })
     expect(rows[0].diagnostics[0].message).toBe('未来版本只读')
+  })
+
+  it('按 AgentPackage 聚合缺失文件并保留原始诊断', () => {
+    const diagnostics = ['rules', 'skills', 'mcp', 'sop', 'hooks', 'commands'].map((kind) => ({
+      code: `${kind}_missing`, severity: 'warning' as const, source: 'agt_a', message: `缺少 ${kind}`, path: `config/${kind}.yaml`,
+    }))
+    const groups = groupDiscoveryDiagnostics([
+      ...diagnostics,
+      { code: 'shared_asset_root_not_initialized', severity: 'info', message: '共享资产根未初始化' },
+    ])
+
+    expect(groups[0]).toMatchObject({ title: 'agt_a 缺少配置文件', severity: 'warning' })
+    expect(groups[0].diagnostics).toHaveLength(6)
+    expect(groups[0].diagnostics.map((item) => item.path)).toEqual(diagnostics.map((item) => item.path))
+    expect(groups[1]).toMatchObject({ severity: 'info', title: '共享资产尚未启用，不影响受管 AgentPackage 查看' })
+  })
+
+  it('按状态、目标和类型汇总引用且保留每条来源边', () => {
+    const reference = {
+      sourceAssetId: 'asset-1', sourceContainerId: 'container-1', referrerKind: 'agent' as const,
+      referrerId: 'zhouce', targetAssetId: 'skill-review', targetKind: 'skill' as const,
+      state: 'resolved' as const, sourcePath: 'config/skills.yaml',
+    }
+    const groups = groupAssetReferences([
+      reference,
+      { ...reference, sourceAssetId: 'asset-2', sourcePath: 'config/other-skills.yaml' },
+      { ...reference, state: 'dangling' },
+    ])
+
+    expect(groups).toHaveLength(2)
+    expect(groups[0]).toMatchObject({ state: 'resolved', targetAssetId: 'skill-review', targetKind: 'skill' })
+    expect(groups[0].references).toHaveLength(2)
+    expect(groups[1].references).toHaveLength(1)
   })
 
   it('来源容器缺失时不伪造路径或可写能力', () => {

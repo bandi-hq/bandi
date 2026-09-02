@@ -1,7 +1,7 @@
 import type { AppCommandId } from './app-commands'
 import type { RequestClientHandoff } from './client-adapters'
 import type { FullAgent } from './domain'
-import type { AgentCommitResultDto, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RegisterWorkspaceRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult, WorkspaceRegistrationResult } from './contracts'
+import type { AgentCommitResultDto, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ClaudeAgentPreviewDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult } from './contracts'
 import type { Company, FullDepartment, FullWorkspace, Role, ServiceGrant } from './domain'
 
 const commandEvent = 'bandi://app-command'
@@ -69,8 +69,10 @@ export async function selectDirectory(): Promise<string | null> {
 
 export const selectWorkspaceDirectory = selectDirectory
 
-export async function registerWorkspace(input: RegisterWorkspaceRequest): Promise<WorkspaceRegistrationResult> {
-  return invokeDesktop('register_workspace', { request: input })
+export async function selectClaudeAgentFile(): Promise<string | null> {
+  if (!isDesktopRuntime()) throw new Error('该系统功能仅在 Bandi Desktop 中可用')
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  return open({ directory: false, multiple: false, filters: [{ name: 'Claude Agent', extensions: ['md'] }] })
 }
 
 export async function createWorkspace(requestId: string, selectedPath: string, workspace: FullWorkspace): Promise<FullWorkspace> {
@@ -207,23 +209,31 @@ export async function readAgentAvatar(agentId: string): Promise<string | undefin
   return URL.createObjectURL(new Blob([new Uint8Array(asset.bytes)], { type: asset.mimeType }))
 }
 
-type ManagedAgentResult = { agent: FullAgent; baselineRef: BaselineRefDto }
-
 export type AgentPackageFileInput = { path: string; content: string }
 
-export async function createManagedAgent(
+export async function previewClaudeAgent(sourcePath: string): Promise<ClaudeAgentPreviewDto> {
+  const result = await invokeDesktop<{ preview: ClaudeAgentPreviewDto }>('preview_claude_agent', { request: { sourcePath } })
+  return result.preview
+}
+
+export async function importClaudeAgent(
+  sourcePath: string,
+  expectedSourceBaselineHash: string,
+  requestId: string,
   agent: FullAgent,
   files: AgentPackageFileInput[],
-  avatar?: File,
-): Promise<ManagedAgentResult> {
-  return invokeDesktop('create_managed_agent', {
+  grants: ServiceGrant[],
+): Promise<AgentCommitResultDto> {
+  return invokeDesktop('import_claude_agent', {
     request: {
-      agentId: agent.id,
-      agent,
-      files,
-      avatarBytes: avatar
-        ? Array.from(new Uint8Array(await avatar.arrayBuffer()))
-        : undefined,
+      sourcePath,
+      expectedSourceBaselineHash,
+      confirmed: true,
+      commit: {
+        requestId,
+        create: { agentId: agent.id, agent, files },
+        organization: agentOrganization(agent, grants),
+      },
     },
   })
 }
@@ -232,6 +242,15 @@ function persistedGrants(agentId: string, grants: ServiceGrant[]) {
   return {
     agentId,
     grants: grants.map((grant) => ({ ...grant, agentId })),
+  }
+}
+
+function agentOrganization(agent: FullAgent, grants: ServiceGrant[]) {
+  if (!agent.companyId && !agent.primaryDepartmentId && !agent.roleId) return undefined
+  return {
+    companyId: agent.companyId,
+    primaryDepartmentId: agent.primaryDepartmentId,
+    grants: persistedGrants(agent.id, grants),
   }
 }
 
@@ -253,42 +272,13 @@ export async function commitManagedAgentCreation(
           ? Array.from(new Uint8Array(await avatar.arrayBuffer()))
           : undefined,
       },
-      organization: {
-        companyId: agent.companyId,
-        primaryDepartmentId: agent.primaryDepartmentId,
-        grants: persistedGrants(agent.id, grants),
-      },
+      organization: agentOrganization(agent, grants),
     },
   })
 }
 
 export async function loadManagedAgentIdentity(agentId: string): Promise<ManagedAgentIdentityEditorResult> {
   return invokeDesktop('load_managed_agent_identity', { agentId })
-}
-
-export async function saveManagedAgentIdentity(
-  agent: FullAgent,
-  manifest: string,
-  expectedBaseline: BaselineRefDto,
-  baseContent: string,
-  avatar: { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; file: File },
-): Promise<SaveManagedAgentIdentityResult> {
-  return invokeDesktop('save_managed_agent_identity', {
-    request: {
-      requestId: `save-identity-${agent.id}`,
-      agentId: agent.id,
-      agent,
-      manifest,
-      expectedBaseline,
-      baseContent,
-      avatar: avatar.kind === 'replace'
-        ? {
-            kind: 'replace',
-            bytes: Array.from(new Uint8Array(await avatar.file.arrayBuffer())),
-          }
-        : avatar,
-    },
-  })
 }
 
 export async function commitManagedAgentIdentity(
@@ -316,11 +306,7 @@ export async function commitManagedAgentIdentity(
             }
           : avatar,
       },
-      organization: {
-        companyId: agent.companyId,
-        primaryDepartmentId: agent.primaryDepartmentId,
-        grants: persistedGrants(agent.id, grants),
-      },
+      organization: agentOrganization(agent, grants),
     },
   })
 }

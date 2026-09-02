@@ -17,6 +17,7 @@ import { getAgentConfigStatus, getLatestRevisionForAgent } from '../../domain-se
 import { useRegisterEditorSession } from '../../editor-session'
 import { resolveAgentConfigRoute, type AgentConfigSection, type AgentFileView } from '../../agent-config-projection'
 import { getDefaultAgentPackagePath } from '../../agent-package'
+import { getAgentPackageEditability } from '../../agent-package-schema'
 import { AgentPackageBrowser } from './agent-package-files'
 import { AgentConfigNavigation } from './agent-config-navigation'
 import { AgentAvatar } from '../../components/agents/agent-avatar'
@@ -32,7 +33,9 @@ function findManagedAgentAsset(
   kind: SourceAssetSummaryDto['kind'],
   label: string,
 ) {
-  const packageId = agent.packageSource.kind === 'bandi-managed' ? agent.packageSource.packageId : `agt_${agent.id}`
+  const packageId = agent.packageSource.kind === 'bandi-managed' || agent.packageSource.kind === 'claude-agent-import'
+    ? agent.packageSource.packageId
+    : `agt_${agent.id}`
   const expectedPath = `${packageId}/${relativePath}`
   const containers = discovery.containers.filter((item) => item.locator.rootKind === 'managed' && item.locator.relativePath === expectedPath)
   if (containers.length === 0) throw new Error(`未发现该 Agent 的可编辑 ${label}（${expectedPath}）`)
@@ -76,7 +79,9 @@ export function AgentDetailPage() {
     setParams(route.canonicalParams, { replace: true })
   }, [currentSearch, route, routeSearch, setParams])
   if (!agent || !route) return <EntityNotFound entity="Agent" backTo="/agents" />
-  const roleName = state.roles.find((item) => item.id === agent.roleId)?.name ?? '岗位引用缺失'
+  const roleName = agent.roleId
+    ? state.roles.find((item) => item.id === agent.roleId)?.name ?? '岗位引用缺失'
+    : '未关联组织（可选）'
   const packageMode = route.section === 'package'
   const lifecycleLabel = { active: '已启用', inactive: '已停用', archived: '已归档' }[agent.status]
   const updateParams = (update: (next: URLSearchParams) => void) => { const next = new URLSearchParams(location.search); update(next); navigate({ pathname: location.pathname, search: next.toString() ? `?${next}` : '' }) }
@@ -106,7 +111,19 @@ export function AgentDetailPage() {
 }
 
 function AgentConfigContent({ section, agent }: { section: AgentConfigSection; agent: FullAgent }) {
+  const { state } = useApp()
   if (section === 'overview') return <Overview agent={agent} />
+  if (state.runtime === 'desktop') {
+    const editability = getAgentPackageEditability(agent.packageSchema)
+    const reason = agent.packageSource.kind === 'external-reference'
+      ? '外部引用尚未导入为受管副本，仅可查看登记事实。'
+      : agent.packageSource.kind === 'bandi-demo'
+        ? '演示 Agent 不属于 Desktop 正式可写配置。'
+        : editability.editable
+          ? undefined
+          : editability.reason
+    if (reason) return <ReadOnlyAgentConfig reason={reason} />
+  }
   if (section === 'identity') return <IdentityTab agent={agent} />
   if (section === 'instructions') return <InstructionsTab agent={agent} />
   if (section === 'context') return <ContextTab agent={agent} />
@@ -118,6 +135,10 @@ function AgentConfigContent({ section, agent }: { section: AgentConfigSection; a
   if (section === 'collaboration') return <CollaborationTab agent={agent} />
   if (section === 'workspaces') return <WorkspacesTab agent={agent} />
   return <SopTab agent={agent} />
+}
+
+function ReadOnlyAgentConfig({ reason }: { reason: string }) {
+  return <section className="panel p-5"><StatusBadge tone="warning">只读</StatusBadge><h3 className="mt-4 font-semibold">当前 AgentPackage 不可编辑</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{reason} 可切换到 AgentPackage 视图查看已登记的配置内容。</p></section>
 }
 
 function Overview({ agent }: { agent: FullAgent }) {
@@ -132,12 +153,12 @@ function Overview({ agent }: { agent: FullAgent }) {
     { label: '上下文', value: agent.contextPolicy.enabled ? '已启用' : '可选 · 已关闭', state: agent.contextPolicy.enabled ? 'healthy' : 'optional' },
     { label: '技能', value: agent.skillRefs.length ? `已引用 ${agent.skillRefs.length} 项` : '可选 · 未配置', state: agent.skillRefs.length ? 'healthy' : 'optional' },
     { label: '长期记忆', value: memoryCount ? `已关联 ${memoryCount} 个空间` : '可选 · 未配置', state: memoryCount ? 'healthy' : 'optional' },
-    { label: '规则', value: agent.ruleRefs.length ? `已引用 ${agent.ruleRefs.length} 项` : '需要处理', state: agent.ruleRefs.length ? 'healthy' : 'issue' },
+    { label: '规则', value: agent.ruleRefs.length ? `已引用 ${agent.ruleRefs.length} 项` : '可选 · 未配置', state: agent.ruleRefs.length ? 'healthy' : 'optional' },
     { label: '工具连接', value: agent.mcpRefs.length ? `已引用 ${agent.mcpRefs.length} 项` : '可选 · 未配置', state: agent.mcpRefs.length ? 'healthy' : 'optional' },
     { label: '工作区', value: agent.workspaceBindings.length ? `已配置 ${agent.workspaceBindings.length} 项` : '可选 · 未配置', state: agent.workspaceBindings.length ? 'healthy' : 'optional' },
     { label: '标准流程', value: agent.sopRefs.length ? `已引用 ${agent.sopRefs.length} 项` : '可选 · 未配置', state: agent.sopRefs.length ? 'healthy' : 'optional' },
   ]
-  return <section className="panel overflow-hidden"><div className="border-b border-border px-5 py-4">{status.issues.length ? <><div className="label">需要处理</div><ul className="mt-3 space-y-2 text-sm">{status.issues.map((issue, index) => <li key={`${issue.code}-${index}`} className="flex gap-2"><span aria-hidden="true">•</span><span>{issue.label}</span></li>)}</ul></> : <p className="text-sm font-medium text-success">配置完整 · 当前未发现配置缺口</p>}{externalChange && <Button className="mt-4" variant="outline" size="sm" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'diff', agentId: agent.id, path: `${agent.packagePath}instructions.md` } })}><FileDiff size={14} aria-hidden="true" />查看差异</Button>}</div><div className="border-b border-border p-5"><div className="label">配置状态</div><dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 2xl:grid-cols-3">{configAreas.map((area) => <div key={area.label} className="min-w-0"><dt className="text-sm font-medium">{area.label}</dt><dd className={`mt-1 text-sm ${area.state === 'issue' ? 'text-danger' : 'text-muted-foreground'}`}>{area.value}</dd></div>)}</dl></div><div className="grid gap-6 p-5 lg:grid-cols-2"><div><div className="label">最近保存</div>{latest ? <><p className="mt-3 text-sm font-medium">最近一次配置版本保存于 {latest.savedAt}</p><p className="mt-2"><MonoPath>{latest.path}</MonoPath></p></> : <p className="mt-3 text-sm leading-6 text-muted-foreground">首次保存配置后，可在 AgentPackage 文件详情中查看和恢复历史版本。</p>}</div><div><div className="label">AgentPackage 路径</div><p className="mt-3"><MonoPath>{agent.packagePath}</MonoPath></p><div className="mt-4"><PathActions path={agent.packagePath} /></div></div></div></section>
+  return <section className="panel overflow-hidden"><div className="border-b border-border px-5 py-4">{status.issues.length ? <><div className="label">需要处理</div><ul className="mt-3 space-y-2 text-sm">{status.issues.map((issue, index) => <li key={`${issue.code}-${index}`} className="flex gap-2"><span aria-hidden="true">•</span><span>{issue.label}</span></li>)}</ul></> : <p className="text-sm font-medium text-success">配置完整 · 当前未发现配置缺口</p>}{externalChange && (state.runtime === 'desktop' ? <Button asChild className="mt-4" variant="outline" size="sm"><Link to={`/agents/${agent.id}?tab=instructions`}>打开主指令编辑器</Link></Button> : <Button className="mt-4" variant="outline" size="sm" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'diff', agentId: agent.id, path: `${agent.packagePath}instructions.md` } })}><FileDiff size={14} aria-hidden="true" />查看差异</Button>)}</div><div className="border-b border-border p-5"><div className="label">配置状态</div><dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 2xl:grid-cols-3">{configAreas.map((area) => <div key={area.label} className="min-w-0"><dt className="text-sm font-medium">{area.label}</dt><dd className={`mt-1 text-sm ${area.state === 'issue' ? 'text-danger' : 'text-muted-foreground'}`}>{area.value}</dd></div>)}</dl></div><div className="grid gap-6 p-5 lg:grid-cols-2"><div><div className="label">最近保存</div>{latest ? <><p className="mt-3 text-sm font-medium">最近一次配置版本保存于 {latest.savedAt}</p><p className="mt-2"><MonoPath>{latest.path}</MonoPath></p></> : <p className="mt-3 text-sm leading-6 text-muted-foreground">首次保存配置后，可在 AgentPackage 文件详情中查看和恢复历史版本。</p>}</div><div><div className="label">AgentPackage 路径</div><p className="mt-3"><MonoPath>{agent.packagePath}</MonoPath></p><div className="mt-4"><PathActions path={agent.packagePath} /></div></div></div></section>
 }
 
 function IdentityTab({ agent }: { agent: FullAgent }) {
@@ -162,7 +183,7 @@ function IdentityTab({ agent }: { agent: FullAgent }) {
   const [lifecycleSaving, setLifecycleSaving] = useState(false)
   const saveRequestId = useRef<string | undefined>(undefined)
   const lifecycleRequestId = useRef<string | undefined>(undefined)
-  const managedAvatar = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const managedAvatar = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   useEffect(() => { if (!editing) { setDraft(canonical); setServiceGrants(agent.serviceGrants); setAvatar(undefined); setRemoveAvatar(false); setIdentityConflict(undefined) } }, [agent.serviceGrants, canonical, editing])
   const dirty = editing && (JSON.stringify(draft) !== JSON.stringify(canonical) || JSON.stringify(serviceGrants) !== JSON.stringify(agent.serviceGrants) || Boolean(avatar) || removeAvatar)
   const reset = () => { setDraft(canonical); setServiceGrants(agent.serviceGrants); setAvatar(undefined); setRemoveAvatar(false); setSaveError(undefined); setIdentityConflict(undefined); setIdentityEditor(undefined); saveRequestId.current = undefined; setEditing(false) }
@@ -182,7 +203,10 @@ function IdentityTab({ agent }: { agent: FullAgent }) {
     setEditing(true)
   }
   const updateManagedAgent = (result: Extract<SaveManagedAgentIdentityResult, { kind: 'saved' | 'unchanged' }>, message: string) => {
-    dispatch({ type: 'UPSERT_MANAGED_AGENT', agent: { ...result.agent, packageSource: { kind: 'bandi-managed', packageId: agent.packageSource.kind === 'bandi-managed' ? agent.packageSource.packageId : `agt_${agent.id}`, strategy: 'managed', identityBaseline: result.baselineRef.assetContentHash } }, message })
+    const packageSource = agent.packageSource.kind === 'claude-agent-import'
+      ? agent.packageSource
+      : { kind: 'bandi-managed' as const, packageId: agent.packageSource.kind === 'bandi-managed' ? agent.packageSource.packageId : `agt_${agent.id}`, strategy: 'managed' as const, identityBaseline: result.baselineRef.assetContentHash }
+    dispatch({ type: 'UPSERT_MANAGED_AGENT', agent: { ...result.agent, packageSource }, message })
   }
   const reloadIdentityConflict = async () => {
     if (!identityConflict) return
@@ -301,7 +325,7 @@ function IdentityTab({ agent }: { agent: FullAgent }) {
     <div className="p-5">{editing ? <div className="grid gap-5 sm:grid-cols-2"><AgentAvatarPicker name={draft.name} file={avatar} onChange={(file) => { setAvatar(file); if (file) setRemoveAvatar(false) }} disabled={!managedAvatar} help={managedAvatar ? (removeAvatar ? '保存后将从 AgentPackage 移除头像。' : undefined) : '仅 current、可写的受管 AgentPackage 支持替换头像。'} />{agent.avatarPath && managedAvatar && !avatar && <div className="flex items-center justify-between rounded-lg border border-border p-4 sm:col-span-2"><div className="flex items-center gap-3"><AgentAvatar agent={agent} className="size-12" /><div><b className="text-sm">当前头像</b><p className="mt-1 text-xs text-muted-foreground">移除后保存会同时更新 agent.yaml。</p></div></div><Button type="button" variant="outline" size="sm" onClick={() => setRemoveAvatar((value) => !value)}>{removeAvatar ? '保留头像' : '移除头像'}</Button></div>}<Labeled label="名称"><input value={draft.name} onChange={(e) => update('name', e.target.value)} className="h-10 w-full px-3" /></Labeled><Labeled label="岗位"><select value={draft.roleId} onChange={(e) => update('roleId', e.target.value)} className="h-10 w-full px-3">{state.roles.filter((role) => role.companyId === draft.companyId && role.status === 'active').map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></Labeled><Labeled label="所属部门"><select value={draft.primaryDepartmentId} onChange={(e) => { const dep = state.departments.find((item) => item.id === e.target.value); setDraft((item) => ({ ...item, primaryDepartmentId: e.target.value, managerAgentId: dep?.managerAgentId })) }} className="h-10 w-full px-3">{state.departments.filter((item) => item.companyId === draft.companyId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Labeled><ServiceGrantEditor agent={agent} grants={serviceGrants} onChange={setServiceGrants} /><Labeled label="使命"><textarea value={draft.mission} onChange={(e) => update('mission', e.target.value)} className="min-h-28 w-full p-3" /></Labeled><ListEditor label="主要职责" values={draft.responsibilities} onChange={(value) => update('responsibilities', value)} /><ListEditor label="交付物" values={draft.deliverables} onChange={(value) => update('deliverables', value)} /><ListEditor label="决策边界" values={draft.decisionBoundaries} onChange={(value) => update('decisionBoundaries', value)} /><ListEditor label="升级条件" values={draft.escalationConditions} onChange={(value) => update('escalationConditions', value)} /><ListEditor label="禁止事项" values={draft.prohibitions} onChange={(value) => update('prohibitions', value)} /><ListEditor label="完成定义" values={draft.completionDefinition} onChange={(value) => update('completionDefinition', value)} /></div> : <div><FieldRow label="所属部门">{agent.department}</FieldRow><FieldRow label="直属主管">{state.agents.find((item) => item.id === agent.managerAgentId)?.name ?? '未设置'}</FieldRow><FieldRow label="使命">{agent.mission}</FieldRow><FieldRow label="主要职责">{agent.responsibilities.join('；')}</FieldRow><FieldRow label="交付物">{agent.deliverables.join('；')}</FieldRow><FieldRow label="决策边界">{agent.decisionBoundaries.join('；')}</FieldRow><FieldRow label="升级条件">{agent.escalationConditions.join('；')}</FieldRow><FieldRow label="禁止事项">{agent.prohibitions.join('；')}</FieldRow><FieldRow label="完成定义">{agent.completionDefinition.join('；')}</FieldRow><FieldRow label="服务授权">{agent.serviceGrants.length ? agent.serviceGrants.map((grant) => `${state.departments.find((item) => item.id === grant.departmentId)?.name}：${grant.capabilities.join('、')}（${grant.status}）`).join('；') : '无跨部门服务授权'}</FieldRow></div>}
       {saveError && <div role="alert" className="mt-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger"><p>{saveError}</p>{recoveryRef && <Button className="mt-3" variant="outline" size="sm" onClick={recoverIdentityRevision}>补记配置版本</Button>}</div>}
       {identityConflict && <div className="mt-4"><div className="grid gap-3 lg:grid-cols-3" aria-label="身份配置外部变化比较">{([{ label: '开始编辑时', side: identityConflict.base }, { label: '磁盘当前内容', side: identityConflict.current }, { label: '你的拟议内容', side: identityConflict.proposed }] as const).map(({ label, side }) => <section key={label} className="min-w-0 rounded-lg border border-border p-3"><b className="text-xs">{label}</b><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">{side.content}</pre></section>)}</div><div className="mt-3 flex justify-end"><Button variant="outline" size="sm" onClick={reloadIdentityConflict}>基于当前内容重新编辑</Button></div></div>}
-      {!editing && <div className="mt-6 flex flex-wrap gap-2"><Button variant="ghost" disabled={historyLoading} onClick={openIdentityHistory}><History size={15} aria-hidden="true" />{historyLoading ? '加载历史中…' : '版本历史'}</Button><Button variant="outline" onClick={() => setLifecycleTarget(agent.status === 'inactive' ? 'active' : 'inactive')}>{agent.status === 'inactive' ? '重新启用' : '停用 Agent'}</Button><Button variant="outline" onClick={() => setLifecycleTarget('archived')}>归档</Button><Button variant="danger" onClick={() => dispatch({ type: 'TOAST', text: `永久删除仅展示影响：${agent.workspaceBindings.length} 项工作区配置、${agent.sopRefs.length} 项 SOP 引用和正式记忆将保留；演示未删除对象` })}><Trash2 size={15} />预览永久删除影响</Button></div>}
+      {!editing && <div className="mt-6 flex flex-wrap gap-2"><Button variant="ghost" disabled={historyLoading} onClick={openIdentityHistory}><History size={15} aria-hidden="true" />{historyLoading ? '加载历史中…' : '版本历史'}</Button><Button variant="outline" onClick={() => setLifecycleTarget(agent.status === 'inactive' ? 'active' : 'inactive')}>{agent.status === 'inactive' ? '重新启用' : '停用 Agent'}</Button><Button variant="outline" onClick={() => setLifecycleTarget('archived')}>归档</Button></div>}
     </div></section><AppDialog open={Boolean(lifecycleTarget)} onOpenChange={(open) => { if (!open) setLifecycleTarget(undefined) }} title={lifecycleTarget === 'archived' ? '归档 Agent' : lifecycleTarget === 'inactive' ? '停用 Agent' : '重新启用 Agent'} description="使用状态变更会保存到完整的 Agent 主配置文件。" footer={<><Button variant="outline" onClick={() => setLifecycleTarget(undefined)}>取消</Button><Button variant={lifecycleTarget === 'archived' ? 'danger' : 'default'} disabled={lifecycleSaving} onClick={saveLifecycle}>{lifecycleSaving ? '保存中…' : '确认更新'}</Button></>}><div className="rounded-lg border border-border bg-muted/35 p-4 text-sm leading-6"><b>保留与影响</b><p className="mt-2 text-muted-foreground">AgentPackage、{agent.workspaceBindings.length} 项工作区配置、正式记忆和配置版本全部保留。停用或归档后不可接受新委派；已有静态引用不会自动删除。</p></div></AppDialog><AppDialog open={historyOpen} onOpenChange={(open) => { setHistoryOpen(open); if (!open) { setSelectedRevision(undefined); setRestoreConfirmed(false) } }} title="身份与职责版本历史" description="历史版本不可变；恢复仅写入完整的 Agent 主配置文件，并生成新的配置版本。头像文件不在历史中。" size="xl" footer={<><Button variant="outline" onClick={() => setHistoryOpen(false)}>关闭</Button><Button disabled={!selectedRevision || selectedContent === identityEditor?.canonicalContent || !restoreConfirmed || historyLoading} onClick={restoreIdentityRevision}>恢复为新版本</Button></>}>
       {revisions.length ? <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]"><div className="space-y-2" role="list" aria-label="身份配置版本">{revisions.map((revision) => <button key={revision.id} type="button" onClick={() => selectIdentityRevision(revision)} className={`w-full rounded-lg border p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selectedRevision?.id === revision.id ? 'border-foreground bg-muted' : 'border-border hover:bg-muted/60'}`}><b className="block truncate text-sm">{revision.id}</b><small className="mt-1 block text-muted-foreground">{revision.savedAt} · {revision.summary}</small></button>)}</div><div className="min-w-0"><div className="grid gap-3 sm:grid-cols-2"><section className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">磁盘当前主配置</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-6">{identityEditor?.canonicalContent}</pre></section><section className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">{selectedRevision?.id ?? '选择历史版本'}</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-6">{selectedContent}</pre></section></div><div className="mt-4 rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm">恢复前会再次确认文件未被修改；历史中的头像路径必须与当前固定的 avatar.png 状态一致，否则不会写入。</div>{selectedRevision && selectedContent !== identityEditor?.canonicalContent && <label className="mt-4 flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={restoreConfirmed} onChange={(event) => setRestoreConfirmed(event.target.checked)} /><span>我已核对当前主配置与目标历史内容，确认恢复并生成新版本。</span></label>}</div></div> : <p className="text-sm text-muted-foreground">当前身份与职责暂无配置版本。</p>}
     </AppDialog>{unsavedDialog}</>
@@ -335,7 +359,7 @@ function ServiceGrantEditor({ agent, grants, onChange }: { agent: FullAgent; gra
 
 function InstructionsTab({ agent }: { agent: FullAgent }) {
   const { dispatch } = useApp()
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   const [editing, setEditing] = useState(false)
   const [canonical, setCanonical] = useState(agent.instructions)
   const [text, setText] = useState(agent.instructions)
@@ -460,14 +484,14 @@ function InstructionsTab({ agent }: { agent: FullAgent }) {
   }
   useRegisterEditorSession(editing ? { id: `agent:${agent.id}:instructions`, dirty, canSave: dirty && !saving, save, cancel: reset } : undefined)
   const description = desktopManaged ? `保存位置：${agent.packagePath}instructions.md` : `当前页面保存位置：${agent.packagePath}instructions.md`
-  return <><section className="panel overflow-hidden"><TabHeader title="主指令" description={description} editing={editing} onEdit={beginEditing} onCancel={reset} onSave={save} canSave={!saving} saveLabel={desktopManaged ? (saving ? '保存中…' : '保存') : '保存到当前页面'} editDisabled={loading} /><div className="p-5">{loading && <p role="status" className="mb-4 text-sm text-muted-foreground">正在从 AgentPackage 加载主指令…</p>}{editing ? <textarea value={text} onChange={(event) => setText(event.target.value)} className="min-h-72 w-full resize-y p-4 text-sm leading-7" aria-label="主指令正文" aria-describedby={error ? 'instructions-save-error' : undefined} /> : <div className="whitespace-pre-wrap rounded-lg bg-muted/40 p-5 text-sm leading-7">{canonical}</div>}{error && <div id="instructions-save-error" role="alert" className="mt-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger"><p>{error}</p>{recoveryRef && <Button className="mt-3" variant="outline" size="sm" disabled={saving} onClick={recoverRevision}>{saving ? '补记中…' : '补记配置版本'}</Button>}</div>}{conflict && <div className="mt-4"><div className="grid gap-3 lg:grid-cols-3" aria-label="主指令外部变化比较">{([{ label: '开始编辑时', side: conflict.base }, { label: '磁盘当前内容', side: conflict.current }, { label: '你的拟议内容', side: conflict.proposed }] as const).map(({ label, side }) => <section key={label} className="min-w-0 rounded-lg border border-border p-3"><b className="text-xs">{label}</b><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">{side.content}</pre></section>)}</div><div className="mt-3 flex justify-end"><Button variant="outline" size="sm" disabled={loading} onClick={reloadConflictBaseline}>{loading ? '重新加载中…' : '基于当前内容重新编辑'}</Button></div></div>}<div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Agent 自有正文 · 显式引用 {agent.ruleRefs.length} 条规则{desktopManaged ? ' · 桌面版受管文件' : ' · 仅当前页面'}</span><div className="flex flex-wrap gap-1"><Button variant="ghost" size="sm" disabled={historyLoading || editing} onClick={openHistory}><History size={14} aria-hidden="true" />{historyLoading ? '加载历史中…' : '版本历史'}</Button><Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'diff', agentId: agent.id, path: `${agent.packagePath}instructions.md` } })}><FileDiff size={14} aria-hidden="true" />查看差异</Button></div></div></div></section><AppDialog open={historyOpen} onOpenChange={(open) => { setHistoryOpen(open); if (!open) { setSelectedRevision(undefined); setRestoreConfirmed(false) } }} title="主指令版本历史" description="历史版本不可变；恢复会基于磁盘当前内容生成新的配置版本。" size="xl" footer={<><Button variant="outline" onClick={() => setHistoryOpen(false)}>关闭</Button><Button disabled={!selectedRevision || selectedContent === canonical || !restoreConfirmed || historyLoading} onClick={restoreRevision}>恢复为新版本</Button></>}>
+  return <><section className="panel overflow-hidden"><TabHeader title="主指令" description={description} editing={editing} onEdit={beginEditing} onCancel={reset} onSave={save} canSave={!saving} saveLabel={desktopManaged ? (saving ? '保存中…' : '保存') : '保存到当前页面'} editDisabled={loading} /><div className="p-5">{loading && <p role="status" className="mb-4 text-sm text-muted-foreground">正在从 AgentPackage 加载主指令…</p>}{editing ? <textarea value={text} onChange={(event) => setText(event.target.value)} className="min-h-72 w-full resize-y p-4 text-sm leading-7" aria-label="主指令正文" aria-describedby={error ? 'instructions-save-error' : undefined} /> : <div className="whitespace-pre-wrap rounded-lg bg-muted/40 p-5 text-sm leading-7">{canonical}</div>}{error && <div id="instructions-save-error" role="alert" className="mt-4 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger"><p>{error}</p>{recoveryRef && <Button className="mt-3" variant="outline" size="sm" disabled={saving} onClick={recoverRevision}>{saving ? '补记中…' : '补记配置版本'}</Button>}</div>}{conflict && <div className="mt-4"><div className="grid gap-3 lg:grid-cols-3" aria-label="主指令外部变化比较">{([{ label: '开始编辑时', side: conflict.base }, { label: '磁盘当前内容', side: conflict.current }, { label: '你的拟议内容', side: conflict.proposed }] as const).map(({ label, side }) => <section key={label} className="min-w-0 rounded-lg border border-border p-3"><b className="text-xs">{label}</b><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">{side.content}</pre></section>)}</div><div className="mt-3 flex justify-end"><Button variant="outline" size="sm" disabled={loading} onClick={reloadConflictBaseline}>{loading ? '重新加载中…' : '基于当前内容重新编辑'}</Button></div></div>}<div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Agent 自有正文 · 显式引用 {agent.ruleRefs.length} 条规则{desktopManaged ? ' · 桌面版受管文件' : ' · 仅当前页面'}</span><div className="flex flex-wrap gap-1"><Button variant="ghost" size="sm" disabled={historyLoading || editing} onClick={openHistory}><History size={14} aria-hidden="true" />{historyLoading ? '加载历史中…' : '版本历史'}</Button>{!isDesktopRuntime() && <Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'diff', agentId: agent.id, path: `${agent.packagePath}instructions.md` } })}><FileDiff size={14} aria-hidden="true" />查看差异</Button>}</div></div></div></section><AppDialog open={historyOpen} onOpenChange={(open) => { setHistoryOpen(open); if (!open) { setSelectedRevision(undefined); setRestoreConfirmed(false) } }} title="主指令版本历史" description="历史版本不可变；恢复会基于磁盘当前内容生成新的配置版本。" size="xl" footer={<><Button variant="outline" onClick={() => setHistoryOpen(false)}>关闭</Button><Button disabled={!selectedRevision || selectedContent === canonical || !restoreConfirmed || historyLoading} onClick={restoreRevision}>恢复为新版本</Button></>}>
       {revisions.length ? <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]"><div className="space-y-2" role="list" aria-label="主指令配置版本">{revisions.map((revision) => <button key={revision.id} type="button" onClick={() => selectRevision(revision)} className={`w-full rounded-lg border p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selectedRevision?.id === revision.id ? 'border-foreground bg-muted' : 'border-border hover:bg-muted/60'}`}><b className="block truncate text-sm">{revision.id}</b><small className="mt-1 block text-muted-foreground">{revision.savedAt} · {revision.summary}</small>{revision.restoredFromRevisionId && <small className="mt-1 block text-muted-foreground">恢复自 {revision.restoredFromRevisionId}</small>}</button>)}</div><div className="min-w-0"><div className="grid gap-3 sm:grid-cols-2"><section className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">磁盘当前内容</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-6">{canonical}</pre></section><section className="min-w-0 rounded-lg border border-border"><div className="border-b border-border bg-muted px-3 py-2 text-xs font-semibold">{selectedRevision?.id ?? '选择历史版本'}</div><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-6">{selectedContent}</pre></section></div><div className="mt-4 rounded-lg border border-warning/30 bg-warning/8 p-3 text-sm">恢复前会再次确认文件未被修改；若磁盘发生变化，不会强制覆盖，草稿和历史均保留。</div>{selectedRevision && selectedContent !== canonical && <label className="mt-4 flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={restoreConfirmed} onChange={(event) => setRestoreConfirmed(event.target.checked)} /><span>我已核对磁盘当前内容与目标历史内容，确认恢复并生成新版本。</span></label>}</div></div> : <p className="text-sm text-muted-foreground">当前主指令暂无配置版本。</p>}
     </AppDialog>{unsavedDialog}</>
 }
 
 function ContextTab({ agent }: { agent: FullAgent }) {
   const { state, dispatch } = useApp()
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   const stateConfig: AgentContextConfig = useMemo(() => ({ policy: { ...agent.contextPolicy }, contextWindowTokens: agent.contextWindowTokens, outputProfileId: agent.outputProfileId, outputParameterBindings: agent.outputParameterBindings }), [agent.contextPolicy, agent.contextWindowTokens, agent.outputParameterBindings, agent.outputProfileId])
   const [canonical, setCanonical] = useState(stateConfig)
   const [canonicalContent, setCanonicalContent] = useState(() => serializeAgentConfig(agent, { kind: 'context', value: stateConfig }) ?? '')
@@ -554,7 +578,7 @@ function RulesTab({ agent, mode = 'rules' }: { agent: FullAgent; mode?: 'rules' 
   const { field, label, assetKind, parseRefs } = config
   const relativeConfigPath = `config/${mode}.yaml`
   const agentRefs = agent[field]
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   const [canonical, setCanonical] = useState([...agentRefs])
   const [canonicalContent, setCanonicalContent] = useState(() => serializeAgentConfig(agent, { kind: mode, value: agentRefs }) ?? '')
   const [refs, setRefs] = useState([...agentRefs])
@@ -630,7 +654,7 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
   const canPropose = desktop ? Boolean(selectedFormalSpace?.reviewerAgentId && !selectedReadOnly) : Boolean(governance?.canPropose)
 
   useEffect(() => {
-    if (!desktop || agent.packageSource.kind !== 'bandi-managed') return
+    if (!desktop || agent.packageSource.kind === 'external-reference' || agent.packageSource.kind === 'bandi-demo') return
     let active = true
     Promise.all([
       discoverEligibleMemorySpaces({ requestId: `discover-memory-${agent.id}`, agentId: agent.id }),
@@ -680,7 +704,7 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
 
 function PermissionsTab({ agent }: { agent: FullAgent }) {
   const { dispatch } = useApp()
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   const [editing, setEditing] = useState(false)
   const [canonical, setCanonical] = useState(agent.permissions)
   const [draft, setDraft] = useState(agent.permissions)
@@ -790,7 +814,7 @@ function PermissionsTab({ agent }: { agent: FullAgent }) {
 }
 
 function CollaborationTab({ agent }: { agent: FullAgent }) {
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   return desktopManaged ? <ManagedOrchestrationTab agent={agent} /> : <CollaborationMemoryTab agent={agent} />
 }
 
@@ -990,7 +1014,7 @@ function ComponentReferences({ title, references, assets, kind }: { title: strin
 
 function WorkspacesTab({ agent }: { agent: FullAgent }) {
   const { state, dispatch } = useApp()
-  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind === 'bandi-managed' && agent.packageSchema.compatibility === 'current'
+  const desktopManaged = isDesktopRuntime() && agent.packageSource.kind !== 'external-reference' && agent.packageSource.kind !== 'bandi-demo' && agent.packageSchema.compatibility === 'current'
   const [editingId, setEditingId] = useState<string>()
   const [draft, setDraft] = useState<WorkspaceBindingConfig>()
   const [canonicalContent, setCanonicalContent] = useState('')

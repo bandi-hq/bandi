@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-ui-asset"
+description = "Enables the import_ui_asset command without any pre-configured scope."
+commands.allow = ["import_ui_asset"]
+
+[[permission]]
+identifier = "deny-import-ui-asset"
+description = "Denies the import_ui_asset command without any pre-configured scope."
+commands.deny = ["import_ui_asset"]

@@ -10,6 +10,7 @@ import { AppProvider, initialState, type State } from '../state'
 import { DEFAULT_UI_PREFERENCES, UI_PREFERENCES_STORAGE_KEY } from '../ui-preferences'
 
 const desktopBridge = vi.hoisted(() => ({
+  desktop: false,
   deleteUiAsset: vi.fn<(slot: 'logo' | 'background') => Promise<void>>(),
   importUiAsset: vi.fn<() => Promise<void>>(),
   readUiAsset: vi.fn<() => Promise<string | undefined>>(),
@@ -18,7 +19,7 @@ const desktopBridge = vi.hoisted(() => ({
 vi.mock('../desktop-bridge', () => ({
   deleteUiAsset: desktopBridge.deleteUiAsset,
   importUiAsset: desktopBridge.importUiAsset,
-  isDesktopRuntime: () => false,
+  isDesktopRuntime: () => desktopBridge.desktop,
   readUiAsset: desktopBridge.readUiAsset,
 }))
 
@@ -33,6 +34,7 @@ function renderSettings(initialEntry = '/', state?: State) {
 const storage = new Map<string, string>()
 beforeEach(() => {
   storage.clear()
+  desktopBridge.desktop = false
   desktopBridge.deleteUiAsset.mockReset().mockResolvedValue(undefined)
   desktopBridge.importUiAsset.mockReset().mockResolvedValue(undefined)
   desktopBridge.readUiAsset.mockReset().mockResolvedValue(undefined)
@@ -108,6 +110,37 @@ describe('设置页', () => {
     expect(screen.queryByRole('option', { name: '系统默认终端' })).not.toBeInTheDocument()
   })
 
+  it('Desktop 只展示真实设置并保存白名单终端偏好', async () => {
+    desktopBridge.desktop = true
+    const { unmount } = renderSettings('/?section=network', {
+      ...initialState,
+      runtime: 'desktop',
+      uiPreferences: { ...DEFAULT_UI_PREFERENCES, terminal: 'terminal' },
+    })
+
+    expect(screen.getAllByRole('navigation', { name: '设置分类' })[0].querySelectorAll('button')).toHaveLength(3)
+    expect(screen.queryByRole('button', { name: 'AI 编程工具' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '网络与代理' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '终端' })).toHaveClass('bg-foreground')
+    expect(screen.getByText(/白名单界面偏好/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('combobox', { name: '默认终端' }), { target: { value: 'ghostty' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存终端偏好' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(UI_PREFERENCES_STORAGE_KEY) ?? '{}').terminal).toBe('ghostty'))
+
+    unmount()
+    renderSettings('/?section=data', {
+      ...initialState,
+      runtime: 'desktop',
+      uiPreferences: { ...DEFAULT_UI_PREFERENCES, terminal: 'ghostty' },
+    })
+    expect(screen.getByRole('tab', { name: '存储位置' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '快照与恢复' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '配置方案' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '远程备份' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Agent 根目录' })).not.toBeInTheDocument()
+  })
+
   it('将配置与备份拆为四个互斥 Tab 并保留内容归属', () => {
     renderSettings('/?section=data')
 
@@ -139,6 +172,45 @@ describe('设置页', () => {
     expect(screen.getByRole('switch', { name: '远程备份包含正式记忆' })).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByText(/凭据、Token、钥匙串/)).toBeInTheDocument()
     expect(screen.queryByText('快照历史')).not.toBeInTheDocument()
+  })
+
+  it('在存储位置展示已登记的本地访问边界', () => {
+    const managed = {
+      ...initialState.agents[0],
+      id: 'managed-access',
+      packagePath: '~/.bandi/agents/agt_managed-access/',
+      packageSource: { kind: 'bandi-managed' as const, packageId: 'agt_managed-access', strategy: 'managed' as const },
+    }
+    const imported = {
+      ...initialState.agents[0],
+      id: 'imported-access',
+      packagePath: '~/.bandi/agents/agt_imported-access/',
+      packageSource: { kind: 'claude-agent-import' as const, packageId: 'agt_imported-access', strategy: 'managed-copy' as const, sourcePath: '/Users/demo/.claude/agents/reviewer.md', sourceBaselineHash: 'sha256:source', importedAt: '2026-09-02T00:00:00Z' },
+    }
+    const reference = {
+      ...initialState.agents[0],
+      id: 'external-access',
+      packagePath: '/Volumes/shared/agent/',
+      packageSource: { kind: 'external-reference' as const, externalPath: '/Volumes/shared/agent', strategy: 'reference-only' as const },
+    }
+    renderSettings('/?section=data', {
+      ...initialState,
+      runtime: 'desktop',
+      agents: [managed, imported, reference],
+      workspaces: [{ ...initialState.workspaces[0], path: '/Volumes/projects/bandi' }],
+    })
+
+    fireEvent.click(screen.getByRole('tab', { name: '存储位置' }))
+    expect(screen.getByText('本地访问边界')).toBeInTheDocument()
+    expect(screen.getByText('Bandi 受管 AgentPackage')).toBeInTheDocument()
+    expect(screen.getByText('已登记工作区')).toBeInTheDocument()
+    expect(screen.getByText('Claude Agent 导入来源')).toBeInTheDocument()
+    expect(screen.getByText('外部 AgentPackage 引用')).toBeInTheDocument()
+    expect(screen.getByText('/Volumes/projects/bandi')).toBeInTheDocument()
+    expect(screen.getByText('/Users/demo/.claude/agents/reviewer.md')).toBeInTheDocument()
+    expect(screen.getByText('/Volumes/shared/agent')).toBeInTheDocument()
+    expect(screen.getByText(/不是整盘权限/)).toBeInTheDocument()
+    expect(screen.queryByText(/OS 已授权/)).not.toBeInTheDocument()
   })
 
   it('配置与备份 Tab 支持循环键盘切换并保留未保存草稿', async () => {

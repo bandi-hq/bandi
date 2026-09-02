@@ -360,11 +360,11 @@ export function serializeAgentConfig(agent: FullAgent, payload: AgentConfigPaylo
       `schemaVersion: ${AGENT_PACKAGE_SCHEMA_VERSION}`,
       `id: ${quote(applied.id)}`,
       `name: ${quote(applied.name)}`,
-      `roleId: ${quote(applied.roleId)}`,
+      ...(applied.roleId ? [`roleId: ${quote(applied.roleId)}`] : []),
       `status: ${quote(applied.status)}`,
-      `companyId: ${quote(applied.companyId ?? '')}`,
-      `primaryDepartmentId: ${quote(applied.primaryDepartmentId ?? '')}`,
-      `managerAgentId: ${quote(applied.managerAgentId ?? '')}`,
+      ...(applied.companyId ? [`companyId: ${quote(applied.companyId)}`] : []),
+      ...(applied.primaryDepartmentId ? [`primaryDepartmentId: ${quote(applied.primaryDepartmentId)}`] : []),
+      ...(applied.managerAgentId ? [`managerAgentId: ${quote(applied.managerAgentId)}`] : []),
       ...(applied.avatarPath ? [`avatarPath: ${quote(applied.avatarPath)}`] : []),
       `mission: ${quote(applied.mission)}`,
       'responsibilities:', yamlList(applied.responsibilities),
@@ -485,12 +485,18 @@ export function isAgentConfigPayload(value: unknown): value is AgentConfigPayloa
     && (payloadValue.orchestrationPolicy === undefined || isRecord(payloadValue.orchestrationPolicy))
     && (payloadValue.hookRefs === undefined || isSafeComponentReferences(payloadValue.hookRefs))
     && (payloadValue.commandRefs === undefined || isSafeComponentReferences(payloadValue.commandRefs))
-  if (value.kind === 'identity') return payloadValue.schemaVersion === AGENT_PACKAGE_SCHEMA_VERSION
-    && ['id', 'name', 'roleId', 'mission'].every((key) => typeof payloadValue[key] === 'string')
-    && ['active', 'inactive', 'archived'].includes(String(payloadValue.status))
-    && ['responsibilities', 'deliverables', 'decisionBoundaries', 'escalationConditions', 'prohibitions', 'completionDefinition'].every((key) => isStringArray(payloadValue[key]))
-    && ['companyId', 'primaryDepartmentId', 'managerAgentId'].every((key) => payloadValue[key] === undefined || typeof payloadValue[key] === 'string')
-    && (payloadValue.avatarPath === undefined || payloadValue.avatarPath === 'avatar.png')
+  if (value.kind === 'identity') {
+    const organizationFields = ['roleId', 'companyId', 'primaryDepartmentId'] as const
+    const organizationCount = organizationFields.filter((key) => typeof payloadValue[key] === 'string' && payloadValue[key] !== '').length
+    return payloadValue.schemaVersion === AGENT_PACKAGE_SCHEMA_VERSION
+      && ['id', 'name', 'mission'].every((key) => typeof payloadValue[key] === 'string')
+      && (organizationCount === 0 || organizationCount === organizationFields.length)
+      && organizationFields.every((key) => payloadValue[key] === undefined || typeof payloadValue[key] === 'string')
+      && ['active', 'inactive', 'archived'].includes(String(payloadValue.status))
+      && ['responsibilities', 'deliverables', 'decisionBoundaries', 'escalationConditions', 'prohibitions', 'completionDefinition'].every((key) => isStringArray(payloadValue[key]))
+      && (payloadValue.managerAgentId === undefined || typeof payloadValue.managerAgentId === 'string')
+      && (payloadValue.avatarPath === undefined || payloadValue.avatarPath === 'avatar.png')
+  }
   return false
 }
 

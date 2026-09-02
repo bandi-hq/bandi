@@ -17,37 +17,60 @@ import { normalizeTerminalId, terminalOptions } from '../../terminal-model'
 import { isDesktopRuntime } from '../../desktop-bridge'
 import { DesktopBackupPanel } from './desktop-backup-panel'
 
-const sections = [['ai-clients', 'AI 编程工具'], ['network', '网络与代理'], ['terminal', '终端'], ['data', '配置与备份'], ['appearance', '个性化']]
-export function SettingsPage() { const [params, setParams] = useSearchParams(); const section = sections.some(([id]) => id === params.get('section')) ? params.get('section')! : 'ai-clients'; return <><PageHeader title="设置" description="管理 AI 编程工具、网络代理、终端、配置方案与备份，以及本机个性化。" /><div className="grid min-w-0 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]"><nav className="panel h-fit p-2" aria-label="设置分类">{sections.map(([id, label]) => <button key={id} onClick={() => setParams(id === 'ai-clients' ? {} : { section: id })} className={`w-full rounded-md px-3 py-2.5 text-left text-sm ${section === id ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{label}</button>)}</nav><div className="min-w-0 space-y-5"><SettingsSection section={section} /></div></div></> }
-function SettingsSection({ section }: { section: string }) { const { state, dispatch } = useApp(); if (section === 'ai-clients') return <><AiClientManagementSection /><PluginInstallationSummary /></>; if (section === 'network') return <NetworkProxyPanel />; if (section === 'terminal') return <SettingsDraftPanel key="terminal" title="终端" fields={{ terminal: normalizeTerminalId(state.settings.terminal) }} onSave={(changes) => dispatch({ type: 'UPDATE_SETTINGS', changes })}>{({ draft, update }) => <><label className="block text-sm font-medium">默认终端<select className="mt-2 h-10 w-full px-3" value={draft.terminal} onChange={(event) => update('terminal', event.target.value as typeof draft.terminal)}>{terminalOptions().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><p className="mt-3 text-xs leading-5 text-muted-foreground">当前选择只保存在页面内存，刷新后恢复默认值；macOS Desktop 可请求白名单终端打开目录，Windows 与 Web 请复制路径后手动继续。</p></>}</SettingsDraftPanel>; if (section === 'data') return <ConfigurationAndBackupSection />; return <PersonalizationSection /> }
+const webSections = [['ai-clients', 'AI 编程工具'], ['network', '网络与代理'], ['terminal', '终端'], ['data', '配置与备份'], ['appearance', '个性化']]
+const desktopSections = [['terminal', '终端'], ['data', '配置与备份'], ['appearance', '个性化']]
+export function SettingsPage() { const [params, setParams] = useSearchParams(); const desktop = isDesktopRuntime(); const sections = desktop ? desktopSections : webSections; const defaultSection = desktop ? 'terminal' : 'ai-clients'; const section = sections.some(([id]) => id === params.get('section')) ? params.get('section')! : defaultSection; return <><PageHeader title="设置" description={desktop ? '管理终端交接、本地配置与备份，以及本机个性化。' : '管理 AI 编程工具、网络代理、终端、配置方案与备份，以及本机个性化。'} /><div className="grid min-w-0 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]"><nav className="panel h-fit p-2" aria-label="设置分类">{sections.map(([id, label]) => <button key={id} onClick={() => setParams(id === defaultSection ? {} : { section: id })} className={`w-full rounded-md px-3 py-2.5 text-left text-sm ${section === id ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{label}</button>)}</nav><div className="min-w-0 space-y-5"><SettingsSection section={section} /></div></div></> }
+function SettingsSection({ section }: { section: string }) { const { state, dispatch } = useApp(); const desktop = isDesktopRuntime(); if (!desktop && section === 'ai-clients') return <><AiClientManagementSection /><PluginInstallationSummary /></>; if (!desktop && section === 'network') return <NetworkProxyPanel />; if (section === 'terminal') { const savedTerminal = desktop ? normalizeTerminalId(state.uiPreferences.terminal) : normalizeTerminalId(state.settings.terminal); return <SettingsDraftPanel key="terminal" title="终端" saveLabel={desktop ? '保存终端偏好' : '保存演示设置'} fields={{ terminal: savedTerminal }} onSave={(changes) => desktop ? dispatch({ type: 'UPDATE_UI_PREFERENCES', preferences: { ...state.uiPreferences, terminal: changes.terminal } }) : dispatch({ type: 'UPDATE_SETTINGS', changes })}>{({ draft, update }) => <><label className="block text-sm font-medium">默认终端<select className="mt-2 h-10 w-full px-3" value={draft.terminal} onChange={(event) => update('terminal', event.target.value as typeof draft.terminal)}>{terminalOptions().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><p className="mt-3 text-xs leading-5 text-muted-foreground">{desktop ? '保存在当前设备的白名单界面偏好中；不进入 Agent 配置、版本历史或备份。' : '当前选择只保存在页面内存，刷新后恢复默认值；Web 请复制路径后手动继续。'}</p></>}</SettingsDraftPanel> } if (section === 'data') return <ConfigurationAndBackupSection />; return <PersonalizationSection /> }
 
-const dataTabs = [
+const webDataTabs = [
   { id: 'profiles', label: '配置方案' },
   { id: 'storage', label: '存储位置' },
   { id: 'snapshots', label: '快照与恢复' },
   { id: 'remote', label: '远程备份' },
 ] as const
+const desktopDataTabs = [
+  { id: 'storage', label: '存储位置' },
+  { id: 'snapshots', label: '快照与恢复' },
+] as const
 
-type DataTabId = typeof dataTabs[number]['id']
+type DataTabId = typeof webDataTabs[number]['id']
 
 function ConfigurationAndBackupSection() {
   const { state, dispatch } = useApp()
-  const [activeTab, setActiveTab] = useState<DataTabId>('profiles')
+  const desktop = isDesktopRuntime()
+  const tabs = desktop ? desktopDataTabs : webDataTabs
+  const [activeTab, setActiveTab] = useState<DataTabId>(desktop ? 'storage' : 'profiles')
   const [agentRootDraft, setAgentRootDraft] = useState(state.settings.agentRoot)
   const [repositoryDraft, setRepositoryDraft] = useState(state.backupSettings.gitConnection.status === 'connected-demo' ? state.backupSettings.gitConnection.repository : '')
   return <div className="min-w-0 space-y-5">
-    <EntityTabs tabs={[...dataTabs]} active={activeTab} onChange={(tab) => setActiveTab(tab as DataTabId)} scope="configuration-backup" ariaLabel="配置与备份分类" variant="segmented" className="w-full" tabListClassName="min-[720px]:w-full min-[720px]:min-w-0 [&>button]:min-[720px]:min-w-0 [&>button]:min-[720px]:flex-1" />
-    <EntityTabPanel tabId="profiles" activeTab={activeTab} scope="configuration-backup"><ConfigurationProfilesPanel /></EntityTabPanel>
-    <EntityTabPanel tabId="storage" activeTab={activeTab} scope="configuration-backup"><StorageLocationPanel value={agentRootDraft} savedValue={state.settings.agentRoot} onChange={setAgentRootDraft} onReset={() => setAgentRootDraft(state.settings.agentRoot)} onSave={() => dispatch({ type: 'UPDATE_SETTINGS', changes: { agentRoot: agentRootDraft } })} /></EntityTabPanel>
+    <EntityTabs tabs={[...tabs]} active={activeTab} onChange={(tab) => setActiveTab(tab as DataTabId)} scope="configuration-backup" ariaLabel="配置与备份分类" variant="segmented" className="w-full" tabListClassName="min-[720px]:w-full min-[720px]:min-w-0 [&>button]:min-[720px]:min-w-0 [&>button]:min-[720px]:flex-1" />
+    {!desktop && <EntityTabPanel tabId="profiles" activeTab={activeTab} scope="configuration-backup"><ConfigurationProfilesPanel /></EntityTabPanel>}
+    <EntityTabPanel tabId="storage" activeTab={activeTab} scope="configuration-backup">{desktop ? <LocalAccessBoundaryPanel /> : <StorageLocationPanel value={agentRootDraft} savedValue={state.settings.agentRoot} onChange={setAgentRootDraft} onReset={() => setAgentRootDraft(state.settings.agentRoot)} onSave={() => dispatch({ type: 'UPDATE_SETTINGS', changes: { agentRoot: agentRootDraft } })} />}</EntityTabPanel>
     <EntityTabPanel tabId="snapshots" activeTab={activeTab} scope="configuration-backup"><SnapshotRecoveryPanel /></EntityTabPanel>
-    <EntityTabPanel tabId="remote" activeTab={activeTab} scope="configuration-backup"><RemoteBackupPanel repository={repositoryDraft} onRepositoryChange={setRepositoryDraft} /></EntityTabPanel>
+    {!desktop && <EntityTabPanel tabId="remote" activeTab={activeTab} scope="configuration-backup"><RemoteBackupPanel repository={repositoryDraft} onRepositoryChange={setRepositoryDraft} /></EntityTabPanel>}
   </div>
 }
 
 function StorageLocationPanel({ value, savedValue, onChange, onReset, onSave }: { value: string; savedValue: string; onChange: (value: string) => void; onReset: () => void; onSave: () => void }) {
   const { state, dispatch } = useApp()
   const dirty = value !== savedValue
-  return <div className="space-y-5"><Panel title="存储位置"><label className="text-sm font-medium">Agent 根目录<input className="mt-2 h-10 w-full px-3" value={value} onChange={(event) => onChange(event.target.value)} /></label><p className="mt-3 text-xs leading-5 text-muted-foreground">所有 AgentPackage 的统一存放位置。每个 Agent 使用稳定 ID 的独立目录，不随部门或工作区变化。</p><p className="mt-2 text-xs leading-5 text-muted-foreground">保存只更新当前页面，不创建、移动或扫描真实目录。</p><div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={!dirty} onClick={onReset}>取消</Button><Button disabled={!dirty} onClick={onSave}>保存演示设置</Button></div></Panel><Panel title="外部变化保护"><Select label="演示检查频率" value={state.settings.externalChangeInterval} values={['手动', '5 分钟', '15 分钟']} onChange={(next) => dispatch({ type: 'UPDATE_SETTINGS', changes: { externalChangeInterval: next as typeof state.settings.externalChangeInterval } })} /><p className="mt-3 text-xs leading-5 text-muted-foreground">多个终端或编辑器的并发修改统一表现为相对编辑基线的外部变化，并通过差异对比处理；Bandi 不识别或展示终端与会话状态。浏览器演示不会执行扫描。</p></Panel></div>
+  return <div className="space-y-5"><Panel title="存储位置"><label className="text-sm font-medium">Agent 根目录<input className="mt-2 h-10 w-full px-3" value={value} onChange={(event) => onChange(event.target.value)} /></label><p className="mt-3 text-xs leading-5 text-muted-foreground">所有 AgentPackage 的统一存放位置。每个 Agent 使用稳定 ID 的独立目录，不随部门或工作区变化。</p><p className="mt-2 text-xs leading-5 text-muted-foreground">保存只更新当前页面，不创建、移动或扫描真实目录。</p><div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={!dirty} onClick={onReset}>取消</Button><Button disabled={!dirty} onClick={onSave}>保存演示设置</Button></div></Panel><LocalAccessBoundaryPanel /><Panel title="外部变化保护"><Select label="演示检查频率" value={state.settings.externalChangeInterval} values={['手动', '5 分钟', '15 分钟']} onChange={(next) => dispatch({ type: 'UPDATE_SETTINGS', changes: { externalChangeInterval: next as typeof state.settings.externalChangeInterval } })} /><p className="mt-3 text-xs leading-5 text-muted-foreground">多个终端或编辑器的并发修改统一表现为相对编辑基线的外部变化，并通过差异对比处理；Bandi 不识别或展示终端与会话状态。浏览器演示不会执行扫描。</p></Panel></div>
+}
+
+function LocalAccessBoundaryPanel() {
+  const { state } = useApp()
+  const unique = (paths: string[]) => [...new Set(paths.filter(Boolean))]
+  const managed = unique(state.agents.filter((agent) => agent.packageSource.kind === 'bandi-managed' || agent.packageSource.kind === 'claude-agent-import').map((agent) => agent.packagePath.replace(/\/$/, '')))
+  const workspaces = unique(state.workspaces.map((workspace) => workspace.path))
+  const imports = unique(state.agents.flatMap((agent) => agent.packageSource.kind === 'claude-agent-import' ? [agent.packageSource.sourcePath] : []))
+  const references = unique(state.agents.flatMap((agent) => agent.packageSource.kind === 'external-reference' ? [agent.packageSource.externalPath] : []))
+  const groups = [
+    ['Bandi 受管 AgentPackage', managed, 'Bandi 自有受管副本；只在明确保存、恢复等配置操作中写入。'],
+    ['已登记工作区', workspaces, '由系统选择器明确选择并经后端规范化；登记不表示启动时扫描整个目录。'],
+    ['Claude Agent 导入来源', imports, '只在选择、预览和确认导入时读取；后续编辑受管副本，不写回来源。'],
+    ['外部 AgentPackage 引用', references, '只保存规范化位置和登记元数据；不枚举、读取、复制或修改目录内容。'],
+  ] as const
+  return <Panel title="本地访问边界"><p className="text-sm leading-6 text-muted-foreground">这里展示已登记的文件与目录边界，不是整盘权限，也不会扩大 Bandi 的访问范围。</p><div className="mt-4 space-y-3">{groups.map(([label, paths, description]) => <section key={label} className="rounded-lg border border-border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm">{label}</b><StatusBadge tone={paths.length ? 'neutral' : 'warning'}>{paths.length} 项</StatusBadge></div><p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>{paths.length ? <ul className="mt-3 space-y-2">{paths.map((path) => <li key={path} className="min-w-0 overflow-x-auto rounded-md bg-muted/50 px-3 py-2"><MonoPath>{path}</MonoPath></li>)}</ul> : <p className="mt-3 text-xs text-muted-foreground">尚未登记。</p>}</section>)}</div><MockBoundaryNote>{state.runtime === 'desktop' ? 'Bandi 不会在首次启动时扫描用户文件。外部文件或目录只在你发起具体操作并通过系统选择器选择后处理。' : '浏览器演示只展示当前页面中的示例数据，不表示浏览器已读取、登记或获得本机访问权限。'}</MockBoundaryNote></Panel>
 }
 function NetworkProxyPanel() {
   const { state, dispatch } = useApp()
@@ -93,7 +116,7 @@ function ConfigurationProfilesPanel() {
 
 function PluginInstallationSummary() { const { state } = useApp(); return <Panel title="插件安装概览"><p className="text-sm leading-6 text-muted-foreground">这里只查看独立的插件安装记录；安装、更新、回滚和卸载统一在插件资产详情管理。</p><div className="mt-4 space-y-2">{state.pluginInstallations.map((installation) => { const plugin = state.assets.find((item) => item.id === installation.pluginId); return <Link key={installation.pluginId} to={`/assets/${installation.pluginId}`} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 hover:bg-muted"><span><b>{plugin?.name ?? installation.pluginId}</b><small className="mt-1 block text-muted-foreground">{installation.installedVersion ?? '未安装'} · {pluginScopeLabels[installation.scope]}级</small></span><StatusBadge tone={installation.compatible && installation.componentsComplete ? installation.status === 'available' ? 'neutral' : 'success' : 'warning'}>{pluginInstallationStatusLabels[installation.status]}</StatusBadge></Link> })}{!state.pluginInstallations.length && <p className="text-sm text-muted-foreground">暂无插件安装记录。</p>}</div><p className="mt-3 text-xs text-muted-foreground">这里只显示安装记录，不表示插件已在当前工具中启用。</p></Panel> }
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="panel p-5"><b>{title}</b><div className="mt-5">{children}</div></section> }
-function SettingsDraftPanel<T extends Record<string, string>>({ title, fields, onSave, children }: { title: string; fields: T; onSave: (changes: T) => void; children: (props: { draft: T; update: <K extends keyof T>(key: K, value: T[K]) => void }) => React.ReactNode }) { const [draft, setDraft] = useState(fields); const dirty = JSON.stringify(draft) !== JSON.stringify(fields); const reset = () => setDraft(fields); return <Panel title={title}>{children({ draft, update: (key, value) => setDraft((current) => ({ ...current, [key]: value })) })}<div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={!dirty} onClick={reset}>取消</Button><Button disabled={!dirty} onClick={() => onSave(draft)}>保存演示设置</Button></div></Panel> }
+function SettingsDraftPanel<T extends Record<string, string>>({ title, fields, onSave, children, saveLabel = '保存演示设置' }: { title: string; fields: T; onSave: (changes: T) => void; children: (props: { draft: T; update: <K extends keyof T>(key: K, value: T[K]) => void }) => React.ReactNode; saveLabel?: string }) { const [draft, setDraft] = useState(fields); const dirty = JSON.stringify(draft) !== JSON.stringify(fields); const reset = () => setDraft(fields); return <Panel title={title}>{children({ draft, update: (key, value) => setDraft((current) => ({ ...current, [key]: value })) })}<div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={!dirty} onClick={reset}>取消</Button><Button disabled={!dirty} onClick={() => onSave(draft)}>{saveLabel}</Button></div></Panel> }
 function Select({ label, value, values, onChange }: { label: string; value: string; values: string[]; onChange: (v: string) => void }) { return <label className="block text-sm font-medium">{label}<select className="mt-2 h-10 w-full px-3" value={value} onChange={(e) => onChange(e.target.value)}>{values.map((item) => <option key={item}>{item}</option>)}</select></label> }
 function SnapshotRecoveryPanel() {
   if (isDesktopRuntime()) return <DesktopBackupPanel />

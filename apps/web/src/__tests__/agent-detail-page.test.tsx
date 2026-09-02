@@ -7,13 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorSessionProvider } from '../editor-session'
 import { AgentDetailPage } from '../pages/agents/agent-detail-page'
 import { GlobalSheets } from '../sheets'
-import { AppProvider, initialState, type State } from '../state'
+import { AppProvider, initialState, useApp, type State } from '../state'
 import * as desktopBridge from '../desktop-bridge'
 import type { DiscoveryResult, LoadEditorResult } from '../contracts'
 
 const NativeRequest = globalThis.Request
 
 beforeEach(() => {
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
   vi.stubGlobal('Request', class extends NativeRequest {
     constructor(input: RequestInfo | URL, init?: RequestInit) {
       super(input, { ...init, signal: undefined })
@@ -21,10 +22,16 @@ beforeEach(() => {
   })
 })
 
+function NoticeProbe() {
+  const { state } = useApp()
+  if (!state.notice) return null
+  return <output role={state.notice.tone === 'error' ? 'alert' : 'status'}>{state.notice.title} {state.notice.description}</output>
+}
+
 function renderAgent(initialEntry = '/agents/zhouce', state?: State) {
   const router = createMemoryRouter([{
     path: '/agents/:id',
-    element: <AppProvider initialState={state}><EditorSessionProvider><AgentDetailPage /><GlobalSheets /></EditorSessionProvider></AppProvider>,
+    element: <AppProvider initialState={state}><EditorSessionProvider><AgentDetailPage /><GlobalSheets /><NoticeProbe /></EditorSessionProvider></AppProvider>,
   }], { initialEntries: [initialEntry] })
   return { router, ...render(<RouterProvider router={router} />) }
 }
@@ -53,6 +60,25 @@ describe('Agent 双模式配置工作台', () => {
     expect(screen.getByRole('button', { name: '主指令' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '主指令 Instructions' })).not.toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: '当前配置关联文件' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['外部引用', { kind: 'external-reference' as const, externalPath: '/tmp/external', strategy: 'reference-only' as const }, { compatibility: 'unverified' as const }],
+    ['旧版受管包', { kind: 'bandi-managed' as const, packageId: 'agt_zhouce', strategy: 'managed' as const }, { schemaVersion: 0, compatibility: 'legacy' as const }],
+    ['未来版受管包', { kind: 'bandi-managed' as const, packageId: 'agt_zhouce', strategy: 'managed' as const }, { schemaVersion: 2, compatibility: 'future' as const }],
+  ])('Desktop %s 的配置领域保持只读', (_label, packageSource, packageSchema) => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      runtime: 'desktop',
+      agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource, packageSchema } : item),
+    }
+
+    renderAgent('/agents/zhouce?tab=identity', state)
+
+    expect(screen.getByRole('heading', { name: '当前 AgentPackage 不可编辑' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '预览永久删除影响' })).not.toBeInTheDocument()
   })
 
   it('身份编辑只从身份与职责领域内进入', async () => {
@@ -394,6 +420,24 @@ describe('Agent 双模式配置工作台', () => {
     expect(screen.getByText(/只读源码根据当前页面中的配置生成/)).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '预览' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('tab', { name: '源码' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('复制当前源码到系统剪贴板', async () => {
+    renderAgent('/agents/zhouce?tab=package&path=config%2Frules.yaml&view=source')
+
+    fireEvent.click(screen.getByRole('button', { name: '复制当前源码' }))
+
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('rule-common')))
+    expect(await screen.findByRole('status')).toHaveTextContent('源码已复制')
+  })
+
+  it('剪贴板拒绝时报告真实失败', async () => {
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error('denied'))
+    renderAgent('/agents/zhouce?tab=package&path=agent.yaml&view=preview')
+
+    fireEvent.click(screen.getByRole('button', { name: '复制当前预览' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('复制失败')
   })
 
   it('文件树使用 roving tabindex 并声明完整树语义', () => {

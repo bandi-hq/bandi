@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FolderOpen, Copy, Info } from 'lucide-react'
+import { ArrowLeft, Copy, Info } from 'lucide-react'
 import { Button } from '../ui/button'
 import { cn } from '../../lib'
 import { useApp } from '../../state'
@@ -22,7 +22,7 @@ export function toneForStatus(value: string): Tone {
 }
 
 export function MonoPath({ children }: { children: ReactNode }) {
-  return <code className="mono break-all text-xs text-muted-foreground">{children}</code>
+  return <code className="mono break-words [overflow-wrap:anywhere] text-xs text-muted-foreground">{children}</code>
 }
 
 export function FieldRow({ label, children }: { label: string; children: ReactNode }) {
@@ -61,6 +61,13 @@ export function EntityNotFound({ entity, backTo }: { entity: string; backTo: str
 
 export function PathActions({ path }: { path: string }) {
   const { dispatch } = useApp()
-  const feedback = (action: string) => dispatch({ type: 'TOAST', text: `${action}：${path} · 未访问本机文件或剪贴板` })
-  return <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => feedback('待在编辑器中打开的路径')}><ExternalLink size={14} />查看编辑器路径</Button><Button variant="outline" size="sm" onClick={() => feedback('待在 Finder 中显示的路径')}><FolderOpen size={14} />查看文件位置</Button><Button variant="outline" size="sm" onClick={() => feedback('待复制的路径')}><Copy size={14} />查看待复制路径</Button></div>
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(path)
+      dispatch({ type: 'SHOW_NOTICE', notice: { tone: 'success', title: '路径已复制', description: path } })
+    } catch {
+      dispatch({ type: 'SHOW_NOTICE', notice: { tone: 'error', title: '复制失败', description: '系统未允许访问剪贴板，请手动选择并复制。' } })
+    }
+  }
+  return <Button variant="outline" size="sm" onClick={() => void copy()}><Copy size={14} aria-hidden="true" />复制路径</Button>
 }

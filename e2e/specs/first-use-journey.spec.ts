@@ -138,11 +138,11 @@ async function assertPersistedFacts(session: WebdriverIO.Browser) {
   await expect(session.$(`//a[normalize-space()="${workspaceName}"]`)).toBeDisplayed()
   await expect(session.$(`//*[contains(normalize-space(), "${companyName}")]`)).toBeDisplayed()
   await expect(session.$(`//small[normalize-space()="${departmentName}"]`)).toBeDisplayed()
-  await expect(session.$('h1=先建立你的个人工作区')).not.toExist()
+  await expect(session.$('h1=先导入或创建一个长期 Agent')).not.toExist()
   expect(await session.$('body').getText()).not.toContain('知衡')
 
   await session.execute(() => { window.location.hash = '#/agents' })
-  await expect(session.$('h1=Agents')).toBeDisplayed()
+  await expect(session.$('h1=Agent')).toBeDisplayed()
   await session.waitUntil(
     async () => {
       const text = await session.$('body').getText()
@@ -165,7 +165,7 @@ describe('Desktop 首次使用真实闭环', () => {
       return
     }
 
-    await expect(browser.$('h1=先建立你的个人工作区')).toBeDisplayed()
+    await expect(browser.$('h1=先导入或创建一个长期 Agent')).toBeDisplayed()
 
     const persistedWorkspace = await invoke<typeof workspace>(browser, 'create_workspace', {
       request: { requestId: 'create-workspace', selectedPath: workspacePath, workspace },

@@ -171,6 +171,15 @@ describe('演示状态', () => {
     expect(initialState.configRevisions[0].content).not.toBe('新的演示指令')
   })
 
+  it('Desktop 拒绝通过演示 reducer 保存正式配置', () => {
+    const desktopState = { ...initialState, runtime: 'desktop' as const }
+    const result = reducer(desktopState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'zhouce', kind: 'rules', value: ['rule-new'] } })
+
+    expect(result.agents).toBe(desktopState.agents)
+    expect(result.configRevisions).toBe(desktopState.configRevisions)
+    expect(result.notice).toMatchObject({ tone: 'warning', title: '未保存配置' })
+  })
+
   it('普通配置保存原子更新 Agent、文件和版本', () => {
     const result = reducer(initialState, { type: 'SAVE_AGENT_CONFIG', input: { agentId: 'zhouce', kind: 'rules', value: ['rule-common', 'rule-new'] } })
     const agent = result.agents.find((item) => item.id === 'zhouce')!
@@ -353,6 +362,17 @@ describe('演示状态', () => {
     const result = reducer(single, { type: 'REMOVE_WORKSPACE_INDEX', workspaceId: 'bandi' })
     expect(result.workspaces).toHaveLength(0)
     expect(result.currentWorkspaceId).toBeNull()
+  })
+
+  it('Desktop 拒绝技能与插件模拟操作', () => {
+    const desktopState = { ...initialState, runtime: 'desktop' as const }
+    const skill = reducer(desktopState, { type: 'APPLY_SKILL_ACTION', skillId: 'skill-docs', action: 'install' })
+    const plugin = reducer(desktopState, { type: 'APPLY_PLUGIN_ACTION', pluginId: 'plugin-delivery', action: 'install' })
+
+    expect(skill.assets).toBe(desktopState.assets)
+    expect(plugin.pluginInstallations).toBe(desktopState.pluginInstallations)
+    expect(skill.notice?.title).toBe('未执行技能操作')
+    expect(plugin.notice?.title).toBe('未执行插件操作')
   })
 
   it('Skill 生命周期只修改安装事实，不修改 Agent 引用', () => {

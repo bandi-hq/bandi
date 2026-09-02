@@ -37,7 +37,17 @@ export function resolveRouteMetadata(
 ): RouteMetadata {
   const [pathname, search = ''] = location.split('?')
   if (pathname === '/') return { section: 'home', title: '配置概览' }
-  if (pathname === '/agents/new') return { section: 'agents', title: '创建 Agent' }
+  if (pathname === '/agents/new') {
+    const mode = new URLSearchParams(search).get('mode')
+    return {
+      section: 'agents',
+      title: mode === 'import'
+        ? '导入 Claude Agent'
+        : mode === 'reference'
+          ? '仅登记外部引用'
+          : '创建个人 Agent',
+    }
+  }
   if (pathname.startsWith('/agents/')) {
     const agentId = pathname.slice('/agents/'.length).split('/')[0]
     const agent = context.agents?.find((item) => item.id === agentId)
