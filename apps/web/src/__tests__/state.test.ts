@@ -51,7 +51,7 @@ describe('演示状态', () => {
         scopeKey: { kind: 'agent_long_term' as const, agentId: 'worker' },
         owner: { kind: 'agent' as const, agentId: 'worker' },
         stewardAgentId: 'worker',
-        reviewerAgentId: 'manager',
+        reviewPrincipal: { kind: 'agent' as const, agentId: 'manager' },
         reviewPolicy: 'independent_reviewer' as const,
         visibilityPolicy: 'agent_private' as const,
         storageProfileVersion: 'memory-v1' as const,
@@ -65,7 +65,7 @@ describe('演示状态', () => {
         id: 'candidate-written',
         spaceId: 'memory-agent-worker',
         proposerAgentId: 'worker',
-        reviewerAgentId: 'manager',
+        reviewPrincipal: { kind: 'agent' as const, agentId: 'manager' },
         source: { kind: 'manual' as const, label: 'test' },
         summary: '已写入候选',
         proposedContent: 'new',
@@ -396,7 +396,7 @@ describe('演示状态', () => {
   })
 
   it('模拟恢复只新增恢复前快照，不修改业务集合', () => {
-    const preview = buildBackupPreview(initialState, { kind: 'agent', agentId: 'zhouce' })!
+    const preview = buildBackupPreview(initialState, { kind: 'agent' as const, agentId: 'zhouce' })!
     const beforeSnapshot = createDemoSnapshot(preview, { id: 'before-test', createdAt: '刚刚', kind: '恢复前演示' })
     const result = reducer(initialState, { type: 'SIMULATE_RESTORE', snapshotId: 'snap-demo-001', beforeSnapshot })
     expect(result.backupSnapshots[0]).toEqual(beforeSnapshot)
@@ -410,7 +410,7 @@ describe('演示状态', () => {
     const result = reducer(initialState, {
       type: 'CREATE_MEMORY_CANDIDATE',
       candidate: {
-        id: 'MC-invalid', spaceId: 'mem-agent-zhouce', proposerAgentId: 'linxu', reviewerAgentId: 'zhouce',
+        id: 'MC-invalid', spaceId: 'mem-agent-zhouce', proposerAgentId: 'linxu', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhouce' },
         summary: '错误目标', current: '', proposed: 'x', status: '待审核',
       },
     })

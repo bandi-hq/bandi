@@ -1,4 +1,4 @@
-import type { FullAgent, MemoryCandidate, MemorySpace } from './domain'
+import type { FullAgent, MemoryCandidate, MemoryReviewPrincipal, MemorySpace } from './domain'
 
 type MemoryPolicyState = {
   agents: FullAgent[]
@@ -17,14 +17,10 @@ type MemoryPolicyState = {
 
 export type MemoryGovernance = {
   space?: MemorySpace
-  reviewerAgentId?: string
+  reviewPrincipal?: MemoryReviewPrincipal
   canPropose: boolean
   canReview: boolean
   errors: string[]
-}
-
-function workspaceIdForSpace(space: MemorySpace) {
-  return 'workspaceId' in space.scopeKey ? space.scopeKey.workspaceId : undefined
 }
 
 function hasWorkspaceBinding(agent: FullAgent, workspaceId: string) {
@@ -43,9 +39,7 @@ function hasDepartmentAccess(state: MemoryPolicyState, agent: FullAgent, departm
 function belongsToAgent(state: MemoryPolicyState, space: MemorySpace, proposer: FullAgent) {
   const key = space.scopeKey
   if (key.kind === 'agent_long_term') return key.agentId === proposer.id
-  if (key.kind === 'agent_workspace') {
-    return key.agentId === proposer.id && hasWorkspaceBinding(proposer, key.workspaceId)
-  }
+  if (key.kind === 'agent_workspace') return key.agentId === proposer.id && hasWorkspaceBinding(proposer, key.workspaceId)
   if (!hasWorkspaceBinding(proposer, key.workspaceId)) return false
   if (key.kind === 'workspace_shared') return true
 
@@ -55,34 +49,35 @@ function belongsToAgent(state: MemoryPolicyState, space: MemorySpace, proposer: 
   return Boolean(departmentParticipates && hasDepartmentAccess(state, proposer, key.departmentId, key.workspaceId))
 }
 
-function companyAssistant(state: MemoryPolicyState, workspaceId?: string, agent?: FullAgent) {
-  const companyId = workspaceId
-    ? state.workspaces.find((item) => item.id === workspaceId)?.companyId
-    : state.departments.find((item) => item.id === agent?.primaryDepartmentId)?.companyId
-  return state.companies.find((item) => item.id === companyId)?.assistantAgentId
+function fallbackPrincipal(state: MemoryPolicyState, companyId: string | undefined, proposerId: string): MemoryReviewPrincipal | undefined {
+  if (!companyId) return undefined
+  const assistantId = state.companies.find((item) => item.id === companyId)?.assistantAgentId
+  const assistant = state.agents.find((item) => item.id === assistantId && item.status === 'active')
+  return assistant && assistant.id !== proposerId
+    ? { kind: 'agent', agentId: assistant.id }
+    : { kind: 'chairman_user', companyId }
 }
 
-function resolveReviewer(state: MemoryPolicyState, space: MemorySpace, proposer: FullAgent) {
+function resolveReviewer(state: MemoryPolicyState, space: MemorySpace, proposer: FullAgent): MemoryReviewPrincipal | undefined {
   const key = space.scopeKey
-  const workspaceId = workspaceIdForSpace(space)
+  const workspaceId = 'workspaceId' in key ? key.workspaceId : undefined
   const workspace = state.workspaces.find((item) => item.id === workspaceId)
-  let reviewerAgentId: string | undefined
+  const companyId = workspace?.companyId ?? proposer.companyId
 
   if (key.kind === 'agent_long_term' || key.kind === 'agent_workspace') {
-    reviewerAgentId = proposer.managerAgentId ?? companyAssistant(state, workspaceId, proposer)
-  } else if (key.kind === 'workspace_shared') {
-    reviewerAgentId = state.departments.find((item) => item.id === workspace?.primaryDepartmentId)?.managerAgentId
-      ?? workspace?.projectLeadAgentId
-  } else {
-    reviewerAgentId = state.departments.find((item) => item.id === key.departmentId)?.managerAgentId
+    const manager = state.agents.find((item) => item.id === proposer.managerAgentId && item.status === 'active')
+    return manager && manager.id !== proposer.id
+      ? { kind: 'agent', agentId: manager.id }
+      : fallbackPrincipal(state, companyId, proposer.id)
   }
 
-  if (reviewerAgentId === proposer.id) {
-    reviewerAgentId = state.agents.find((item) => item.id === reviewerAgentId)?.managerAgentId
-      ?? companyAssistant(state, workspaceId, proposer)
-  }
-
-  return reviewerAgentId
+  const departmentId = key.kind === 'workspace_shared' ? workspace?.primaryDepartmentId : key.departmentId
+  const department = state.departments.find((item) => item.id === departmentId)
+  const steward = state.agents.find((item) => item.id === department?.managerAgentId && item.status === 'active')
+  if (!steward) return undefined
+  return steward.id === proposer.id
+    ? fallbackPrincipal(state, department?.companyId ?? companyId, proposer.id)
+    : { kind: 'agent', agentId: steward.id }
 }
 
 export function getEligibleMemorySpaces(state: MemoryPolicyState, proposerAgentId: string) {
@@ -100,16 +95,15 @@ export function resolveMemoryGovernance(state: MemoryPolicyState, spaceId: strin
   if (!space) errors.push('目标 MemorySpace 不存在。')
   if (proposer && space && !belongsToAgent(state, space, proposer)) errors.push('该 MemorySpace 不属于提议者可写入的范围。')
 
-  const reviewerAgentId = proposer && space ? resolveReviewer(state, space, proposer) : undefined
-  if (proposer && !reviewerAgentId) errors.push('没有可用的独立审核者，请先完善主管或项目责任关系。')
-  if (reviewerAgentId && !state.agents.some((item) => item.id === reviewerAgentId)) errors.push('审核者不存在。')
-  if (reviewerAgentId === proposerAgentId) errors.push('提议者不能审核自己的候选。')
+  const reviewPrincipal = proposer && space ? resolveReviewer(state, space, proposer) : undefined
+  if (proposer && !reviewPrincipal) errors.push('没有可用的独立审核责任主体，请先完善公司或主管关系。')
+  if (reviewPrincipal?.kind === 'agent' && reviewPrincipal.agentId === proposerAgentId) errors.push('提议者不能审核自己的候选。')
 
   return {
     space,
-    reviewerAgentId,
+    reviewPrincipal,
     canPropose: errors.length === 0,
-    canReview: errors.length === 0 && Boolean(reviewerAgentId),
+    canReview: errors.length === 0 && Boolean(reviewPrincipal),
     errors,
   }
 }
@@ -118,6 +112,6 @@ export function retargetMemoryCandidate(state: MemoryPolicyState, candidateId: s
   const candidate = state.memoryCandidates.find((item) => item.id === candidateId)
   if (!candidate) return undefined
   const governance = resolveMemoryGovernance(state, nextSpaceId, candidate.proposerAgentId)
-  if (!governance.canPropose || !governance.reviewerAgentId) return undefined
-  return { ...candidate, spaceId: nextSpaceId, reviewerAgentId: governance.reviewerAgentId }
+  if (!governance.canPropose || !governance.reviewPrincipal) return undefined
+  return { ...candidate, spaceId: nextSpaceId, reviewPrincipal: governance.reviewPrincipal }
 }

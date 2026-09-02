@@ -16,10 +16,12 @@ mod claude_agent_import;
 pub mod cli_service;
 mod config_fs;
 mod domain_store;
+mod factory_reset;
 mod local_service;
 mod memory_service;
 mod memory_target;
 mod shared_assets;
+mod tool_configuration;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +337,7 @@ fn create_workspace(
     app: tauri::AppHandle,
     request: CreateWorkspaceRequest,
 ) -> Result<domain_store::WorkspaceDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     if request.workspace.path != request.selected_path {
         return Err("工作区创建请求路径不一致".into());
     }
@@ -377,6 +380,7 @@ fn save_company(
     app: tauri::AppHandle,
     request: domain_store::SaveCompanyRequest,
 ) -> Result<domain_store::CompanyDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     domain_store::save_company_governed_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -389,6 +393,7 @@ fn save_department(
     app: tauri::AppHandle,
     request: domain_store::SaveDepartmentRequest,
 ) -> Result<domain_store::DepartmentDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     domain_store::save_department_governed_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -401,6 +406,7 @@ fn save_role(
     app: tauri::AppHandle,
     request: domain_store::SaveRoleRequest,
 ) -> Result<domain_store::RoleDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     domain_store::save_role_at(&domain_database_path(&app)?, request)
 }
 
@@ -409,6 +415,7 @@ fn save_workspace(
     app: tauri::AppHandle,
     request: domain_store::SaveWorkspaceRequest,
 ) -> Result<domain_store::WorkspaceDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let canonical = workspace_path_from_registry(&app, &request.workspace.id)?;
     if canonical.as_os_str() != request.workspace.path.as_str() {
         return Err("工作区路径与 Registry 记录不一致".into());
@@ -425,6 +432,7 @@ fn remove_workspace(
     app: tauri::AppHandle,
     request: domain_store::RemoveWorkspaceRequest,
 ) -> Result<(), String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let registry = workspace_registry_root(&app)?;
     let database = domain_database_path(&app)?;
     let workspace_id = request.workspace_id.clone();
@@ -444,6 +452,7 @@ fn save_service_grants(
     app: tauri::AppHandle,
     request: domain_store::SaveServiceGrantsRequest,
 ) -> Result<Vec<domain_store::ServiceGrantDto>, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     domain_store::save_service_grants_at(&domain_database_path(&app)?, request)
 }
 
@@ -457,6 +466,76 @@ fn generate_entity_id(prefix: String, name: String) -> Result<String, String> {
         return Err("实体标识请求无效".into());
     }
     Ok(domain_store::stable_entity_id(&prefix, &name))
+}
+
+#[tauri::command]
+fn load_tool_configuration(
+    app: tauri::AppHandle,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    tool_configuration::load_snapshot_at(&domain_database_path(&app)?)
+}
+
+#[tauri::command]
+fn save_tool_plan(
+    app: tauri::AppHandle,
+    request: tool_configuration::SaveToolPlanRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::save_plan_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn create_tool_plan(
+    app: tauri::AppHandle,
+    request: tool_configuration::CreateToolPlanRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::create_plan_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn copy_tool_plan(
+    app: tauri::AppHandle,
+    request: tool_configuration::CopyToolPlanRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::copy_plan_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn delete_tool_plan(
+    app: tauri::AppHandle,
+    request: tool_configuration::PlanMutationRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::delete_plan_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn select_tool_plan(
+    app: tauri::AppHandle,
+    request: tool_configuration::PlanMutationRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::select_plan_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn save_custom_tool(
+    app: tauri::AppHandle,
+    request: tool_configuration::SaveCustomToolRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::save_custom_tool_at(&domain_database_path(&app)?, request)
+}
+
+#[tauri::command]
+fn delete_custom_tool(
+    app: tauri::AppHandle,
+    request: tool_configuration::DeleteCustomToolRequest,
+) -> Result<tool_configuration::ToolConfigurationSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
+    tool_configuration::delete_custom_tool_at(&domain_database_path(&app)?, request)
 }
 
 #[tauri::command]
@@ -506,10 +585,43 @@ fn revisions_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+fn preview_factory_reset(
+    app: tauri::AppHandle,
+    request: factory_reset::PreviewFactoryResetRequest,
+) -> Result<factory_reset::FactoryResetPreviewDto, String> {
+    factory_reset::preview_at(
+        &app.path()
+            .app_data_dir()
+            .map_err(|_| "FACTORY_RESET_UNAVAILABLE: 无法访问应用数据目录")?,
+        &app.path()
+            .home_dir()
+            .map_err(|_| "FACTORY_RESET_UNAVAILABLE: 无法访问用户目录")?,
+        request,
+    )
+}
+
+#[tauri::command]
+fn commit_factory_reset(
+    app: tauri::AppHandle,
+    request: factory_reset::CommitFactoryResetRequest,
+) -> Result<factory_reset::FactoryResetResultDto, String> {
+    factory_reset::commit_at(
+        &app.path()
+            .app_data_dir()
+            .map_err(|_| "FACTORY_RESET_UNAVAILABLE: 无法访问应用数据目录")?,
+        &app.path()
+            .home_dir()
+            .map_err(|_| "FACTORY_RESET_UNAVAILABLE: 无法访问用户目录")?,
+        request,
+    )
+}
+
+#[tauri::command]
 fn create_backup_snapshot(
     app: tauri::AppHandle,
     request: backup_service::CreateBackupSnapshotRequest,
 ) -> Result<backup_service::BackupSnapshotDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     backup_service::create_snapshot_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -543,6 +655,7 @@ fn restore_backup_snapshot(
     app: tauri::AppHandle,
     request: backup_service::RestoreBackupSnapshotRequest,
 ) -> Result<backup_service::BackupRestoreResultDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     backup_service::restore_snapshot_at(
         &domain_database_path(&app)?,
         &workspace_registry_root(&app)?,
@@ -574,6 +687,7 @@ fn create_workspace_binding(
     app: tauri::AppHandle,
     request: local_service::CreateWorkspaceBindingRequest,
 ) -> Result<local_service::SaveConfigResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let managed = managed_agent_dir(&app, "probe")?
         .parent()
         .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
@@ -591,6 +705,7 @@ fn save_config(
     app: tauri::AppHandle,
     request: local_service::SaveConfigRequest,
 ) -> Result<local_service::SaveConfigResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let managed = managed_agent_dir(&app, "probe")?
         .parent()
         .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
@@ -608,6 +723,7 @@ fn recover_config_revision(
     app: tauri::AppHandle,
     request: local_service::RecoverConfigRevisionRequest,
 ) -> Result<local_service::SaveConfigResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let managed = managed_agent_dir(&app, "probe")?
         .parent()
         .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
@@ -625,6 +741,7 @@ fn restore_config_revision(
     app: tauri::AppHandle,
     request: local_service::RestoreConfigRevisionRequest,
 ) -> Result<local_service::SaveConfigResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let managed = managed_agent_dir(&app, "probe")?
         .parent()
         .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?
@@ -720,6 +837,7 @@ fn asset_path(app: &tauri::AppHandle, slot: &str) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn import_ui_asset(app: tauri::AppHandle, slot: String, bytes: Vec<u8>) -> Result<(), String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let (_, limit) = asset_name(&slot)?;
     if bytes.is_empty() || bytes.len() > limit {
         return Err("INVALID_SIZE: 图片为空或超过该位置允许的大小".into());
@@ -749,6 +867,7 @@ fn read_ui_asset(app: tauri::AppHandle, slot: String) -> Result<Option<UiAsset>,
 
 #[tauri::command]
 fn delete_ui_asset(app: tauri::AppHandle, slot: String) -> Result<(), String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let target = asset_path(&app, &slot)?;
     if target.exists() {
         config_fs::ensure_regular_file(&target, "个性化图片")
@@ -883,18 +1002,6 @@ fn create_managed_agent_at(
     result
 }
 
-#[tauri::command]
-fn create_managed_agent(
-    app: tauri::AppHandle,
-    request: CreateManagedAgentRequest,
-) -> Result<ManagedAgentResult, String> {
-    let root = managed_agent_dir(&app, &request.agent_id)?;
-    let agents_root = root
-        .parent()
-        .ok_or_else(|| "AGENT_STORAGE_UNAVAILABLE: Agent 根目录无效".to_string())?;
-    create_managed_agent_at(agents_root, request)
-}
-
 fn identity_asset_facts(
     root: &Path,
     agent_id: &str,
@@ -924,6 +1031,7 @@ fn identity_asset_facts(
         container_id: container_id.clone(),
         asset_content_hash: content_hash.clone(),
         container_content_hash: content_hash,
+        target_exists: true,
     };
     (asset_id, container_id, locator, baseline_ref)
 }
@@ -1489,6 +1597,7 @@ fn recover_managed_agent_identity(
     app: tauri::AppHandle,
     request: RecoverManagedAgentIdentityRequest,
 ) -> Result<SaveManagedAgentIdentityResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let root = managed_agent_dir(&app, &request.agent_id)?;
     Ok(recover_managed_agent_identity_at(
         &root,
@@ -1502,6 +1611,7 @@ fn restore_managed_agent_identity(
     app: tauri::AppHandle,
     request: RestoreManagedAgentIdentityRequest,
 ) -> Result<SaveManagedAgentIdentityResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let root = managed_agent_dir(&app, &request.agent_id)?;
     Ok(restore_managed_agent_identity_at(
         &root,
@@ -1510,40 +1620,100 @@ fn restore_managed_agent_identity(
     ))
 }
 
-fn list_managed_agents_at(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentListResult {
+    agents: Vec<serde_json::Value>,
+    diagnostics: Vec<local_service::DiagnosticDto>,
+}
+
+fn agent_package_diagnostic(source: &str, message: &str) -> local_service::DiagnosticDto {
+    let (code, detail) = message
+        .split_once(": ")
+        .unwrap_or(("AGENT_PACKAGE_INVALID", message));
+    let path = [
+        ".bandi-agent.json",
+        "agent.yaml",
+        "instructions.md",
+        "config/context.yaml",
+        "config/rules.yaml",
+        "config/skills.yaml",
+        "config/mcp.yaml",
+        "config/permissions.yaml",
+        "config/sop.yaml",
+        "config/orchestration.yaml",
+        "config/hooks.yaml",
+        "config/commands.yaml",
+    ]
+    .into_iter()
+    .find(|path| message.contains(path))
+    .map(str::to_owned);
+    let mut diagnostic = local_service::diagnostic(
+        code,
+        "error",
+        detail,
+        path,
+        Some("检查该 AgentPackage 后重新读取"),
+    );
+    diagnostic.source = Some(source.into());
+    diagnostic
+}
+
+fn list_managed_agents_at(root: &Path) -> Result<AgentListResult, String> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AgentListResult {
+                agents: Vec::new(),
+                diagnostics: Vec::new(),
+            })
+        }
         Err(_) => return Err("AGENT_READ_FAILED: 无法扫描受管 Agent 目录".into()),
     };
-    let mut agents = Vec::new();
+    let mut result = AgentListResult {
+        agents: Vec::new(),
+        diagnostics: Vec::new(),
+    };
     for entry in entries {
         let entry = entry.map_err(|_| "AGENT_READ_FAILED: 无法枚举受管 Agent 目录")?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
         let Some(agent_id) = file_name.strip_prefix("agt_") else {
             continue;
         };
-        let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|_| format!("AGENT_READ_FAILED: 无法检查 {file_name}"))?;
+        let metadata = match fs::symlink_metadata(entry.path()) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                result.diagnostics.push(agent_package_diagnostic(
+                    &file_name,
+                    "AGENT_READ_FAILED: 无法检查 AgentPackage",
+                ));
+                continue;
+            }
+        };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "AGENT_PACKAGE_REJECTED: {file_name} 必须是受管根内普通目录"
+            result.diagnostics.push(agent_package_diagnostic(
+                &file_name,
+                "AGENT_PACKAGE_REJECTED: AgentPackage 必须是受管根内普通目录",
             ));
+            continue;
         }
-        let agent = local_service::project_managed_agent_at(&entry.path(), agent_id)
-            .map_err(|message| format!("{file_name}: {message}"))?;
-        agents.push(agent);
+        match local_service::project_managed_agent_at(&entry.path(), agent_id) {
+            Ok(agent) => result.agents.push(agent),
+            Err(message) => result
+                .diagnostics
+                .push(agent_package_diagnostic(&file_name, &message)),
+        }
     }
-    agents.sort_by(|left, right| {
+    result.agents.sort_by(|left, right| {
         left.get("id")
             .and_then(serde_json::Value::as_str)
             .cmp(&right.get("id").and_then(serde_json::Value::as_str))
     });
-    Ok(agents)
+    Ok(result)
 }
 
 #[tauri::command]
-fn list_managed_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+fn list_managed_agents(app: tauri::AppHandle) -> Result<AgentListResult, String> {
     list_managed_agents_at(&managed_agents_root(&app)?)
 }
 
@@ -1552,6 +1722,7 @@ fn register_external_agent(
     app: tauri::AppHandle,
     request: agent_service::RegisterExternalAgentRequest,
 ) -> Result<agent_service::ExternalAgentReferenceDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     agent_service::register_external_agent_at(&domain_database_path(&app)?, request)
 }
 
@@ -1560,13 +1731,14 @@ fn remove_external_agent(
     app: tauri::AppHandle,
     request: agent_service::RemoveExternalAgentRequest,
 ) -> Result<(), String> {
+    let _mutation = factory_reset::mutation_guard()?;
     agent_service::remove_external_agent_at(&domain_database_path(&app)?, request)
 }
 
 #[tauri::command]
-fn list_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    let mut agents = list_managed_agents_at(&managed_agents_root(&app)?)?;
-    agents.extend(
+fn list_agents(app: tauri::AppHandle) -> Result<AgentListResult, String> {
+    let mut result = list_managed_agents_at(&managed_agents_root(&app)?)?;
+    result.agents.extend(
         agent_service::list_external_agents_at(&domain_database_path(&app)?)?
             .into_iter()
             .map(|reference| {
@@ -1588,12 +1760,12 @@ fn list_agents(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> 
                 metadata
             }),
     );
-    agents.sort_by(|left, right| {
+    result.agents.sort_by(|left, right| {
         left.get("id")
             .and_then(serde_json::Value::as_str)
             .cmp(&right.get("id").and_then(serde_json::Value::as_str))
     });
-    Ok(agents)
+    Ok(result)
 }
 
 fn finish_agent_organization(
@@ -1743,6 +1915,7 @@ fn commit_managed_agent_creation(
     app: tauri::AppHandle,
     request: CommitManagedAgentCreationRequest,
 ) -> Result<AgentCommitResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let database = domain_database_path(&app)?;
     let agents_root = managed_agents_root(&app)?;
     let manifest = request
@@ -1780,7 +1953,8 @@ fn commit_managed_agent_creation(
             let create: CreateManagedAgentRequest =
                 serde_json::from_value(payload["create"].clone())
                     .map_err(|_| "Agent create payload 已损坏".to_string())?;
-            agent = Some(create_managed_agent_at(&agents_root, create)?.agent);
+            create_managed_agent_at(&agents_root, create)?;
+            agent = Some(load_committed_agent(&agents_root, &agent_id)?);
         }
         operation = agent_service::set_operation_status_at(
             &database,
@@ -1825,6 +1999,7 @@ fn commit_managed_agent_identity(
     app: tauri::AppHandle,
     request: CommitManagedAgentIdentityRequest,
 ) -> Result<AgentCommitResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let database = domain_database_path(&app)?;
     let agents_root = managed_agents_root(&app)?;
     let expected_hash = local_service::hash_bytes(request.save.manifest.as_bytes());
@@ -1927,6 +2102,7 @@ fn continue_agent_recovery(
     app: tauri::AppHandle,
     request: ContinueAgentRecoveryRequest,
 ) -> Result<AgentCommitResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     let database = domain_database_path(&app)?;
     let agents_root = managed_agents_root(&app)?;
     let operation = agent_service::get_operation_at(&database, &request.operation_id)?;
@@ -2092,6 +2268,7 @@ fn create_memory_candidate(
     app: tauri::AppHandle,
     request: memory_service::CreateMemoryCandidateRequest,
 ) -> Result<memory_service::MemoryReviewBundleDto, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     memory_service::create_candidate_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -2143,6 +2320,7 @@ fn review_memory_candidate(
     app: tauri::AppHandle,
     request: memory_service::ReviewMemoryCandidateRequest,
 ) -> Result<memory_service::ReviewMemoryCandidateResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     memory_service::review_candidate_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -2156,6 +2334,7 @@ fn recover_memory_revision(
     app: tauri::AppHandle,
     request: memory_service::RecoverMemoryRevisionRequest,
 ) -> Result<memory_service::ReviewMemoryCandidateResult, String> {
+    let _mutation = factory_reset::mutation_guard()?;
     memory_service::recover_revision_at(
         &domain_database_path(&app)?,
         &managed_agents_root(&app)?,
@@ -2200,6 +2379,14 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
+        .setup(|app| {
+            factory_reset::cleanup_committed_at(
+                &app.path().app_data_dir()?,
+                &app.path().home_dir()?,
+            )
+            .map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             create_workspace,
@@ -2211,6 +2398,14 @@ pub fn run() {
             remove_workspace,
             save_service_grants,
             generate_entity_id,
+            load_tool_configuration,
+            save_tool_plan,
+            create_tool_plan,
+            copy_tool_plan,
+            delete_tool_plan,
+            select_tool_plan,
+            save_custom_tool,
+            delete_custom_tool,
             discover_eligible_memory_spaces,
             create_memory_candidate,
             list_memory_reviews,
@@ -2218,6 +2413,8 @@ pub fn run() {
             load_memory_review,
             review_memory_candidate,
             recover_memory_revision,
+            preview_factory_reset,
+            commit_factory_reset,
             create_backup_snapshot,
             list_backup_snapshots,
             preview_backup_restore,
@@ -2237,7 +2434,6 @@ pub fn run() {
             read_agent_avatar,
             preview_claude_agent,
             import_claude_agent,
-            create_managed_agent,
             load_managed_agent_identity,
             recover_managed_agent_identity,
             restore_managed_agent_identity,
@@ -2764,7 +2960,7 @@ mod tests {
         }
 
         let listed = list_managed_agents_at(root.path()).unwrap();
-        let agent = &listed[0];
+        let agent = &listed.agents[0];
         assert_eq!(agent["name"], "Canonical");
         assert_eq!(agent["instructions"], "# Saved instructions\n");
         assert_eq!(agent["permissions"]["files"], "未授予");
@@ -2775,7 +2971,79 @@ mod tests {
         assert_eq!(agent["workspaceBindings"][0]["memoryRevision"], "r7");
         assert_eq!(agent["workspaces"], 1);
         assert_eq!(agent["role"], "legacy");
+        let files = agent["files"].as_array().unwrap();
+        let paths = files
+            .iter()
+            .filter_map(|file| file["path"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                "agent.yaml",
+                "config/commands.yaml",
+                "config/context.yaml",
+                "config/hooks.yaml",
+                "config/mcp.yaml",
+                "config/orchestration.yaml",
+                "config/permissions.yaml",
+                "config/rules.yaml",
+                "config/skills.yaml",
+                "config/sop.yaml",
+                "instructions.md",
+                "workspaces/ws-1/config.yaml",
+            ]
+        );
+        assert_eq!(
+            files[0]["scope"],
+            serde_json::json!({ "kind": "agent-root" })
+        );
+        assert_eq!(
+            files.last().unwrap()["scope"],
+            serde_json::json!({ "kind": "workspace", "workspaceId": "ws-1" })
+        );
         assert_eq!(package.file_name().unwrap(), "agt_alpha");
+    }
+
+    #[test]
+    fn managed_agent_list_accepts_missing_empty_reference_files() {
+        let cases = [
+            ("config/rules.yaml", "ruleRefs"),
+            ("config/skills.yaml", "skillRefs"),
+            ("config/mcp.yaml", "mcpRefs"),
+            ("config/sop.yaml", "sopRefs"),
+            ("config/hooks.yaml", "hookRefs"),
+            ("config/commands.yaml", "commandRefs"),
+        ];
+        for (path, field) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let package = canonical_agent_fixture(root.path());
+            std::fs::remove_file(package.join(path)).unwrap();
+            let listed = list_managed_agents_at(root.path()).unwrap();
+            assert_eq!(listed.agents[0][field], serde_json::json!([]), "{path}");
+            assert!(
+                !listed.agents[0]["files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|file| file["path"] == path),
+                "{path} 不应作为不存在的文件进入投影"
+            );
+            assert!(listed.diagnostics.is_empty());
+        }
+    }
+
+    #[test]
+    fn managed_agent_list_rejects_invalid_optional_reference_file() {
+        let root = tempfile::tempdir().unwrap();
+        let package = canonical_agent_fixture(root.path());
+        std::fs::write(package.join("config/rules.yaml"), "rules: [").unwrap();
+        let result = list_managed_agents_at(root.path()).unwrap();
+        assert!(result.agents.is_empty());
+        assert_eq!(result.diagnostics[0].code, "AGENT_CANONICAL_INVALID");
+        assert_eq!(
+            result.diagnostics[0].path.as_deref(),
+            Some("config/rules.yaml")
+        );
     }
 
     #[test]
@@ -2783,15 +3051,20 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let package = canonical_agent_fixture(root.path());
         std::fs::remove_file(package.join(".bandi-agent.json")).unwrap();
-        let missing = list_managed_agents_at(root.path()).unwrap_err();
-        assert!(missing.contains("AGENT_INDEX_MISSING"));
+        let missing = list_managed_agents_at(root.path()).unwrap();
+        assert!(missing.agents.is_empty());
+        assert_eq!(missing.diagnostics[0].code, "AGENT_INDEX_MISSING");
 
         let root = tempfile::tempdir().unwrap();
         let package = canonical_agent_fixture(root.path());
         std::fs::remove_file(package.join("config/permissions.yaml")).unwrap();
-        let broken = list_managed_agents_at(root.path()).unwrap_err();
-        assert!(broken.contains("AGENT_CANONICAL_MISSING"));
-        assert!(broken.contains("config/permissions.yaml"));
+        let broken = list_managed_agents_at(root.path()).unwrap();
+        assert!(broken.agents.is_empty());
+        assert_eq!(broken.diagnostics[0].code, "AGENT_CANONICAL_MISSING");
+        assert_eq!(
+            broken.diagnostics[0].path.as_deref(),
+            Some("config/permissions.yaml")
+        );
     }
 
     #[test]

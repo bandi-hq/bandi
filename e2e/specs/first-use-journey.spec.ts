@@ -32,9 +32,19 @@ type Discovery = {
 }
 type Editor = { canonicalContent: string; baselineRef: JsonRecord }
 type SaveResult = { kind: string; revision?: { id: string } }
-type MemorySpace = { id: string; reviewerAgentId: string }
+type ReviewPrincipal =
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'chairman_user'; companyId: string }
+type MemorySpace = { id: string; reviewPrincipal: ReviewPrincipal }
 type EligibleSpaces = { spaces: MemorySpace[]; diagnostics: Array<{ severity: string; message: string }> }
-type MemoryBundle = { candidate: { id: string; version: number; submittedBaseline: JsonRecord } }
+type MemoryBundle = {
+  candidate: {
+    id: string
+    version: number
+    submittedBaseline: JsonRecord
+    reviewPrincipal: ReviewPrincipal
+  }
+}
 type MemoryResult = { kind: string; revision?: { id: string } }
 type Backup = { id: string; entryCount: number; entries: Array<{ assetId: string }> }
 type OrganizationSnapshot = {
@@ -58,12 +68,15 @@ const invoke = <T>(session: WebdriverIO.Browser, command: string, args: JsonReco
 
 async function createAgent(session: WebdriverIO.Browser, id: string, name: string, managerAgentId?: string) {
   const options = { id, name, managerAgentId }
-  return invoke(session, 'create_managed_agent', {
+  return invoke(session, 'commit_managed_agent_creation', {
     request: {
-      agentId: id,
-      agent: managedAgent(options),
-      files: agentFiles(options),
-      avatarBytes: null,
+      requestId: `create-${id}`,
+      create: {
+        agentId: id,
+        agent: managedAgent(options),
+        files: agentFiles(options),
+        avatarBytes: null,
+      },
     },
   })
 }
@@ -111,9 +124,10 @@ async function assertPersistedFacts(session: WebdriverIO.Browser) {
   expect(snapshot.roles.map((item) => item.id)).toContain(role.id)
   expect(snapshot.workspaces.map((item) => item.id)).toContain(workspaceId)
 
-  const agents = await invoke<ProjectedAgent[]>(session, 'list_managed_agents')
-  expect(agents).toHaveLength(2)
-  const worker = agents.find((item) => item.id === workerAgentId)
+  const result = await invoke<{ agents: ProjectedAgent[]; diagnostics: unknown[] }>(session, 'list_managed_agents')
+  expect(result.diagnostics).toHaveLength(0)
+  expect(result.agents).toHaveLength(2)
+  const worker = result.agents.find((item) => item.id === workerAgentId)
   expect(worker?.instructions).toBe('首次旅程已保存的 Instructions')
   expect(worker?.permissions).toEqual({ files: '未授予', commands: '构建与测试', network: '禁止', delegation: '禁止' })
   expect(worker?.workspaceBindings.map((item) => item.workspaceId)).toContain(workspaceId)
@@ -218,7 +232,7 @@ describe('Desktop 首次使用真实闭环', () => {
     })
     expect(eligible.diagnostics.filter((item) => item.severity === 'error')).toHaveLength(0)
     const agentMemory = eligible.spaces.find((item) => item.id === `memory-agent-${workerAgentId}`)
-    expect(agentMemory?.reviewerAgentId).toBe(managerAgentId)
+    expect(agentMemory?.reviewPrincipal).toEqual({ kind: 'agent', agentId: managerAgentId })
 
     const candidate = await invoke<MemoryBundle>(browser, 'create_memory_candidate', {
       request: {
@@ -238,6 +252,7 @@ describe('Desktop 首次使用真实闭环', () => {
         decision: 'approve',
         expectedCandidateVersion: candidate.candidate.version,
         expectedBaseline: candidate.candidate.submittedBaseline,
+        expectedReviewPrincipal: candidate.candidate.reviewPrincipal,
         comment: '由独立主管审核通过',
       },
     })

@@ -7,7 +7,6 @@
       "agentId": "zhouce"
     },
     "stewardAgentId": "zhouce",
-    "reviewerAgentId": "zhiheng",
     "reviewPolicy": "independent_reviewer",
     "visibilityPolicy": "agent_private",
     "storageLocator": {
@@ -23,13 +22,16 @@
       "agentId": "zhouce"
     },
     "storageProfileVersion": "memory-v1",
-    "state": "active"
+    "state": "active",
+    "reviewPrincipal": {
+      "kind": "agent",
+      "agentId": "zhiheng"
+    }
   },
   "candidate": {
     "id": "memory-candidate-18",
     "spaceId": "memory-agent-zhouce",
     "proposerAgentId": "zhouce",
-    "reviewerAgentId": "zhiheng",
     "source": {
       "kind": "manual",
       "label": "Agent 详情"
@@ -47,7 +49,11 @@
     "status": "pending_review",
     "version": 1,
     "createdAt": "2026-09-01T00:01:00Z",
-    "updatedAt": "2026-09-01T00:01:00Z"
+    "updatedAt": "2026-09-01T00:01:00Z",
+    "reviewPrincipal": {
+      "kind": "agent",
+      "agentId": "zhiheng"
+    }
   },
   "reviewRequest": {
     "requestId": "memory-review-request-18",
@@ -61,7 +67,11 @@
       "assetContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "containerContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
-    "comment": "审核通过"
+    "comment": "审核通过",
+    "expectedReviewPrincipal": {
+      "kind": "agent",
+      "agentId": "zhiheng"
+    }
   },
   "savedResult": {
     "kind": "saved",
@@ -70,7 +80,6 @@
       "id": "memory-candidate-18",
       "spaceId": "memory-agent-zhouce",
       "proposerAgentId": "zhouce",
-      "reviewerAgentId": "zhiheng",
       "source": {
         "kind": "manual",
         "label": "Agent 详情"
@@ -88,15 +97,22 @@
       "status": "written",
       "version": 2,
       "createdAt": "2026-09-01T00:01:00Z",
-      "updatedAt": "2026-09-01T00:02:00Z"
+      "updatedAt": "2026-09-01T00:02:00Z",
+      "reviewPrincipal": {
+        "kind": "agent",
+        "agentId": "zhiheng"
+      }
     },
     "decision": {
       "id": "memory-decision-18",
       "candidateId": "memory-candidate-18",
-      "actorAgentId": "zhiheng",
       "decision": "approve",
       "comment": "审核通过",
-      "decidedAt": "2026-09-01T00:02:00Z"
+      "decidedAt": "2026-09-01T00:02:00Z",
+      "actorPrincipal": {
+        "kind": "agent",
+        "agentId": "zhiheng"
+      }
     },
     "revision": {
       "id": "memory-revision-18",
@@ -105,7 +121,6 @@
       "candidateId": "memory-candidate-18",
       "reviewDecisionId": "memory-decision-18",
       "proposerAgentId": "zhouce",
-      "reviewerAgentId": "zhiheng",
       "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "storageLocator": {
@@ -114,7 +129,11 @@
         "relativePath": "memory/long-term.md"
       },
       "writeReceiptId": "memory-write-18",
-      "writtenAt": "2026-09-01T00:02:00Z"
+      "writtenAt": "2026-09-01T00:02:00Z",
+      "reviewPrincipal": {
+        "kind": "agent",
+        "agentId": "zhiheng"
+      }
     },
     "writeReceipt": {
       "id": "memory-write-18",

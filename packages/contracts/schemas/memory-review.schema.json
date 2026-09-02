@@ -179,7 +179,7 @@
         "scopeKey",
         "owner",
         "stewardAgentId",
-        "reviewerAgentId",
+        "reviewPrincipal",
         "reviewPolicy",
         "visibilityPolicy",
         "storageProfileVersion",
@@ -204,9 +204,6 @@
           "$ref": "#/$defs/scopeKey"
         },
         "stewardAgentId": {
-          "$ref": "#/$defs/id"
-        },
-        "reviewerAgentId": {
           "$ref": "#/$defs/id"
         },
         "reviewPolicy": {
@@ -242,6 +239,9 @@
             "active",
             "read_only_history"
           ]
+        },
+        "reviewPrincipal": {
+          "$ref": "#/$defs/reviewPrincipal"
         }
       }
     },
@@ -273,7 +273,7 @@
         "id",
         "spaceId",
         "proposerAgentId",
-        "reviewerAgentId",
+        "reviewPrincipal",
         "source",
         "summary",
         "proposedContent",
@@ -292,9 +292,6 @@
           "$ref": "#/$defs/id"
         },
         "proposerAgentId": {
-          "$ref": "#/$defs/id"
-        },
-        "reviewerAgentId": {
           "$ref": "#/$defs/id"
         },
         "source": {
@@ -334,6 +331,9 @@
         },
         "updatedAt": {
           "$ref": "#/$defs/timestamp"
+        },
+        "reviewPrincipal": {
+          "$ref": "#/$defs/reviewPrincipal"
         }
       }
     },
@@ -345,7 +345,8 @@
         "candidateId",
         "decision",
         "expectedCandidateVersion",
-        "expectedBaseline"
+        "expectedBaseline",
+        "expectedReviewPrincipal"
       ],
       "properties": {
         "requestId": {
@@ -371,6 +372,9 @@
         "comment": {
           "type": "string",
           "maxLength": 16384
+        },
+        "expectedReviewPrincipal": {
+          "$ref": "#/$defs/reviewPrincipal"
         }
       }
     },
@@ -380,7 +384,7 @@
       "required": [
         "id",
         "candidateId",
-        "actorAgentId",
+        "actorPrincipal",
         "decision",
         "decidedAt"
       ],
@@ -389,9 +393,6 @@
           "$ref": "#/$defs/id"
         },
         "candidateId": {
-          "$ref": "#/$defs/id"
-        },
-        "actorAgentId": {
           "$ref": "#/$defs/id"
         },
         "decision": {
@@ -407,6 +408,9 @@
         },
         "decidedAt": {
           "$ref": "#/$defs/timestamp"
+        },
+        "actorPrincipal": {
+          "$ref": "#/$defs/reviewPrincipal"
         }
       }
     },
@@ -419,7 +423,7 @@
         "candidateId",
         "reviewDecisionId",
         "proposerAgentId",
-        "reviewerAgentId",
+        "reviewPrincipal",
         "sourceContentHash",
         "contentHash",
         "storageLocator",
@@ -445,9 +449,6 @@
         "proposerAgentId": {
           "$ref": "#/$defs/id"
         },
-        "reviewerAgentId": {
-          "$ref": "#/$defs/id"
-        },
         "sourceContentHash": {
           "$ref": "#/$defs/hash"
         },
@@ -462,6 +463,9 @@
         },
         "writtenAt": {
           "$ref": "#/$defs/timestamp"
+        },
+        "reviewPrincipal": {
+          "$ref": "#/$defs/reviewPrincipal"
         }
       }
     },
@@ -579,6 +583,42 @@
               "$ref": "#/$defs/id"
             },
             "workspaceId": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      ]
+    },
+    "reviewPrincipal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "agentId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "agent"
+            },
+            "agentId": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "companyId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "chairman_user"
+            },
+            "companyId": {
               "$ref": "#/$defs/id"
             }
           }

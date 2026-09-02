@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const DATABASE_SCHEMA_VERSION: i64 = 9;
+const DATABASE_SCHEMA_VERSION: i64 = 11;
 const ORGANIZATION_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -493,7 +493,19 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
     if version == 5 {
-        connection
+        let already_current = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('memory_spaces') WHERE name = 'reviewer_principal_kind')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| "无法检查正式 Memory 结构".to_string())?;
+        if already_current {
+            connection
+                .execute_batch("BEGIN IMMEDIATE; PRAGMA user_version = 6; COMMIT;")
+                .map_err(|_| "四类正式 Memory 数据库迁移失败".to_string())?;
+        } else {
+            connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
                  PRAGMA legacy_alter_table = ON;
@@ -542,12 +554,25 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  PRAGMA foreign_keys = ON;",
             )
             .map_err(|_| "四类正式 Memory 数据库迁移失败".to_string())?;
+        }
     }
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
     if version == 6 {
-        connection
+        let already_current = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('memory_candidates') WHERE name = 'reviewer_principal_kind')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| "无法检查正式 Memory 候选结构".to_string())?;
+        if already_current {
+            connection
+                .execute_batch("BEGIN IMMEDIATE; PRAGMA user_version = 7; COMMIT;")
+                .map_err(|_| "正式 Memory 外键迁移失败".to_string())?;
+        } else {
+            connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
                  PRAGMA legacy_alter_table = ON;
@@ -623,6 +648,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  PRAGMA foreign_keys = ON;",
             )
             .map_err(|_| "正式 Memory 外键迁移失败".to_string())?;
+        }
     }
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -668,6 +694,150 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|_| "Agent 恢复操作数据库迁移失败".to_string())?;
+    }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
+    if version == 9 {
+        let already_current = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('memory_spaces') WHERE name = 'reviewer_principal_kind')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| "无法检查正式 Memory 审核主体结构".to_string())?;
+        if already_current {
+            connection
+                .execute_batch("BEGIN IMMEDIATE; PRAGMA user_version = 10; COMMIT;")
+                .map_err(|_| "正式 Memory 审核主体迁移失败".to_string())?;
+        } else {
+            connection
+                .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 PRAGMA legacy_alter_table = ON;
+                 BEGIN IMMEDIATE;
+                 ALTER TABLE memory_revision_recovery RENAME TO memory_revision_recovery_v9;
+                 ALTER TABLE memory_review_decisions RENAME TO memory_review_decisions_v9;
+                 ALTER TABLE memory_revisions RENAME TO memory_revisions_v9;
+                 ALTER TABLE memory_candidates RENAME TO memory_candidates_v9;
+                 ALTER TABLE memory_spaces RENAME TO memory_spaces_v9;
+                 DROP INDEX IF EXISTS memory_spaces_scope_unique;
+                 DROP INDEX IF EXISTS memory_candidates_space;
+                 DROP INDEX IF EXISTS memory_decisions_candidate;
+                 DROP INDEX IF EXISTS memory_revisions_space;
+                 CREATE TABLE memory_spaces (
+                   id TEXT PRIMARY KEY,
+                   scope_type TEXT NOT NULL CHECK(scope_type IN ('agent_long_term', 'agent_workspace', 'workspace_shared', 'department_workspace')),
+                   agent_id TEXT,
+                   workspace_id TEXT,
+                   department_id TEXT,
+                   owner_kind TEXT NOT NULL CHECK(owner_kind IN ('agent', 'workspace', 'department_workspace')),
+                   owner_agent_id TEXT,
+                   steward_agent_id TEXT NOT NULL,
+                   reviewer_principal_kind TEXT NOT NULL CHECK(reviewer_principal_kind IN ('agent', 'chairman_user')),
+                   reviewer_principal_id TEXT NOT NULL,
+                   review_policy TEXT NOT NULL CHECK(review_policy = 'independent_reviewer'),
+                   visibility_policy TEXT NOT NULL CHECK(visibility_policy IN ('agent_private', 'workspace_shared', 'department_workspace')),
+                   storage_profile_version TEXT NOT NULL CHECK(storage_profile_version = 'memory-v1'),
+                   state TEXT NOT NULL CHECK(state IN ('active', 'read_only_history')),
+                   current_revision_id TEXT,
+                   content_hash TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   CHECK(
+                     (scope_type = 'agent_long_term' AND agent_id IS NOT NULL AND workspace_id IS NULL AND department_id IS NULL AND owner_kind = 'agent' AND owner_agent_id = agent_id) OR
+                     (scope_type = 'agent_workspace' AND agent_id IS NOT NULL AND workspace_id IS NOT NULL AND department_id IS NULL AND owner_kind = 'agent' AND owner_agent_id = agent_id) OR
+                     (scope_type = 'workspace_shared' AND agent_id IS NULL AND workspace_id IS NOT NULL AND department_id IS NULL AND owner_kind = 'workspace' AND owner_agent_id IS NULL) OR
+                     (scope_type = 'department_workspace' AND agent_id IS NULL AND workspace_id IS NOT NULL AND department_id IS NOT NULL AND owner_kind = 'department_workspace' AND owner_agent_id IS NULL)
+                   ),
+                   CHECK(reviewer_principal_kind <> 'agent' OR owner_agent_id IS NULL OR owner_agent_id <> reviewer_principal_id)
+                 );
+                 INSERT INTO memory_spaces SELECT id, scope_type, agent_id, workspace_id, department_id, owner_kind, owner_agent_id, steward_agent_id, 'agent', reviewer_agent_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at FROM memory_spaces_v9;
+                 CREATE UNIQUE INDEX memory_spaces_scope_unique ON memory_spaces(scope_type, COALESCE(agent_id, ''), COALESCE(workspace_id, ''), COALESCE(department_id, ''));
+                 CREATE TABLE memory_candidates (
+                   id TEXT PRIMARY KEY,
+                   space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE RESTRICT,
+                   proposer_agent_id TEXT NOT NULL,
+                   reviewer_principal_kind TEXT NOT NULL CHECK(reviewer_principal_kind IN ('agent', 'chairman_user')),
+                   reviewer_principal_id TEXT NOT NULL,
+                   source_kind TEXT NOT NULL CHECK(source_kind IN ('manual', 'import')),
+                   source_label TEXT NOT NULL,
+                   summary TEXT NOT NULL,
+                   proposed_content TEXT NOT NULL,
+                   submitted_baseline_json TEXT NOT NULL,
+                   proposed_content_hash TEXT NOT NULL,
+                   status TEXT NOT NULL CHECK(status IN ('pending_review', 'changes_requested', 'rejected', 'approved_pending_write', 'written', 'revision_pending')),
+                   version INTEGER NOT NULL CHECK(version >= 1),
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL,
+                   submitted_base_content TEXT NOT NULL DEFAULT '',
+                   CHECK(reviewer_principal_kind <> 'agent' OR proposer_agent_id <> reviewer_principal_id)
+                 );
+                 INSERT INTO memory_candidates SELECT id, space_id, proposer_agent_id, 'agent', reviewer_agent_id, source_kind, source_label, summary, proposed_content, submitted_baseline_json, proposed_content_hash, status, version, created_at, updated_at, submitted_base_content FROM memory_candidates_v9;
+                 CREATE INDEX memory_candidates_space ON memory_candidates(space_id);
+                 CREATE TABLE memory_review_decisions (
+                   id TEXT PRIMARY KEY,
+                   candidate_id TEXT NOT NULL REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+                   actor_principal_kind TEXT NOT NULL CHECK(actor_principal_kind IN ('agent', 'chairman_user')),
+                   actor_principal_id TEXT NOT NULL,
+                   decision TEXT NOT NULL CHECK(decision IN ('request_changes', 'reject', 'approve')),
+                   comment TEXT,
+                   decided_at TEXT NOT NULL
+                 );
+                 INSERT INTO memory_review_decisions SELECT id, candidate_id, 'agent', actor_agent_id, decision, comment, decided_at FROM memory_review_decisions_v9;
+                 CREATE INDEX memory_decisions_candidate ON memory_review_decisions(candidate_id);
+                 CREATE TABLE memory_revisions (
+                   id TEXT PRIMARY KEY,
+                   space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE RESTRICT,
+                   parent_revision_id TEXT REFERENCES memory_revisions(id) ON DELETE RESTRICT,
+                   candidate_id TEXT NOT NULL UNIQUE REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+                   review_decision_id TEXT NOT NULL UNIQUE REFERENCES memory_review_decisions(id) ON DELETE RESTRICT,
+                   proposer_agent_id TEXT NOT NULL,
+                   reviewer_principal_kind TEXT NOT NULL CHECK(reviewer_principal_kind IN ('agent', 'chairman_user')),
+                   reviewer_principal_id TEXT NOT NULL,
+                   source_content_hash TEXT NOT NULL,
+                   content_hash TEXT NOT NULL,
+                   write_receipt_id TEXT NOT NULL UNIQUE,
+                   written_at TEXT NOT NULL
+                 );
+                 INSERT INTO memory_revisions SELECT id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, 'agent', reviewer_agent_id, source_content_hash, content_hash, write_receipt_id, written_at FROM memory_revisions_v9;
+                 CREATE INDEX memory_revisions_space ON memory_revisions(space_id);
+                 CREATE TABLE memory_revision_recovery (
+                   recovery_ref TEXT PRIMARY KEY,
+                   candidate_id TEXT NOT NULL UNIQUE REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+                   review_decision_id TEXT NOT NULL REFERENCES memory_review_decisions(id) ON DELETE RESTRICT,
+                   revision_json TEXT NOT NULL,
+                   write_receipt_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+                 );
+                 INSERT INTO memory_revision_recovery SELECT * FROM memory_revision_recovery_v9;
+                 DROP TABLE memory_revision_recovery_v9;
+                 DROP TABLE memory_revisions_v9;
+                 DROP TABLE memory_review_decisions_v9;
+                 DROP TABLE memory_candidates_v9;
+                 DROP TABLE memory_spaces_v9;
+                 PRAGMA user_version = 10;
+                 COMMIT;
+                 PRAGMA legacy_alter_table = OFF;
+                 PRAGMA foreign_keys = ON;",
+            )
+                .map_err(|error| format!("正式 Memory 审核主体迁移失败：{error}"))?;
+            let invalid: i64 = connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|_| "无法校验正式 Memory 外键".to_string())?;
+            if invalid != 0 {
+                return Err("正式 Memory 审核主体迁移后外键校验失败".into());
+            }
+        }
+    }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|_| "无法读取本地领域数据库版本".to_string())?;
+    if version == 10 {
+        connection
+            .execute_batch(crate::tool_configuration::MIGRATION_V11)
+            .map_err(|_| "工具方案数据库迁移失败".to_string())?;
     }
     Ok(())
 }
@@ -1879,7 +2049,7 @@ mod tests {
         let connection = Connection::open(&path).unwrap();
         connection
             .execute(
-                "INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_agent_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES ('memory-agent-worker', 'agent_long_term', 'worker', 'agent', 'worker', 'worker', 'reviewer', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:old', '2026-09-01T00:00:00Z')",
+                "INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_principal_kind, reviewer_principal_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES ('memory-agent-worker', 'agent_long_term', 'worker', 'agent', 'worker', 'worker', 'agent', 'reviewer', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:old', '2026-09-01T00:00:00Z')",
                 [],
             )
             .unwrap();

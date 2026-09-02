@@ -10,6 +10,7 @@ import { initialAgents, initialWorkspaces } from '../domain'
 const desktopBridge = vi.hoisted(() => ({
   listManagedAgents: vi.fn(),
   loadOrganizationSnapshot: vi.fn(),
+  loadToolConfiguration: vi.fn(),
   listAgentRecoveryOperations: vi.fn(),
 }))
 
@@ -18,6 +19,7 @@ vi.mock('../desktop-bridge', () => ({
   listAgents: desktopBridge.listManagedAgents,
   listManagedAgents: desktopBridge.listManagedAgents,
   loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
+  loadToolConfiguration: desktopBridge.loadToolConfiguration,
   listAgentRecoveryOperations: desktopBridge.listAgentRecoveryOperations,
 }))
 
@@ -37,6 +39,7 @@ function SnapshotProbe() {
 beforeEach(() => {
   desktopBridge.listManagedAgents.mockReset()
   desktopBridge.loadOrganizationSnapshot.mockReset()
+  desktopBridge.loadToolConfiguration.mockReset().mockResolvedValue({ revision: 0, selectedPlanId: 'default', builtInToolIds: [], plans: [{ id: 'default', name: '默认方案', toolIds: [] }], customTools: [] })
   desktopBridge.listAgentRecoveryOperations.mockReset()
   desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
   vi.stubGlobal('localStorage', {
@@ -72,7 +75,7 @@ describe('Desktop 组织事实恢复', () => {
       workspaces: [],
       serviceGrants: [{ agentId: agent.id, id: 'grant-1', departmentId: 'department-1', capabilities: ['配置审查'], workspaceIds: [], prohibitions: ['不得扩大权限'], status: '有效' }],
     }
-    desktopBridge.listManagedAgents.mockResolvedValue([agent])
+    desktopBridge.listManagedAgents.mockResolvedValue({ agents: [agent], diagnostics: [] })
     desktopBridge.loadOrganizationSnapshot.mockResolvedValue(snapshot)
 
     render(<AppProvider><SnapshotProbe /></AppProvider>)
@@ -89,7 +92,7 @@ describe('Desktop 组织事实恢复', () => {
   })
 
   it('受管 Agent discovery 是 authoritative replace，不保留旧 Agent', async () => {
-    desktopBridge.listManagedAgents.mockResolvedValue([])
+    desktopBridge.listManagedAgents.mockResolvedValue({ agents: [], diagnostics: [] })
     desktopBridge.loadOrganizationSnapshot.mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
 
     render(<AppProvider><SnapshotProbe /></AppProvider>)
@@ -99,7 +102,7 @@ describe('Desktop 组织事实恢复', () => {
   })
 
   it('Organization 失败不阻断 Agent 成功事实', async () => {
-    desktopBridge.listManagedAgents.mockResolvedValue([{ ...initialAgents[0], id: 'real-agent', name: '真实 Agent', serviceGrants: [] }])
+    desktopBridge.listManagedAgents.mockResolvedValue({ agents: [{ ...initialAgents[0], id: 'real-agent', name: '真实 Agent', serviceGrants: [] }], diagnostics: [] })
     desktopBridge.loadOrganizationSnapshot.mockRejectedValue(new Error('organization unavailable'))
 
     render(<AppProvider><SnapshotProbe /></AppProvider>)

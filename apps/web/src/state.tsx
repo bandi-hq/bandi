@@ -34,10 +34,11 @@ import { validateOrchestrationOverride } from './orchestration-policy'
 import { applyAgentConfig, describeAgentConfigFile, getAgentConfigPath, isAgentConfigPayload, serializeAgentConfig, snapshotAgentConfig, type AgentConfigPayload, type SaveAgentConfigInput } from './agent-config-model'
 import { appendConfigRevision } from './config-revisions'
 import { configurationEnvironmentPath, isConfigurationEnvironment, normalizeConfigurationEnvironment, serializeConfigurationEnvironment, validateConfigurationEnvironment } from './configuration-environment-model'
-import type { AgentRecoveryOperationSummaryDto, MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
+import type { AgentRecoveryOperationSummaryDto, Diagnostic, MemoryReviewBundleDto, ReviewMemoryCandidateResult } from './contracts'
 import type { TerminalId } from './terminal-model'
 import type { MainMenuLayoutPreference } from './navigation-layout'
-import { isDesktopRuntime, listAgentRecoveryOperations, listAgents, loadOrganizationSnapshot } from './desktop-bridge'
+import { isDesktopRuntime, listAgentRecoveryOperations, listAgents, loadOrganizationSnapshot, loadToolConfiguration, type ToolConfigurationSnapshotDto } from './desktop-bridge'
+import { applyToolConfigurationSnapshot, emptyToolConfiguration, type ToolConfigurationState } from './tool-configuration'
 import {
   DEFAULT_UI_PREFERENCES,
   getAccessibleAccent,
@@ -100,7 +101,7 @@ export type OnboardingState = {
 }
 
 export type HydrationStatus = 'idle' | 'loading' | 'succeeded' | 'failed'
-export type HydrationKey = 'managedAgents' | 'organization' | 'agentRecovery'
+export type HydrationKey = 'managedAgents' | 'organization' | 'agentRecovery' | 'toolConfiguration'
 
 type OrganizationServiceGrant = {
   agentId: string
@@ -116,6 +117,7 @@ export type State = {
   runtime: 'web' | 'desktop'
   hydration: Record<HydrationKey, HydrationStatus>
   hydrationErrors: Partial<Record<HydrationKey, string>>
+  agentDiagnostics: Diagnostic[]
   agentRecoveryOperations: AgentRecoveryOperationSummaryDto[]
   organizationServiceGrants: OrganizationServiceGrant[]
   onboarding: OnboardingState
@@ -135,6 +137,7 @@ export type State = {
   aiClients: AiClient[]
   configurationEnvironments: ConfigurationEnvironment[]
   currentConfigurationEnvironmentId: string
+  toolConfiguration: ToolConfigurationState
   recentAgentIds: string[]
   currentWorkspaceId: string | null
   uiPreferences: UiPreferences
@@ -156,13 +159,16 @@ export type Action =
   | { type: 'CREATE_AGENT'; agent: FullAgent }
   | { type: 'UPSERT_MANAGED_AGENT'; agent: FullAgent; message?: string }
   | { type: 'START_DESKTOP_HYDRATION' }
-  | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[] }
+  | { type: 'HYDRATE_MANAGED_AGENTS'; agents: FullAgent[]; diagnostics: Diagnostic[] }
   | { type: 'FAIL_MANAGED_AGENTS_HYDRATION'; message: string }
   | { type: 'HYDRATE_AGENT_RECOVERY'; operations: AgentRecoveryOperationSummaryDto[] }
   | { type: 'SYNC_AGENT_RECOVERY'; operation: AgentRecoveryOperationSummaryDto; agent?: FullAgent }
   | { type: 'FAIL_AGENT_RECOVERY_HYDRATION'; message: string }
   | { type: 'HYDRATE_ORGANIZATION'; companies: Company[]; departments: FullDepartment[]; roles: Role[]; workspaces: FullWorkspace[]; serviceGrants: OrganizationServiceGrant[] }
   | { type: 'FAIL_ORGANIZATION_HYDRATION'; message: string }
+  | { type: 'HYDRATE_TOOL_CONFIGURATION'; snapshot: ToolConfigurationSnapshotDto }
+  | { type: 'FAIL_TOOL_CONFIGURATION_HYDRATION'; message: string }
+  | { type: 'SYNC_TOOL_CONFIGURATION'; snapshot: ToolConfigurationSnapshotDto; message?: string }
   | { type: 'SYNC_PERSISTED_COMPANIES'; companies: Company[] }
   | { type: 'SYNC_PERSISTED_DEPARTMENTS'; departments: FullDepartment[] }
   | { type: 'SYNC_PERSISTED_ROLES'; roles: Role[] }
@@ -219,8 +225,9 @@ const initialUiPreferences = getInitialUiPreferences()
 
 export const initialState: State = {
   runtime: 'web',
-  hydration: { managedAgents: 'idle', organization: 'idle', agentRecovery: 'idle' },
+  hydration: { managedAgents: 'idle', organization: 'idle', agentRecovery: 'idle', toolConfiguration: 'idle' },
   hydrationErrors: {},
+  agentDiagnostics: [],
   agentRecoveryOperations: [],
   organizationServiceGrants: [],
   onboarding: { status: 'active' },
@@ -247,6 +254,7 @@ export const initialState: State = {
   aiClients: initialAiClients,
   configurationEnvironments: initialConfigurationEnvironments,
   currentConfigurationEnvironmentId: initialConfigurationEnvironments[0].id,
+  toolConfiguration: emptyToolConfiguration,
   recentAgentIds: [],
   currentWorkspaceId: 'bandi',
   uiPreferences: initialUiPreferences,
@@ -259,7 +267,7 @@ function createDesktopInitialState(): State {
   return {
     ...initialState,
     runtime: 'desktop',
-    hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading' },
+    hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading', toolConfiguration: 'loading' },
     hydrationErrors: {},
     agentRecoveryOperations: [],
     agents: [],
@@ -273,6 +281,10 @@ function createDesktopInitialState(): State {
     memoryCandidates: [],
     configRevisions: [],
     backupSnapshots: [],
+    aiClients: [],
+    configurationEnvironments: [],
+    currentConfigurationEnvironmentId: '',
+    toolConfiguration: emptyToolConfiguration,
     recentAgentIds: [],
     currentWorkspaceId: null,
   }
@@ -298,7 +310,10 @@ function memoryOwnerLabel(state: State, owner: MemoryReviewBundleDto['space']['o
 function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { space: MemorySpace; candidate: MemoryCandidate } {
   const owner = memoryOwnerLabel(state, bundle.space.owner)
   const steward = state.agents.find((item) => item.id === bundle.space.stewardAgentId)?.name ?? bundle.space.stewardAgentId
-  const reviewer = state.agents.find((item) => item.id === bundle.space.reviewerAgentId)?.name ?? bundle.space.reviewerAgentId
+  const principal = bundle.space.reviewPrincipal
+  const reviewer = principal.kind === 'agent'
+    ? state.agents.find((item) => item.id === principal.agentId)?.name ?? principal.agentId
+    : `董事长（${state.companies.find((item) => item.id === principal.companyId)?.name ?? principal.companyId}）`
   const formalStatus = bundle.candidate.status
   const scopeType = {
     agent_long_term: 'Agent 长期记忆',
@@ -318,7 +333,7 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
       owner,
       steward,
       reviewer,
-      reviewerAgentId: bundle.space.reviewerAgentId,
+      reviewPrincipal: bundle.space.reviewPrincipal,
       revision: bundle.space.currentRevisionId ?? '尚无正式版本',
       path,
     },
@@ -326,7 +341,7 @@ function mapFormalMemoryBundle(state: State, bundle: MemoryReviewBundleDto): { s
       id: bundle.candidate.id,
       spaceId: bundle.candidate.spaceId,
       proposerAgentId: bundle.candidate.proposerAgentId,
-      reviewerAgentId: bundle.candidate.reviewerAgentId,
+      reviewPrincipal: bundle.candidate.reviewPrincipal,
       summary: bundle.candidate.summary,
       current: bundle.currentContent,
       proposed: bundle.candidate.proposedContent,
@@ -478,8 +493,9 @@ export function reducer(state: State, action: Action): State {
     case 'START_DESKTOP_HYDRATION':
       return {
         ...state,
-        hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading' },
+        hydration: { managedAgents: 'loading', organization: 'loading', agentRecovery: 'loading', toolConfiguration: 'loading' },
         hydrationErrors: {},
+        agentDiagnostics: [],
       }
     case 'UPSERT_MANAGED_AGENT': {
       const exists = state.agents.some((item) => item.id === action.agent.id)
@@ -502,8 +518,9 @@ export function reducer(state: State, action: Action): State {
         hydration: { ...state.hydration, managedAgents: 'succeeded' },
         hydrationErrors: withoutHydrationError(state.hydrationErrors, 'managedAgents'),
         onboarding: state.runtime === 'desktop'
-          ? { status: action.agents.length ? 'completed' : 'active' }
+          ? { status: action.agents.length || action.diagnostics.length ? 'completed' : 'active' }
           : state.onboarding,
+        agentDiagnostics: action.diagnostics,
         agents: action.agents.map((agent) => ({ ...agent, serviceGrants: grantsByAgent.get(agent.id) ?? [] })),
       }
     }
@@ -564,6 +581,25 @@ export function reducer(state: State, action: Action): State {
         ...state,
         hydration: { ...state.hydration, organization: 'failed' },
         hydrationErrors: { ...state.hydrationErrors, organization: action.message },
+      }
+    case 'HYDRATE_TOOL_CONFIGURATION':
+      return {
+        ...state,
+        ...applyToolConfigurationSnapshot(action.snapshot),
+        hydration: { ...state.hydration, toolConfiguration: 'succeeded' },
+        hydrationErrors: withoutHydrationError(state.hydrationErrors, 'toolConfiguration'),
+      }
+    case 'SYNC_TOOL_CONFIGURATION':
+      return {
+        ...state,
+        ...applyToolConfigurationSnapshot(action.snapshot),
+        notice: action.message ? notice('success', action.message, '已保存到 Bandi 本机工具方案') : state.notice,
+      }
+    case 'FAIL_TOOL_CONFIGURATION_HYDRATION':
+      return {
+        ...state,
+        hydration: { ...state.hydration, toolConfiguration: 'failed' },
+        hydrationErrors: { ...state.hydrationErrors, toolConfiguration: action.message },
       }
     case 'SYNC_PERSISTED_COMPANIES': {
       const persisted = new Map(action.companies.map((company) => [company.id, company]))
@@ -741,10 +777,10 @@ export function reducer(state: State, action: Action): State {
     case 'CREATE_MEMORY_CANDIDATE': {
       if (state.memoryCandidates.some((item) => item.id === action.candidate.id)) return { ...state, notice: notice('warning', '无法创建正式记忆候选', '候选 ID 已存在') }
       const governance = resolveMemoryGovernance(state, action.candidate.spaceId, action.candidate.proposerAgentId)
-      if (!governance.canPropose || !governance.reviewerAgentId) {
+      if (!governance.canPropose || !governance.reviewPrincipal) {
         return { ...state, notice: notice('error', '无法创建正式记忆候选', governance.errors.join(' ')) }
       }
-      const candidate = { ...action.candidate, reviewerAgentId: governance.reviewerAgentId }
+      const candidate = { ...action.candidate, reviewPrincipal: governance.reviewPrincipal }
       return { ...state, memoryCandidates: [...state.memoryCandidates, candidate], notice: notice('success', '正式记忆候选已创建', '尚未写入正式记忆') }
     }
     case 'SYNC_FORMAL_MEMORY_CANDIDATE': {
@@ -776,7 +812,7 @@ export function reducer(state: State, action: Action): State {
       const candidate = state.memoryCandidates.find((item) => item.id === action.candidateId)
       if (!candidate) return { ...state, notice: notice('warning', '无法审核正式记忆候选', '候选不存在') }
       const governance = resolveMemoryGovernance(state, candidate.spaceId, candidate.proposerAgentId)
-      if (action.status === '已写入演示 Revision' && (!governance.canReview || governance.reviewerAgentId !== candidate.reviewerAgentId)) {
+      if (action.status === '已写入演示 Revision' && (!governance.canReview || JSON.stringify(governance.reviewPrincipal) !== JSON.stringify(candidate.reviewPrincipal))) {
         return { ...state, notice: notice('error', '无法批准正式记忆候选', governance.errors.join(' ') || '审核关系已变化，请重新创建或改投候选。') }
       }
       if (candidate.status === '已写入演示 Revision') return { ...state, notice: notice('warning', '候选已经写入演示 Revision', '不会重复递增 Revision') }
@@ -905,7 +941,7 @@ export function AppProvider({ children, initialState: providedState }: { childre
     dispatch({ type: 'START_DESKTOP_HYDRATION' })
     const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error)
     void listAgents()
-      .then((agents) => dispatch({ type: 'HYDRATE_MANAGED_AGENTS', agents }))
+      .then(({ agents, diagnostics }) => dispatch({ type: 'HYDRATE_MANAGED_AGENTS', agents, diagnostics }))
       .catch((error) => dispatch({ type: 'FAIL_MANAGED_AGENTS_HYDRATION', message: errorMessage(error) }))
     void loadOrganizationSnapshot()
       .then((snapshot) => dispatch({ type: 'HYDRATE_ORGANIZATION', ...snapshot }))
@@ -913,6 +949,9 @@ export function AppProvider({ children, initialState: providedState }: { childre
     void listAgentRecoveryOperations()
       .then((operations) => dispatch({ type: 'HYDRATE_AGENT_RECOVERY', operations }))
       .catch((error) => dispatch({ type: 'FAIL_AGENT_RECOVERY_HYDRATION', message: errorMessage(error) }))
+    void loadToolConfiguration()
+      .then((snapshot) => dispatch({ type: 'HYDRATE_TOOL_CONFIGURATION', snapshot }))
+      .catch((error) => dispatch({ type: 'FAIL_TOOL_CONFIGURATION_HYDRATION', message: errorMessage(error) }))
   }, [providedState])
 
   useEffect(() => {

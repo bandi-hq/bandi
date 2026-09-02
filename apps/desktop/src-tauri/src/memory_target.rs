@@ -39,6 +39,39 @@ pub(crate) enum Owner {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum ReviewPrincipal {
+    Agent { agent_id: String },
+    ChairmanUser { company_id: String },
+}
+
+impl ReviewPrincipal {
+    pub(crate) fn database_parts(&self) -> (&'static str, &str) {
+        match self {
+            Self::Agent { agent_id } => ("agent", agent_id),
+            Self::ChairmanUser { company_id } => ("chairman_user", company_id),
+        }
+    }
+
+    pub(crate) fn from_database(kind: &str, id: String) -> Result<Self, String> {
+        match kind {
+            "agent" => Ok(Self::Agent { agent_id: id }),
+            "chairman_user" => Ok(Self::ChairmanUser { company_id: id }),
+            _ => Err("正式 Memory 审核主体已损坏".into()),
+        }
+    }
+
+    pub(crate) fn is_agent(&self, agent_id: &str) -> bool {
+        matches!(self, Self::Agent { agent_id: id } if id == agent_id)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedMemoryTarget {
     pub(crate) space_id: String,
@@ -46,7 +79,7 @@ pub(crate) struct ResolvedMemoryTarget {
     pub(crate) scope_key: ScopeKey,
     pub(crate) owner: Owner,
     pub(crate) steward_agent_id: String,
-    pub(crate) reviewer_agent_id: String,
+    pub(crate) review_principal: ReviewPrincipal,
     pub(crate) visibility_policy: &'static str,
     pub(crate) state: &'static str,
     pub(crate) root_kind: local_service::RootKind,
@@ -95,36 +128,40 @@ fn agent_record(agents_root: &Path, agent_id: &str) -> Result<serde_json::Value,
     .map_err(|_| "Agent 身份索引已损坏".to_string())
 }
 
-fn agent_reviewer(
-    snapshot: &domain_store::OrganizationSnapshotDto,
-    agents_root: &Path,
-    agent_id: &str,
-) -> Result<String, String> {
+fn is_active_agent(agents_root: &Path, agent_id: &str) -> bool {
+    agent_record(agents_root, agent_id)
+        .ok()
+        .and_then(|record| {
+            record
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("active")
+}
+
+fn agent_reviewer(agents_root: &Path, agent_id: &str) -> Result<ReviewPrincipal, String> {
     let record = agent_record(agents_root, agent_id)?;
     if let Some(manager) = record
         .get("managerAgentId")
         .and_then(serde_json::Value::as_str)
     {
         validate_id(manager, "直属主管标识")?;
-        if manager == agent_id {
-            return Err("提议者不能审核自己的候选".into());
+        if manager != agent_id && is_active_agent(agents_root, manager) {
+            return Ok(ReviewPrincipal::Agent {
+                agent_id: manager.into(),
+            });
         }
-        return Ok(manager.into());
     }
     let company_id = record
         .get("companyId")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "没有直属主管或所属公司，无法确定独立审核者".to_string())?;
-    let reviewer = snapshot
-        .companies
-        .iter()
-        .find(|company| company.id == company_id)
-        .and_then(|company| company.assistant_agent_id.clone())
-        .ok_or_else(|| "公司未配置董事长助理，无法确定独立审核者".to_string())?;
-    if reviewer == agent_id {
-        return Err("提议者不能审核自己的候选".into());
-    }
-    Ok(reviewer)
+    validate_id(company_id, "公司标识")?;
+    Ok(ReviewPrincipal::ChairmanUser {
+        company_id: company_id.into(),
+    })
 }
 
 fn workspace_root(
@@ -176,16 +213,26 @@ fn has_workspace_binding(
     Ok(actual == Some(workspace_id))
 }
 
-fn company_assistant(
+fn escalated_reviewer(
     snapshot: &domain_store::OrganizationSnapshotDto,
+    agents_root: &Path,
     company_id: &str,
-) -> Result<String, String> {
+    proposer_agent_id: &str,
+) -> ReviewPrincipal {
     snapshot
         .companies
         .iter()
         .find(|company| company.id == company_id)
-        .and_then(|company| company.assistant_agent_id.clone())
-        .ok_or_else(|| "公司未配置董事长助理，无法升级独立审核".to_string())
+        .and_then(|company| company.assistant_agent_id.as_deref())
+        .filter(|assistant| {
+            *assistant != proposer_agent_id && is_active_agent(agents_root, assistant)
+        })
+        .map(|assistant| ReviewPrincipal::Agent {
+            agent_id: assistant.into(),
+        })
+        .unwrap_or_else(|| ReviewPrincipal::ChairmanUser {
+            company_id: company_id.into(),
+        })
 }
 
 fn department_manager(
@@ -245,7 +292,7 @@ fn build(
     scope_key: ScopeKey,
     owner: Owner,
     steward_agent_id: String,
-    reviewer_agent_id: String,
+    review_principal: ReviewPrincipal,
     visibility_policy: &'static str,
     root_kind: local_service::RootKind,
     relative_path: String,
@@ -258,7 +305,7 @@ fn build(
         scope_key,
         owner,
         steward_agent_id,
-        reviewer_agent_id,
+        review_principal,
         visibility_policy,
         state: "active",
         root_kind,
@@ -343,8 +390,8 @@ pub(crate) fn resolve_requested(
     validate_id(space_id, "MemorySpace 标识")?;
     validate_id(proposer_agent_id, "提议者标识")?;
     let snapshot = domain_store::load_snapshot_at(database)?;
-    let reviewer = agent_reviewer(&snapshot, agents_root, proposer_agent_id)?;
     if space_id == format!("memory-agent-{proposer_agent_id}") {
+        let reviewer = agent_reviewer(agents_root, proposer_agent_id)?;
         let root = agent_package(agents_root, proposer_agent_id)?;
         return Ok(build(
             space_id.into(),
@@ -365,6 +412,7 @@ pub(crate) fn resolve_requested(
     }
     for item in &snapshot.workspaces {
         if space_id == format!("mem-agent-ws-{proposer_agent_id}-{}", item.id) {
+            let reviewer = agent_reviewer(agents_root, proposer_agent_id)?;
             workspace_root(database, registry_root, &item.id)?;
             if !has_workspace_binding(agents_root, proposer_agent_id, &item.id)? {
                 return Err("Agent 未建立该 Workspace 的 WorkspaceBinding".into());
@@ -400,10 +448,13 @@ pub(crate) fn resolve_requested(
             if item.company_id.as_deref() != Some(company_id.as_str()) {
                 return Err("Workspace 主责部门不属于所属公司".into());
             }
-            let reviewer = if proposer_agent_id == steward {
-                company_assistant(&snapshot, &company_id)?
+            let reviewer = if proposer_agent_id != steward && is_active_agent(agents_root, &steward)
+            {
+                ReviewPrincipal::Agent {
+                    agent_id: steward.clone(),
+                }
             } else {
-                steward.clone()
+                escalated_reviewer(&snapshot, agents_root, &company_id, proposer_agent_id)
             };
             let root = workspace_root(database, registry_root, &item.id)?;
             return Ok(build(
@@ -445,10 +496,13 @@ pub(crate) fn resolve_requested(
             )? {
                 return Err("提议者无权向该 Department × Workspace 空间提交候选".into());
             }
-            let reviewer = if proposer_agent_id == steward {
-                company_assistant(&snapshot, &company_id)?
+            let reviewer = if proposer_agent_id != steward && is_active_agent(agents_root, &steward)
+            {
+                ReviewPrincipal::Agent {
+                    agent_id: steward.clone(),
+                }
             } else {
-                steward.clone()
+                escalated_reviewer(&snapshot, agents_root, &company_id, proposer_agent_id)
             };
             let root = workspace_root(database, registry_root, &item.id)?;
             return Ok(build(
@@ -485,7 +539,7 @@ pub(crate) fn resolve_stored(
     department_id: Option<&str>,
     space_id: &str,
     steward_agent_id: String,
-    reviewer_agent_id: String,
+    review_principal: ReviewPrincipal,
     state: &str,
 ) -> Result<ResolvedMemoryTarget, String> {
     let (scope_key, owner, visibility, root_kind, relative, root) = match scope_type {
@@ -586,7 +640,7 @@ pub(crate) fn resolve_stored(
         scope_key,
         owner,
         steward_agent_id,
-        reviewer_agent_id,
+        review_principal,
         visibility_policy: visibility,
         state: if state == "active" {
             "active"

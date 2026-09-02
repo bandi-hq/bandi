@@ -84,6 +84,16 @@ pub(crate) struct BaselineRefDto {
     pub(crate) container_id: String,
     pub(crate) asset_content_hash: String,
     pub(crate) container_content_hash: String,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub(crate) target_exists: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Deserialize)]
@@ -593,6 +603,7 @@ struct DiscoveredAsset {
     container: SourceContainerDto,
     content: String,
     target: PathBuf,
+    target_exists: bool,
 }
 
 pub(crate) fn diagnostic(
@@ -1533,6 +1544,71 @@ fn validate_yaml_asset(kind: &str, content: &str) -> Result<(), Box<DiagnosticDt
     }
 }
 
+fn optional_managed_yaml_content(kind: &str) -> Option<&'static str> {
+    match kind {
+        "rules" => Some("schemaVersion: 1\nrules:\n  []\n"),
+        "skills" => Some("schemaVersion: 1\nskills:\n  []\n"),
+        "mcp" => Some("schemaVersion: 1\nmcp:\n  []\n"),
+        "sop" => Some("schemaVersion: 1\nsop:\n  []\n"),
+        "hooks" => Some("schemaVersion: 1\nhooks: []\n"),
+        "commands" => Some("schemaVersion: 1\ncommands: []\n"),
+        _ => None,
+    }
+}
+
+fn discover_missing_managed_yaml_asset(
+    discovered: &mut Vec<DiscoveredAsset>,
+    package_path: &Path,
+    agent_id: &str,
+    relative_path: &str,
+    kind: &str,
+    content: &str,
+    current: bool,
+    compatibility_reason: Option<&str>,
+) {
+    let target = package_path.join(relative_path);
+    let hash = hash_bytes(content.as_bytes());
+    let container_id = stable_id("container", &format!("managed:{agent_id}:{relative_path}"));
+    let asset_id = stable_id("asset", &format!("managed:{agent_id}:{kind}"));
+    let writable = current;
+    let locator = AssetLocatorDto {
+        root_kind: RootKind::Managed,
+        display_path: target.to_string_lossy().into_owned(),
+        relative_path: Some(format!("agt_{agent_id}/{relative_path}")),
+    };
+    discovered.push(DiscoveredAsset {
+        container: SourceContainerDto {
+            id: container_id.clone(),
+            locator,
+            format: "yaml".into(),
+            content_hash: hash.clone(),
+            writable,
+            read_only_reason: compatibility_reason.map(str::to_owned),
+        },
+        summary: SourceAssetSummaryDto {
+            id: asset_id,
+            container_id,
+            kind: kind.into(),
+            official_scope: "managed".into(),
+            asset_content_hash: hash.clone(),
+            container_content_hash: hash,
+            writable,
+            parse_status: if current { "parsed" } else { "unsupported" }.into(),
+            diagnostics: vec![diagnostic_for_source(
+                &format!("agt_{agent_id}"),
+                &format!("{kind}_not_materialized"),
+                "info",
+                &format!("AgentPackage 尚未创建 {relative_path}"),
+                Some(relative_path.into()),
+                Some("首次保存时安全创建该配置文件"),
+            )],
+        },
+        content: content.into(),
+        target,
+        target_exists: false,
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn discover_managed_yaml_asset(
     discovered: &mut Vec<DiscoveredAsset>,
@@ -1548,14 +1624,27 @@ fn discover_managed_yaml_asset(
     let metadata = match fs::symlink_metadata(&target) {
         Ok(value) => value,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            diagnostics.push(diagnostic_for_source(
-                &format!("agt_{agent_id}"),
-                &format!("{kind}_missing"),
-                "warning",
-                &format!("AgentPackage 缺少 {relative_path}"),
-                Some(relative_path.into()),
-                Some("补充 canonical 配置文件"),
-            ));
+            if let Some(content) = optional_managed_yaml_content(kind) {
+                discover_missing_managed_yaml_asset(
+                    discovered,
+                    package_path,
+                    agent_id,
+                    relative_path,
+                    kind,
+                    content,
+                    current,
+                    compatibility_reason,
+                );
+            } else {
+                diagnostics.push(diagnostic_for_source(
+                    &format!("agt_{agent_id}"),
+                    &format!("{kind}_missing"),
+                    "error",
+                    &format!("AgentPackage 缺少 {relative_path}"),
+                    Some(relative_path.into()),
+                    Some("恢复该 canonical 配置文件后重新读取"),
+                ));
+            }
             return;
         }
         Err(_) => {
@@ -1652,6 +1741,7 @@ fn discover_managed_yaml_asset(
         summary,
         content,
         target,
+        target_exists: true,
     });
 }
 
@@ -1778,6 +1868,20 @@ fn canonical_yaml_object(
         .ok_or_else(|| format!("AGENT_CANONICAL_INVALID: {relative_path} 必须是对象"))
 }
 
+fn optional_canonical_yaml_object(
+    package_path: &Path,
+    relative_path: &str,
+    kind: &str,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
+    match fs::symlink_metadata(package_path.join(relative_path)) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(format!(
+            "AGENT_CANONICAL_UNREADABLE: 无法检查 {relative_path}"
+        )),
+        Ok(_) => canonical_yaml_object(package_path, relative_path, kind).map(Some),
+    }
+}
+
 fn replace_projection_field(
     agent: &mut serde_json::Map<String, serde_json::Value>,
     document: &serde_json::Map<String, serde_json::Value>,
@@ -1865,6 +1969,25 @@ fn project_workspace_bindings(
     Ok(bindings)
 }
 
+fn managed_agent_file(
+    path: &str,
+    file_type: &str,
+    workspace_id: Option<&str>,
+) -> serde_json::Value {
+    let scope = match workspace_id {
+        Some(workspace_id) => {
+            serde_json::json!({ "kind": "workspace", "workspaceId": workspace_id })
+        }
+        None => serde_json::json!({ "kind": "agent-root" }),
+    };
+    serde_json::json!({
+        "path": path,
+        "type": file_type,
+        "status": "已从受管目录读取",
+        "scope": scope,
+    })
+}
+
 pub(crate) fn project_managed_agent_at(
     package_path: &Path,
     agent_id: &str,
@@ -1933,36 +2056,76 @@ pub(crate) fn project_managed_agent_at(
         "instructions".into(),
         serde_json::Value::String(canonical_package_text(package_path, "instructions.md")?),
     );
+    let mut files = vec![
+        managed_agent_file("agent.yaml", "稳定身份与职责", None),
+        managed_agent_file("instructions.md", "主 Instructions", None),
+    ];
 
-    for (path, kind, source, target) in [
-        ("config/rules.yaml", "rules", "rules", "ruleRefs"),
-        ("config/skills.yaml", "skills", "skills", "skillRefs"),
-        ("config/mcp.yaml", "mcp", "mcp", "mcpRefs"),
-        ("config/sop.yaml", "sop", "sop", "sopRefs"),
+    for (path, kind, source, target, file_type) in [
+        (
+            "config/rules.yaml",
+            "rules",
+            "rules",
+            "ruleRefs",
+            "Rule 配置与引用",
+        ),
+        (
+            "config/skills.yaml",
+            "skills",
+            "skills",
+            "skillRefs",
+            "Skill 配置与引用",
+        ),
+        ("config/mcp.yaml", "mcp", "mcp", "mcpRefs", "MCP 配置与引用"),
+        ("config/sop.yaml", "sop", "sop", "sopRefs", "SOP 配置与引用"),
+        (
+            "config/hooks.yaml",
+            "hooks",
+            "hooks",
+            "hookRefs",
+            "Hook 配置与引用",
+        ),
+        (
+            "config/commands.yaml",
+            "commands",
+            "commands",
+            "commandRefs",
+            "Command 配置与引用",
+        ),
+    ] {
+        if let Some(document) = optional_canonical_yaml_object(package_path, path, kind)? {
+            replace_projection_field(agent, &document, source, target, path)?;
+            files.push(managed_agent_file(path, file_type, None));
+        } else {
+            agent.insert(target.into(), serde_json::Value::Array(Vec::new()));
+        }
+    }
+    for (path, kind, source, target, file_type) in [
         (
             "config/permissions.yaml",
             "permissions",
             "permissions",
             "permissions",
+            "长期权限边界",
         ),
         (
             "config/orchestration.yaml",
             "orchestration",
             "orchestration",
             "orchestrationPolicy",
-        ),
-        ("config/hooks.yaml", "hooks", "hooks", "hookRefs"),
-        (
-            "config/commands.yaml",
-            "commands",
-            "commands",
-            "commandRefs",
+            "长期协作与委派边界",
         ),
     ] {
         let document = canonical_yaml_object(package_path, path, kind)?;
         replace_projection_field(agent, &document, source, target, path)?;
+        files.push(managed_agent_file(path, file_type, None));
     }
     let context = canonical_yaml_object(package_path, "config/context.yaml", "context")?;
+    files.push(managed_agent_file(
+        "config/context.yaml",
+        "上下文与输出格式",
+        None,
+    ));
     for field in [
         "contextPolicy",
         "contextWindowTokens",
@@ -1973,6 +2136,23 @@ pub(crate) fn project_managed_agent_at(
     }
 
     let bindings = project_workspace_bindings(package_path, agent.get("workspaceBindings"))?;
+    for workspace_id in bindings.iter().filter_map(|binding| {
+        binding
+            .get("workspaceId")
+            .and_then(serde_json::Value::as_str)
+    }) {
+        files.push(managed_agent_file(
+            &format!("workspaces/{workspace_id}/config.yaml"),
+            "工作区专属配置",
+            Some(workspace_id),
+        ));
+    }
+    files.sort_by(|left, right| {
+        left.get("path")
+            .and_then(serde_json::Value::as_str)
+            .cmp(&right.get("path").and_then(serde_json::Value::as_str))
+    });
+    agent.insert("files".into(), serde_json::Value::Array(files));
     agent.insert("workspaces".into(), serde_json::json!(bindings.len()));
     agent.insert(
         "workspaceBindings".into(),
@@ -2150,6 +2330,7 @@ fn discover_managed_assets(managed_root: &Path) -> (Vec<DiscoveredAsset>, Vec<Di
             container,
             content,
             target: instructions_path,
+            target_exists: true,
         });
         discover_managed_yaml_asset(
             &mut discovered,
@@ -3341,10 +3522,14 @@ fn save_config_with_revision_source(
             )],
         };
     }
+    let target_exists_now = fs::symlink_metadata(&item.target).is_ok();
+    let target_state_changed =
+        baseline.target_exists != item.target_exists || baseline.target_exists != target_exists_now;
     if baseline.asset_id != item.summary.id
         || baseline.container_id != item.summary.container_id
         || baseline.asset_content_hash != item.summary.asset_content_hash
         || baseline.container_content_hash != item.summary.container_content_hash
+        || target_state_changed
     {
         return SaveConfigResult::BaselineChanged {
             request_id,
@@ -3477,7 +3662,24 @@ fn save_config_with_revision_source(
         };
     }
     let previous_hash = item.summary.container_content_hash.clone();
-    if let Err(message) = restricted_atomic_write(&item.target, value.as_bytes(), true, label) {
+    if !baseline.target_exists && optional_managed_yaml_content(change_kind).is_none() {
+        return SaveConfigResult::ValidationFailed {
+            request_id,
+            diagnostics: vec![diagnostic(
+                "asset_creation_not_allowed",
+                "error",
+                "该配置资产不允许从缺失状态创建",
+                Some(relative_path.into()),
+                Some("恢复必需配置文件后重新发现"),
+            )],
+        };
+    }
+    if let Err(message) = restricted_atomic_write(
+        &item.target,
+        value.as_bytes(),
+        baseline.target_exists,
+        label,
+    ) {
         return SaveConfigResult::SaveFailed {
             request_id,
             diagnostics: vec![diagnostic(
@@ -4005,6 +4207,7 @@ pub(crate) fn load_editor_at(
             container_id: item.summary.container_id.clone(),
             asset_content_hash: item.summary.asset_content_hash.clone(),
             container_content_hash: item.summary.container_content_hash.clone(),
+            target_exists: item.target_exists,
         },
         diagnostics: item.summary.diagnostics.clone(),
         asset: item.summary,
@@ -4191,16 +4394,21 @@ mod tests {
                 include_claude_user_root: false,
             },
         );
-        assert_eq!(result.assets.len(), 1);
+        assert_eq!(result.assets.len(), 7);
+        let instructions = result
+            .assets
+            .iter()
+            .find(|asset| asset.kind == "instructions")
+            .unwrap();
         assert_eq!(
-            result.assets[0].asset_content_hash,
-            result.assets[0].container_content_hash
+            instructions.asset_content_hash,
+            instructions.container_content_hash
         );
         let loaded = load_editor_at(
             &managed,
             LoadEditorRequest {
                 request_id: "req-2".into(),
-                asset_id: result.assets[0].id.clone(),
+                asset_id: instructions.id.clone(),
             },
         )
         .unwrap();
@@ -4215,7 +4423,105 @@ mod tests {
                 include_claude_user_root: false,
             },
         );
-        assert_eq!(again.assets[0].id, result.assets[0].id);
+        let again_instructions = again
+            .assets
+            .iter()
+            .find(|asset| asset.kind == "instructions")
+            .unwrap();
+        assert_eq!(again_instructions.id, instructions.id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_optional_config_materializes_only_on_save() {
+        let root = temp_root("optional-materialization");
+        let managed = root.join("agents");
+        let revisions = root.join("revisions");
+        let package = managed.join("agt_alpha");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("agent.yaml"), "schemaVersion: 1\nid: alpha\n").unwrap();
+        fs::write(package.join("instructions.md"), "# Alpha\n").unwrap();
+        let rules_id = stable_id("asset", "managed:alpha:rules");
+        let loaded = load_editor_at(
+            &managed,
+            LoadEditorRequest {
+                request_id: "load-rules".into(),
+                asset_id: rules_id,
+            },
+        )
+        .unwrap();
+        assert!(!loaded.baseline_ref.target_exists);
+        assert!(!package.join("config/rules.yaml").exists());
+
+        let result = save_config_at(
+            &managed,
+            &revisions,
+            SaveConfigRequest {
+                request_id: "save-rules".into(),
+                asset_id: loaded.asset.id.clone(),
+                expected_owner: SaveConfigOwnerDto {
+                    agent_id: "alpha".into(),
+                    workspace_id: None,
+                },
+                change: ConfigChangeDto::Rules {
+                    value: "schemaVersion: 1\nrules:\n  - rule-review\n".into(),
+                },
+                expected_baseline: loaded.baseline_ref,
+                base_content: loaded.canonical_content,
+                confirmation_ref: None,
+            },
+        );
+        assert!(matches!(result, SaveConfigResult::Saved { .. }));
+        assert!(package.join("config/rules.yaml").is_file());
+        assert_eq!(
+            list_revisions_at(&revisions, &loaded.asset.id)
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_optional_config_detects_external_creation() {
+        let root = temp_root("optional-conflict");
+        let managed = root.join("agents");
+        let package = managed.join("agt_alpha");
+        fs::create_dir_all(package.join("config")).unwrap();
+        fs::write(package.join("agent.yaml"), "schemaVersion: 1\nid: alpha\n").unwrap();
+        fs::write(package.join("instructions.md"), "# Alpha\n").unwrap();
+        let loaded = load_editor_at(
+            &managed,
+            LoadEditorRequest {
+                request_id: "load-rules".into(),
+                asset_id: stable_id("asset", "managed:alpha:rules"),
+            },
+        )
+        .unwrap();
+        fs::write(
+            package.join("config/rules.yaml"),
+            "schemaVersion: 1\nrules:\n  - external\n",
+        )
+        .unwrap();
+        let result = save_config_at(
+            &managed,
+            &root.join("revisions"),
+            SaveConfigRequest {
+                request_id: "save-rules".into(),
+                asset_id: loaded.asset.id.clone(),
+                expected_owner: SaveConfigOwnerDto {
+                    agent_id: "alpha".into(),
+                    workspace_id: None,
+                },
+                change: ConfigChangeDto::Rules {
+                    value: "schemaVersion: 1\nrules:\n  - proposed\n".into(),
+                },
+                expected_baseline: loaded.baseline_ref,
+                base_content: loaded.canonical_content,
+                confirmation_ref: None,
+            },
+        );
+        assert!(matches!(result, SaveConfigResult::BaselineChanged { .. }));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -7023,8 +7329,18 @@ mod tests {
                 include_claude_user_root: false,
             },
         );
-        assert_eq!(result.assets.len(), 1);
-        assert_eq!(result.assets[0].parse_status, "unsupported");
+        assert_eq!(
+            result
+                .assets
+                .iter()
+                .filter(|asset| asset.kind == "instructions")
+                .count(),
+            1
+        );
+        assert!(result
+            .assets
+            .iter()
+            .all(|asset| asset.parse_status == "unsupported"));
         assert!(result
             .diagnostics
             .iter()

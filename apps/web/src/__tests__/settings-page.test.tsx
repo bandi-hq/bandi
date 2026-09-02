@@ -32,8 +32,14 @@ function renderSettings(initialEntry = '/', state?: State) {
 }
 
 const storage = new Map<string, string>()
+const NativeRequest = globalThis.Request
 beforeEach(() => {
   storage.clear()
+  vi.stubGlobal('Request', class extends NativeRequest {
+    constructor(input: RequestInfo | URL, init?: RequestInit) {
+      super(input, { ...init, signal: undefined })
+    }
+  })
   desktopBridge.desktop = false
   desktopBridge.deleteUiAsset.mockReset().mockResolvedValue(undefined)
   desktopBridge.importUiAsset.mockReset().mockResolvedValue(undefined)
@@ -51,16 +57,15 @@ afterEach(() => {
 })
 
 describe('设置页', () => {
-  it('默认展示五个用户可操作的设置分类', () => {
+  it('默认展示四个用户可操作的设置分类', () => {
     renderSettings()
 
-    expect(screen.getByText('管理 AI 编程工具、网络代理、终端、配置方案与备份，以及本机个性化。')).toBeInTheDocument()
-    expect(screen.getAllByRole('navigation', { name: '设置分类' })[0].querySelectorAll('button')).toHaveLength(5)
-    expect(screen.getByRole('button', { name: 'AI 编程工具' })).toHaveClass('bg-foreground')
-    expect(screen.getByRole('button', { name: '网络与代理' })).toBeInTheDocument()
+    expect(screen.getByText('管理工具交接、终端偏好、本机数据恢复与外观。')).toBeInTheDocument()
+    expect(screen.getAllByRole('navigation', { name: '设置分类' })[0].querySelectorAll('button')).toHaveLength(4)
+    expect(screen.getByRole('button', { name: '工具与交接' })).toHaveClass('bg-foreground')
     expect(screen.getByRole('button', { name: '终端' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '配置与备份' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '个性化' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '数据与恢复' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '外观' })).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '默认终端' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '首选编辑器' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '常规' })).not.toBeInTheDocument()
@@ -69,14 +74,14 @@ describe('设置页', () => {
     expect(screen.queryByRole('button', { name: '路径与编辑器' })).not.toBeInTheDocument()
   })
 
-  it('兼容旧链接并让已删除分类回退到 AI 编程工具', () => {
+  it('兼容旧链接并让已删除分类回退到工具与交接', () => {
     const { unmount } = renderSettings('/?section=ai-clients')
-    expect(screen.getByRole('button', { name: 'AI 编程工具' })).toHaveClass('bg-foreground')
+    expect(screen.getByRole('button', { name: '工具与交接' })).toHaveClass('bg-foreground')
     unmount()
 
     renderSettings('/?section=workspace')
-    expect(screen.getByRole('button', { name: 'AI 编程工具' })).toHaveClass('bg-foreground')
-    expect(screen.getAllByText('AI 编程工具').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: '工具与交接' })).toHaveClass('bg-foreground')
+    expect(screen.getByText('要管理的 AI 编程工具')).toBeInTheDocument()
   })
 
   it('在终端分类中管理默认终端', () => {
@@ -118,24 +123,31 @@ describe('设置页', () => {
       uiPreferences: { ...DEFAULT_UI_PREFERENCES, terminal: 'terminal' },
     })
 
-    expect(screen.getAllByRole('navigation', { name: '设置分类' })[0].querySelectorAll('button')).toHaveLength(3)
-    expect(screen.queryByRole('button', { name: 'AI 编程工具' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('navigation', { name: '设置分类' })[0].querySelectorAll('button')).toHaveLength(4)
+    expect(screen.getByRole('button', { name: '工具与交接' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '网络与代理' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '终端' })).toHaveClass('bg-foreground')
-    expect(screen.getByText(/白名单界面偏好/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '工具与交接' })).toHaveClass('bg-foreground')
 
+    unmount()
+    const terminalView = renderSettings('/?section=terminal', {
+      ...initialState,
+      runtime: 'desktop',
+      uiPreferences: { ...DEFAULT_UI_PREFERENCES, terminal: 'terminal' },
+    })
+    expect(screen.getByText(/白名单界面偏好/)).toBeInTheDocument()
     fireEvent.change(screen.getByRole('combobox', { name: '默认终端' }), { target: { value: 'ghostty' } })
     fireEvent.click(screen.getByRole('button', { name: '保存终端偏好' }))
     await waitFor(() => expect(JSON.parse(localStorage.getItem(UI_PREFERENCES_STORAGE_KEY) ?? '{}').terminal).toBe('ghostty'))
 
-    unmount()
+    terminalView.unmount()
     renderSettings('/?section=data', {
       ...initialState,
       runtime: 'desktop',
       uiPreferences: { ...DEFAULT_UI_PREFERENCES, terminal: 'ghostty' },
     })
-    expect(screen.getByRole('tab', { name: '存储位置' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '快照与恢复' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '本地数据' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '配置文件快照' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '重新开始' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '配置方案' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '远程备份' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Agent 根目录' })).not.toBeInTheDocument()

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Info, Plus } from 'lucide-react'
 import type { BackupScope, ConfigurationEnvironment } from '../../domain'
 import { AppDialog } from '../../components/ui/dialog'
@@ -16,11 +16,40 @@ import { PersonalizationSection } from './personalization-section'
 import { normalizeTerminalId, terminalOptions } from '../../terminal-model'
 import { isDesktopRuntime } from '../../desktop-bridge'
 import { DesktopBackupPanel } from './desktop-backup-panel'
+import { FactoryResetPanel } from './factory-reset-panel'
+import { ToolsHandoffSection } from './tools-handoff-section'
 
-const webSections = [['ai-clients', 'AI 编程工具'], ['network', '网络与代理'], ['terminal', '终端'], ['data', '配置与备份'], ['appearance', '个性化']]
-const desktopSections = [['terminal', '终端'], ['data', '配置与备份'], ['appearance', '个性化']]
-export function SettingsPage() { const [params, setParams] = useSearchParams(); const desktop = isDesktopRuntime(); const sections = desktop ? desktopSections : webSections; const defaultSection = desktop ? 'terminal' : 'ai-clients'; const section = sections.some(([id]) => id === params.get('section')) ? params.get('section')! : defaultSection; return <><PageHeader title="设置" description={desktop ? '管理终端交接、本地配置与备份，以及本机个性化。' : '管理 AI 编程工具、网络代理、终端、配置方案与备份，以及本机个性化。'} /><div className="grid min-w-0 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]"><nav className="panel h-fit p-2" aria-label="设置分类">{sections.map(([id, label]) => <button key={id} onClick={() => setParams(id === defaultSection ? {} : { section: id })} className={`w-full rounded-md px-3 py-2.5 text-left text-sm ${section === id ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{label}</button>)}</nav><div className="min-w-0 space-y-5"><SettingsSection section={section} /></div></div></> }
-function SettingsSection({ section }: { section: string }) { const { state, dispatch } = useApp(); const desktop = isDesktopRuntime(); if (!desktop && section === 'ai-clients') return <><AiClientManagementSection /><PluginInstallationSummary /></>; if (!desktop && section === 'network') return <NetworkProxyPanel />; if (section === 'terminal') { const savedTerminal = desktop ? normalizeTerminalId(state.uiPreferences.terminal) : normalizeTerminalId(state.settings.terminal); return <SettingsDraftPanel key="terminal" title="终端" saveLabel={desktop ? '保存终端偏好' : '保存演示设置'} fields={{ terminal: savedTerminal }} onSave={(changes) => desktop ? dispatch({ type: 'UPDATE_UI_PREFERENCES', preferences: { ...state.uiPreferences, terminal: changes.terminal } }) : dispatch({ type: 'UPDATE_SETTINGS', changes })}>{({ draft, update }) => <><label className="block text-sm font-medium">默认终端<select className="mt-2 h-10 w-full px-3" value={draft.terminal} onChange={(event) => update('terminal', event.target.value as typeof draft.terminal)}>{terminalOptions().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><p className="mt-3 text-xs leading-5 text-muted-foreground">{desktop ? '保存在当前设备的白名单界面偏好中；不进入 Agent 配置、版本历史或备份。' : '当前选择只保存在页面内存，刷新后恢复默认值；Web 请复制路径后手动继续。'}</p></>}</SettingsDraftPanel> } if (section === 'data') return <ConfigurationAndBackupSection />; return <PersonalizationSection /> }
+const settingsSections = [['tools', '工具与交接'], ['terminal', '终端'], ['recovery', '数据与恢复'], ['appearance', '外观']] as const
+const sectionAliases: Record<string, string> = { 'ai-clients': 'tools', network: 'tools', data: 'recovery', backup: 'recovery' }
+
+export function SettingsPage() {
+  const [params, setParams] = useSearchParams()
+  const requested = params.get('section') ?? 'tools'
+  const section = sectionAliases[requested] ?? (settingsSections.some(([id]) => id === requested) ? requested : 'tools')
+  useEffect(() => {
+    if (requested === section) return
+    setParams(section === 'tools' ? {} : { section }, { replace: true })
+  }, [requested, section, setParams])
+  return <>
+    <PageHeader title="设置" description="管理工具交接、终端偏好、本机数据恢复与外观。" />
+    <div className="grid min-w-0 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <nav className="panel h-fit p-2" aria-label="设置分类">{settingsSections.map(([id, label]) => <button type="button" aria-current={section === id ? 'page' : undefined} key={id} onClick={() => setParams(id === 'tools' ? {} : { section: id })} className={`w-full rounded-md px-3 py-2.5 text-left text-sm ${section === id ? 'bg-foreground font-medium text-background' : 'hover:bg-muted'}`}>{label}</button>)}</nav>
+      <div className="min-w-0 space-y-5"><SettingsSection section={section} /></div>
+    </div>
+  </>
+}
+
+function SettingsSection({ section }: { section: string }) {
+  const { state, dispatch } = useApp()
+  const desktop = isDesktopRuntime()
+  if (section === 'tools') return <>{desktop ? <ToolsHandoffSection /> : <AiClientManagementSection />}{!desktop && <><NetworkProxyPanel /><PluginInstallationSummary /></>}</>
+  if (section === 'terminal') {
+    const savedTerminal = desktop ? normalizeTerminalId(state.uiPreferences.terminal) : normalizeTerminalId(state.settings.terminal)
+    return <SettingsDraftPanel key="terminal" title="终端" saveLabel={desktop ? '保存终端偏好' : '保存演示设置'} fields={{ terminal: savedTerminal }} onSave={(changes) => desktop ? dispatch({ type: 'UPDATE_UI_PREFERENCES', preferences: { ...state.uiPreferences, terminal: changes.terminal } }) : dispatch({ type: 'UPDATE_SETTINGS', changes })}>{({ draft, update }) => <><label className="block text-sm font-medium">默认终端<select className="mt-2 h-10 w-full px-3" value={draft.terminal} onChange={(event) => update('terminal', event.target.value as typeof draft.terminal)}>{terminalOptions().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><p className="mt-3 text-xs leading-5 text-muted-foreground">{desktop ? '保存在当前设备的白名单界面偏好中；不进入 Agent 配置、版本历史或配置文件快照。' : '当前选择只保存在页面内存，刷新后恢复默认值；Web 请复制路径后手动继续。'}</p></>}</SettingsDraftPanel>
+  }
+  if (section === 'recovery') return <ConfigurationAndBackupSection />
+  return <PersonalizationSection />
+}
 
 const webDataTabs = [
   { id: 'profiles', label: '配置方案' },
@@ -29,8 +58,9 @@ const webDataTabs = [
   { id: 'remote', label: '远程备份' },
 ] as const
 const desktopDataTabs = [
-  { id: 'storage', label: '存储位置' },
-  { id: 'snapshots', label: '快照与恢复' },
+  { id: 'storage', label: '本地数据' },
+  { id: 'snapshots', label: '配置文件快照' },
+  { id: 'restart', label: '重新开始' },
 ] as const
 
 type DataTabId = typeof webDataTabs[number]['id']
@@ -47,6 +77,7 @@ function ConfigurationAndBackupSection() {
     {!desktop && <EntityTabPanel tabId="profiles" activeTab={activeTab} scope="configuration-backup"><ConfigurationProfilesPanel /></EntityTabPanel>}
     <EntityTabPanel tabId="storage" activeTab={activeTab} scope="configuration-backup">{desktop ? <LocalAccessBoundaryPanel /> : <StorageLocationPanel value={agentRootDraft} savedValue={state.settings.agentRoot} onChange={setAgentRootDraft} onReset={() => setAgentRootDraft(state.settings.agentRoot)} onSave={() => dispatch({ type: 'UPDATE_SETTINGS', changes: { agentRoot: agentRootDraft } })} />}</EntityTabPanel>
     <EntityTabPanel tabId="snapshots" activeTab={activeTab} scope="configuration-backup"><SnapshotRecoveryPanel /></EntityTabPanel>
+    {desktop && <EntityTabPanel tabId="restart" activeTab={activeTab} scope="configuration-backup"><RestartPanel /></EntityTabPanel>}
     {!desktop && <EntityTabPanel tabId="remote" activeTab={activeTab} scope="configuration-backup"><RemoteBackupPanel repository={repositoryDraft} onRepositoryChange={setRepositoryDraft} /></EntityTabPanel>}
   </div>
 }
@@ -118,8 +149,15 @@ function PluginInstallationSummary() { const { state } = useApp(); return <Panel
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <section className="panel p-5"><b>{title}</b><div className="mt-5">{children}</div></section> }
 function SettingsDraftPanel<T extends Record<string, string>>({ title, fields, onSave, children, saveLabel = '保存演示设置' }: { title: string; fields: T; onSave: (changes: T) => void; children: (props: { draft: T; update: <K extends keyof T>(key: K, value: T[K]) => void }) => React.ReactNode; saveLabel?: string }) { const [draft, setDraft] = useState(fields); const dirty = JSON.stringify(draft) !== JSON.stringify(fields); const reset = () => setDraft(fields); return <Panel title={title}>{children({ draft, update: (key, value) => setDraft((current) => ({ ...current, [key]: value })) })}<div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={!dirty} onClick={reset}>取消</Button><Button disabled={!dirty} onClick={() => onSave(draft)}>{saveLabel}</Button></div></Panel> }
 function Select({ label, value, values, onChange }: { label: string; value: string; values: string[]; onChange: (v: string) => void }) { return <label className="block text-sm font-medium">{label}<select className="mt-2 h-10 w-full px-3" value={value} onChange={(e) => onChange(e.target.value)}>{values.map((item) => <option key={item}>{item}</option>)}</select></label> }
+function RestartPanel() {
+  return <div className="space-y-5">
+    <Panel title="重新查看使用引导"><p className="text-sm leading-6 text-muted-foreground">重新了解 Agent、工作区与工具交接的核心流程，不修改任何现有数据或首次使用状态。</p><Button asChild variant="outline" className="mt-4"><Link to="/guide">查看使用引导</Link></Button></Panel>
+    <FactoryResetPanel />
+  </div>
+}
+
 function SnapshotRecoveryPanel() {
-  if (isDesktopRuntime()) return <DesktopBackupPanel />
+  if (isDesktopRuntime()) return <><DesktopBackupPanel /><MockBoundaryNote>配置文件快照只保护你明确选择的可写受管配置文件，不包含领域数据库、组织与工作区登记、完整 AgentPackage、正式记忆、工具方案、个性化或凭据，也不能恢复整个 Bandi。</MockBoundaryNote></>
   return <DemoSnapshotRecoveryPanel />
 }
 

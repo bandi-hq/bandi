@@ -50,4 +50,17 @@ describe('共享 JSON Schema', () => {
     expect(validate(unknownHandoffRequest)).toBe(false)
     expect(validate.errors?.some((error) => error.keyword === 'additionalProperties')).toBe(true)
   })
+
+  it('正式记忆拒绝旧审核字段和不完整的审核主体', () => {
+    const validate = validator(memorySchema)
+    const oldField = structuredClone(memoryFixture)
+    Object.assign(oldField.candidate, { reviewerAgentId: 'zhiheng' })
+    expect(validate(oldField)).toBe(false)
+    expect(validate.errors?.some((error) => error.keyword === 'additionalProperties')).toBe(true)
+
+    const missingPrincipalId = structuredClone(memoryFixture)
+    Object.assign(missingPrincipalId.reviewRequest, { expectedReviewPrincipal: { kind: 'chairman_user' } })
+    expect(validate(missingPrincipalId)).toBe(false)
+    expect(validate.errors?.some((error) => error.keyword === 'required')).toBe(true)
+  })
 })

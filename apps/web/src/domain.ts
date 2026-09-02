@@ -249,6 +249,10 @@ export type ConfigRevision = {
 }
 
 export type MemoryScopeType = 'Agent 长期' | 'Agent × Workspace' | 'Workspace 公共' | 'Department × Workspace'
+export type MemoryReviewPrincipal =
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'chairman_user'; companyId: string }
+
 export type MemorySpace = {
   id: string
   scopeType: MemoryScopeType
@@ -260,7 +264,7 @@ export type MemorySpace = {
   owner: string
   steward: string
   reviewer: string
-  reviewerAgentId?: string
+  reviewPrincipal?: MemoryReviewPrincipal
   revision: string
   path: string
 }
@@ -269,7 +273,7 @@ export type MemoryCandidate = {
   id: string
   spaceId: string
   proposerAgentId: string
-  reviewerAgentId: string
+  reviewPrincipal: MemoryReviewPrincipal
   summary: string
   current: string
   proposed: string
@@ -451,15 +455,15 @@ export const initialPluginInstallations: PluginInstallation[] = [
 ]
 
 export const initialMemorySpaces: MemorySpace[] = [
-  { id: 'mem-agent-zhouce', scopeType: 'Agent 长期', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r18', path: '~/.bandi/agents/agt_zhouce/memory/long-term.md' },
-  { id: 'mem-agent-ws-zhouce-bandi', scopeType: 'Agent × Workspace', scopeKey: { kind: 'agent_workspace', agentId: 'zhouce', workspaceId: 'bandi' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r7', path: '~/.bandi/agents/agt_zhouce/workspaces/bandi/memory.md' },
-  { id: 'mem-ws-bandi', scopeType: 'Workspace 公共', scopeKey: { kind: 'workspace_shared', workspaceId: 'bandi' }, owner: 'Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r12', path: '.bandi/memory/public.md' },
-  { id: 'mem-dev-bandi', scopeType: 'Department × Workspace', scopeKey: { kind: 'department_workspace', departmentId: 'dev', workspaceId: 'bandi' }, owner: '研发部 × Bandi', steward: '周策', reviewer: '知衡', reviewerAgentId: 'zhiheng', revision: 'r7', path: '.bandi/memory/departments/dev.md' },
+  { id: 'mem-agent-zhouce', scopeType: 'Agent 长期', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' }, revision: 'r18', path: '~/.bandi/agents/agt_zhouce/memory/long-term.md' },
+  { id: 'mem-agent-ws-zhouce-bandi', scopeType: 'Agent × Workspace', scopeKey: { kind: 'agent_workspace', agentId: 'zhouce', workspaceId: 'bandi' }, owner: '周策', steward: '周策', reviewer: '知衡', reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' }, revision: 'r7', path: '~/.bandi/agents/agt_zhouce/workspaces/bandi/memory.md' },
+  { id: 'mem-ws-bandi', scopeType: 'Workspace 公共', scopeKey: { kind: 'workspace_shared', workspaceId: 'bandi' }, owner: 'Bandi', steward: '周策', reviewer: '知衡', reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' }, revision: 'r12', path: '.bandi/memory/public.md' },
+  { id: 'mem-dev-bandi', scopeType: 'Department × Workspace', scopeKey: { kind: 'department_workspace', departmentId: 'dev', workspaceId: 'bandi' }, owner: '研发部 × Bandi', steward: '周策', reviewer: '知衡', reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' }, revision: 'r7', path: '.bandi/memory/departments/dev.md' },
 ]
 
 export const initialMemoryCandidates: MemoryCandidate[] = [
-  { id: 'MC-028', spaceId: 'mem-dev-bandi', proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', summary: '记录已确认的 API 方案', current: 'API 方案待定', proposed: 'API 方案已由董事长确认采用方案 B', status: '待审核' },
-  { id: 'MC-029', spaceId: 'mem-ws-bandi', proposerAgentId: 'linxu', reviewerAgentId: 'zhouce', summary: '补充前端断点约束', current: '响应式约束待整理', proposed: '应用壳断点固定为 1280 / 960', status: '待审核' },
+  { id: 'MC-028', spaceId: 'mem-dev-bandi', proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' }, summary: '记录已确认的 API 方案', current: 'API 方案待定', proposed: 'API 方案已由董事长确认采用方案 B', status: '待审核' },
+  { id: 'MC-029', spaceId: 'mem-ws-bandi', proposerAgentId: 'linxu', reviewPrincipal: { kind: 'agent', agentId: 'zhouce' }, summary: '补充前端断点约束', current: '响应式约束待整理', proposed: '应用壳断点固定为 1280 / 960', status: '待审核' },
 ]
 
 export const initialBackupSnapshots: BackupSnapshot[] = [

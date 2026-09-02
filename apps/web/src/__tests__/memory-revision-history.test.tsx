@@ -15,7 +15,7 @@ const revision: MemoryRevisionDto = {
   candidateId: 'memory-candidate-2',
   reviewDecisionId: 'memory-decision-2',
   proposerAgentId: 'zhouce',
-  reviewerAgentId: 'zhiheng',
+  reviewPrincipal: { kind: 'agent', agentId: 'zhiheng' },
   sourceContentHash: hash,
   contentHash: hash,
   storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' },
@@ -58,7 +58,7 @@ describe('正式记忆版本历史', () => {
     expect(screen.getByText('当前正式版本')).toBeInTheDocument()
     expect(screen.getByText(revision.parentRevisionId!)).toBeInTheDocument()
     expect(screen.getByText(revision.candidateId)).toBeInTheDocument()
-    expect(screen.getByText(revision.reviewerAgentId)).toBeInTheDocument()
+    expect(screen.getByText(revision.reviewPrincipal.kind === 'agent' ? revision.reviewPrincipal.agentId : revision.reviewPrincipal.companyId)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /恢复/ })).not.toBeInTheDocument()
   })
 

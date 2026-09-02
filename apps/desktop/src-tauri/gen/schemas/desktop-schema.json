@@ -177,6 +177,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the commit_factory_reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-commit-factory-reset",
+          "markdownDescription": "Enables the commit_factory_reset command without any pre-configured scope."
+        },
+        {
           "description": "Enables the commit_managed_agent_creation command without any pre-configured scope.",
           "type": "string",
           "const": "allow-commit-managed-agent-creation",
@@ -195,22 +201,28 @@
           "markdownDescription": "Enables the continue_agent_recovery command without any pre-configured scope."
         },
         {
+          "description": "Enables the copy_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-copy-tool-plan",
+          "markdownDescription": "Enables the copy_tool_plan command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_backup_snapshot command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-backup-snapshot",
           "markdownDescription": "Enables the create_backup_snapshot command without any pre-configured scope."
         },
         {
-          "description": "Enables the create_managed_agent command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-create-managed-agent",
-          "markdownDescription": "Enables the create_managed_agent command without any pre-configured scope."
-        },
-        {
           "description": "Enables the create_memory_candidate command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-memory-candidate",
           "markdownDescription": "Enables the create_memory_candidate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-tool-plan",
+          "markdownDescription": "Enables the create_tool_plan command without any pre-configured scope."
         },
         {
           "description": "Enables the create_workspace command without any pre-configured scope.",
@@ -223,6 +235,18 @@
           "type": "string",
           "const": "allow-create-workspace-binding",
           "markdownDescription": "Enables the create_workspace_binding command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_custom_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-custom-tool",
+          "markdownDescription": "Enables the delete_custom_tool command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-tool-plan",
+          "markdownDescription": "Enables the delete_tool_plan command without any pre-configured scope."
         },
         {
           "description": "Enables the delete_ui_asset command without any pre-configured scope.",
@@ -327,6 +351,12 @@
           "markdownDescription": "Enables the load_organization_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Enables the load_tool_configuration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-load-tool-configuration",
+          "markdownDescription": "Enables the load_tool_configuration command without any pre-configured scope."
+        },
+        {
           "description": "Enables the preview_backup_restore command without any pre-configured scope.",
           "type": "string",
           "const": "allow-preview-backup-restore",
@@ -337,6 +367,12 @@
           "type": "string",
           "const": "allow-preview-claude-agent",
           "markdownDescription": "Enables the preview_claude_agent command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_factory_reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preview-factory-reset",
+          "markdownDescription": "Enables the preview_factory_reset command without any pre-configured scope."
         },
         {
           "description": "Enables the read_agent_avatar command without any pre-configured scope.",
@@ -435,6 +471,12 @@
           "markdownDescription": "Enables the save_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_custom_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-custom-tool",
+          "markdownDescription": "Enables the save_custom_tool command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_department command without any pre-configured scope.",
           "type": "string",
           "const": "allow-save-department",
@@ -453,10 +495,28 @@
           "markdownDescription": "Enables the save_service_grants command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-tool-plan",
+          "markdownDescription": "Enables the save_tool_plan command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "allow-save-workspace",
           "markdownDescription": "Enables the save_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-tool-plan",
+          "markdownDescription": "Enables the select_tool_plan command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the commit_factory_reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-commit-factory-reset",
+          "markdownDescription": "Denies the commit_factory_reset command without any pre-configured scope."
         },
         {
           "description": "Denies the commit_managed_agent_creation command without any pre-configured scope.",
@@ -477,22 +537,28 @@
           "markdownDescription": "Denies the continue_agent_recovery command without any pre-configured scope."
         },
         {
+          "description": "Denies the copy_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-copy-tool-plan",
+          "markdownDescription": "Denies the copy_tool_plan command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_backup_snapshot command without any pre-configured scope.",
           "type": "string",
           "const": "deny-create-backup-snapshot",
           "markdownDescription": "Denies the create_backup_snapshot command without any pre-configured scope."
         },
         {
-          "description": "Denies the create_managed_agent command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-create-managed-agent",
-          "markdownDescription": "Denies the create_managed_agent command without any pre-configured scope."
-        },
-        {
           "description": "Denies the create_memory_candidate command without any pre-configured scope.",
           "type": "string",
           "const": "deny-create-memory-candidate",
           "markdownDescription": "Denies the create_memory_candidate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-tool-plan",
+          "markdownDescription": "Denies the create_tool_plan command without any pre-configured scope."
         },
         {
           "description": "Denies the create_workspace command without any pre-configured scope.",
@@ -505,6 +571,18 @@
           "type": "string",
           "const": "deny-create-workspace-binding",
           "markdownDescription": "Denies the create_workspace_binding command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_custom_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-custom-tool",
+          "markdownDescription": "Denies the delete_custom_tool command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-tool-plan",
+          "markdownDescription": "Denies the delete_tool_plan command without any pre-configured scope."
         },
         {
           "description": "Denies the delete_ui_asset command without any pre-configured scope.",
@@ -609,6 +687,12 @@
           "markdownDescription": "Denies the load_organization_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Denies the load_tool_configuration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-load-tool-configuration",
+          "markdownDescription": "Denies the load_tool_configuration command without any pre-configured scope."
+        },
+        {
           "description": "Denies the preview_backup_restore command without any pre-configured scope.",
           "type": "string",
           "const": "deny-preview-backup-restore",
@@ -619,6 +703,12 @@
           "type": "string",
           "const": "deny-preview-claude-agent",
           "markdownDescription": "Denies the preview_claude_agent command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_factory_reset command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preview-factory-reset",
+          "markdownDescription": "Denies the preview_factory_reset command without any pre-configured scope."
         },
         {
           "description": "Denies the read_agent_avatar command without any pre-configured scope.",
@@ -717,6 +807,12 @@
           "markdownDescription": "Denies the save_config command without any pre-configured scope."
         },
         {
+          "description": "Denies the save_custom_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-custom-tool",
+          "markdownDescription": "Denies the save_custom_tool command without any pre-configured scope."
+        },
+        {
           "description": "Denies the save_department command without any pre-configured scope.",
           "type": "string",
           "const": "deny-save-department",
@@ -735,10 +831,22 @@
           "markdownDescription": "Denies the save_service_grants command without any pre-configured scope."
         },
         {
+          "description": "Denies the save_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-tool-plan",
+          "markdownDescription": "Denies the save_tool_plan command without any pre-configured scope."
+        },
+        {
           "description": "Denies the save_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "deny-save-workspace",
           "markdownDescription": "Denies the save_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_tool_plan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-tool-plan",
+          "markdownDescription": "Denies the select_tool_plan command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
@@ -2821,90 +2929,6 @@
           "type": "string",
           "const": "dialog:deny-save",
           "markdownDescription": "Denies the save command without any pre-configured scope."
-        },
-        {
-          "description": "Allows all WebDriverIO plugin commands for testing\n#### This default permission set includes:\n\n- `wdio:allow-execute`\n- `wdio:allow-log-frontend`\n- `wdio:allow-debug-plugin`\n- `wdio:allow-get-active-window-label`\n- `wdio:allow-get-window-states`\n- `wdio:allow-list-windows`",
-          "type": "string",
-          "const": "wdio:default",
-          "markdownDescription": "Allows all WebDriverIO plugin commands for testing\n#### This default permission set includes:\n\n- `wdio:allow-execute`\n- `wdio:allow-log-frontend`\n- `wdio:allow-debug-plugin`\n- `wdio:allow-get-active-window-label`\n- `wdio:allow-get-window-states`\n- `wdio:allow-list-windows`"
-        },
-        {
-          "description": "Enables the debug_plugin command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-debug-plugin",
-          "markdownDescription": "Enables the debug_plugin command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the execute command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-execute",
-          "markdownDescription": "Enables the execute command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_active_window_label command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-get-active-window-label",
-          "markdownDescription": "Enables the get_active_window_label command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the get_window_states command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-get-window-states",
-          "markdownDescription": "Enables the get_window_states command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the list_windows command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-list-windows",
-          "markdownDescription": "Enables the list_windows command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the log_frontend command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:allow-log-frontend",
-          "markdownDescription": "Enables the log_frontend command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the debug_plugin command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-debug-plugin",
-          "markdownDescription": "Denies the debug_plugin command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the execute command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-execute",
-          "markdownDescription": "Denies the execute command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_active_window_label command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-get-active-window-label",
-          "markdownDescription": "Denies the get_active_window_label command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_window_states command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-get-window-states",
-          "markdownDescription": "Denies the get_window_states command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the list_windows command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-list-windows",
-          "markdownDescription": "Denies the list_windows command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the log_frontend command without any pre-configured scope.",
-          "type": "string",
-          "const": "wdio:deny-log-frontend",
-          "markdownDescription": "Denies the log_frontend command without any pre-configured scope."
-        },
-        {
-          "description": "Default permissions for the plugin",
-          "type": "string",
-          "const": "wdio-webdriver:default",
-          "markdownDescription": "Default permissions for the plugin"
         }
       ]
     },

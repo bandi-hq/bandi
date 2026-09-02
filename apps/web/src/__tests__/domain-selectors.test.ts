@@ -37,6 +37,35 @@ describe('配置事实 selectors', () => {
     expect(codes).toEqual(expect.arrayContaining(['package-future', 'role-missing', 'orchestration-expanded']))
   })
 
+  it('空 Workspace Rule 是合法配置，缺少文件事实才报告缺口', () => {
+    const source = initialState.agents.find((agent) => agent.id === 'zhouce')!
+    const agent = {
+      ...source,
+      files: source.files.filter((file) => file.path !== 'workspaces/bandi/config.yaml'),
+      workspaceBindings: source.workspaceBindings.map((binding) => binding.workspaceId === 'bandi' ? { ...binding, ruleIds: [] } : binding),
+    }
+    const state = { ...initialState, agents: initialState.agents.map((item) => item.id === agent.id ? agent : item) }
+    const issues = getAgentConfigStatus(state, agent).issues
+
+    expect(issues.some((issue) => issue.label.includes('缺少 Rules'))).toBe(false)
+    expect(issues.some((issue) => issue.code === 'missing-binding-file' && issue.label.includes('bandi'))).toBe(true)
+  })
+
+  it('外部只读引用不根据空文件列表推断 Binding 文件缺失', () => {
+    const source = initialState.agents.find((agent) => agent.id === 'zhouce')!
+    const agent = {
+      ...source,
+      files: [],
+      packageSource: { kind: 'external-reference' as const, externalPath: '/tmp/external', strategy: 'reference-only' as const },
+      packageSchema: { compatibility: 'unverified' as const },
+    }
+    const state = { ...initialState, agents: initialState.agents.map((item) => item.id === agent.id ? agent : item) }
+    const codes = getAgentConfigStatus(state, agent).issues.map((issue) => issue.code)
+
+    expect(codes).toContain('package-unverified')
+    expect(codes).not.toContain('missing-binding-file')
+  })
+
   it('报告类型错误、Plugin 不可用和参数非法的组件引用', () => {
     const source = initialState.agents.find((agent) => agent.id === 'zhouce')!
     const agent = {

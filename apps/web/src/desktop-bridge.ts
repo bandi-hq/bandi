@@ -1,7 +1,7 @@
 import type { AppCommandId } from './app-commands'
 import type { RequestClientHandoff } from './client-adapters'
 import type { FullAgent } from './domain'
-import type { AgentCommitResultDto, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ClaudeAgentPreviewDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult } from './contracts'
+import type { AgentCommitResultDto, AgentListResult, AgentRecoveryOperationSummaryDto, BackupRestorePreviewDto, BackupRestoreResultDto, BackupSnapshotDto, BaselineRefDto, ClaudeAgentPreviewDto, ConfigRevisionDto, CreateBackupSnapshotRequest, CreateMemoryCandidateRequest, CreateWorkspaceBindingRequest, DiscoveryRequest, DiscoveryResult, DiscoverEligibleMemorySpacesRequest, EligibleMemorySpacesResult, ExternalAgentReferenceDto, ListMemoryRevisionsRequest, LoadEditorRequest, LoadEditorResult, ManagedAgentIdentityEditorResult, MemoryRevisionDto, MemoryReviewBundleDto, OrganizationSnapshot, PersistedServiceGrant, PreviewBackupRestoreRequest, RecoverConfigRevisionRequest, RecoverManagedAgentIdentityRequest, RecoverMemoryRevisionRequest, RestoreBackupSnapshotRequest, RestoreConfigRevisionRequest, RestoreManagedAgentIdentityRequest, ReviewMemoryCandidateRequest, ReviewMemoryCandidateResult, SaveConfigRequest, SaveConfigResult, SaveManagedAgentIdentityResult } from './contracts'
 import type { Company, FullDepartment, FullWorkspace, Role, ServiceGrant } from './domain'
 
 const commandEvent = 'bandi://app-command'
@@ -49,6 +49,46 @@ export type ClientHandoffResult = RequestClientHandoff & {
   acceptedAt?: string
 }
 
+export type FactoryResetTargetDto = {
+  id: string
+  kind: 'file' | 'directory'
+  state: 'present' | 'absent'
+}
+
+export type FactoryResetPreviewDto = {
+  requestId: string
+  previewRef: string
+  expiresAt: string
+  confirmationText: string
+  targets: FactoryResetTargetDto[]
+  canCommit: boolean
+}
+
+export type CommitFactoryResetRequest = {
+  requestId: string
+  previewRef: string
+  confirmationText: string
+}
+
+export type FactoryResetResultDto = {
+  requestId: string
+  previewRef: string
+  resetAt: string
+  quarantinedTargetIds: string[]
+  absentTargetIds: string[]
+  requiresRestart: boolean
+}
+
+export type ToolPlanDto = { id: string; name: string; toolIds: string[] }
+export type CustomToolDto = { id: string; name: string }
+export type ToolConfigurationSnapshotDto = {
+  revision: number
+  selectedPlanId: string
+  builtInToolIds: string[]
+  plans: ToolPlanDto[]
+  customTools: CustomToolDto[]
+}
+
 type UiAssetPayload = { mimeType: string; bytes: number[] }
 
 async function invokeDesktop<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -59,6 +99,46 @@ async function invokeDesktop<T>(command: string, args: Record<string, unknown>):
 
 export async function requestClientHandoff(input: RequestClientHandoff): Promise<ClientHandoffResult> {
   return invokeDesktop<ClientHandoffResult>('request_client_handoff', { request: input })
+}
+
+export async function loadToolConfiguration(): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('load_tool_configuration', {})
+}
+
+export async function saveToolPlan(plan: ToolPlanDto, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('save_tool_plan', { request: { plan, expectedRevision } })
+}
+
+export async function createToolPlan(plan: ToolPlanDto, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('create_tool_plan', { request: { plan, expectedRevision } })
+}
+
+export async function copyToolPlan(sourcePlanId: string, planId: string, name: string, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('copy_tool_plan', { request: { sourcePlanId, planId, name, expectedRevision } })
+}
+
+export async function deleteToolPlan(planId: string, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('delete_tool_plan', { request: { planId, expectedRevision } })
+}
+
+export async function selectToolPlan(planId: string, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('select_tool_plan', { request: { planId, expectedRevision } })
+}
+
+export async function saveCustomTool(tool: CustomToolDto, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('save_custom_tool', { request: { tool, expectedRevision } })
+}
+
+export async function deleteCustomTool(toolId: string, expectedRevision: number): Promise<ToolConfigurationSnapshotDto> {
+  return invokeDesktop('delete_custom_tool', { request: { toolId, expectedRevision } })
+}
+
+export async function previewFactoryReset(requestId: string): Promise<FactoryResetPreviewDto> {
+  return invokeDesktop('preview_factory_reset', { request: { requestId } })
+}
+
+export async function commitFactoryReset(input: CommitFactoryResetRequest): Promise<FactoryResetResultDto> {
+  return invokeDesktop('commit_factory_reset', { request: input })
 }
 
 export async function selectDirectory(): Promise<string | null> {
@@ -337,10 +417,6 @@ export async function registerExternalAgent(agent: FullAgent, selectedRoot: stri
   })
 }
 
-export async function listAgents(): Promise<FullAgent[]> {
+export async function listAgents(): Promise<AgentListResult> {
   return invokeDesktop('list_agents', {})
-}
-
-export async function listManagedAgents(): Promise<FullAgent[]> {
-  return invokeDesktop('list_managed_agents', {})
 }

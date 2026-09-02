@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config_fs::restricted_atomic_write,
     domain_store, local_service,
-    memory_target::{self, ResolvedMemoryTarget},
+    memory_target::{self, ResolvedMemoryTarget, ReviewPrincipal},
 };
 
 const MEMORY_PROFILE_VERSION: &str = memory_target::PROFILE_VERSION;
@@ -30,7 +30,7 @@ pub(crate) struct MemorySpaceDto {
     pub(crate) scope_key: MemoryScopeKeyDto,
     pub(crate) owner: MemoryOwnerDto,
     pub(crate) steward_agent_id: String,
-    pub(crate) reviewer_agent_id: String,
+    pub(crate) review_principal: ReviewPrincipal,
     pub(crate) review_policy: String,
     pub(crate) visibility_policy: String,
     pub(crate) storage_profile_version: String,
@@ -92,7 +92,7 @@ pub(crate) struct MemoryCandidateDto {
     pub(crate) id: String,
     pub(crate) space_id: String,
     pub(crate) proposer_agent_id: String,
-    pub(crate) reviewer_agent_id: String,
+    pub(crate) review_principal: ReviewPrincipal,
     pub(crate) source: MemorySourceDto,
     pub(crate) summary: String,
     pub(crate) proposed_content: String,
@@ -111,7 +111,7 @@ pub(crate) struct MemoryCandidateDto {
 pub(crate) struct MemoryReviewDecisionDto {
     pub(crate) id: String,
     pub(crate) candidate_id: String,
-    pub(crate) actor_agent_id: String,
+    pub(crate) actor_principal: ReviewPrincipal,
     pub(crate) decision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) comment: Option<String>,
@@ -128,7 +128,7 @@ pub(crate) struct MemoryRevisionDto {
     pub(crate) candidate_id: String,
     pub(crate) review_decision_id: String,
     pub(crate) proposer_agent_id: String,
-    pub(crate) reviewer_agent_id: String,
+    pub(crate) review_principal: ReviewPrincipal,
     pub(crate) source_content_hash: String,
     pub(crate) content_hash: String,
     pub(crate) storage_locator: local_service::AssetLocatorDto,
@@ -180,6 +180,7 @@ pub(crate) struct ReviewMemoryCandidateRequest {
     pub(crate) decision: String,
     pub(crate) expected_candidate_version: u64,
     pub(crate) expected_baseline: local_service::BaselineRefDto,
+    pub(crate) expected_review_principal: ReviewPrincipal,
     pub(crate) comment: Option<String>,
 }
 
@@ -227,7 +228,7 @@ pub(crate) enum ReviewMemoryCandidateResult {
         proposed: local_service::ConfigSideDto,
         diagnostics: Vec<local_service::DiagnosticDto>,
     },
-    ReviewerMismatch {
+    GovernanceChanged {
         request_id: String,
         diagnostics: Vec<local_service::DiagnosticDto>,
     },
@@ -302,6 +303,7 @@ fn memory_facts(
         container_id: target.space_id.clone(),
         asset_content_hash: content_hash.clone(),
         container_content_hash: content_hash,
+        target_exists: true,
     };
     (locator(target), baseline)
 }
@@ -363,7 +365,7 @@ fn space_dto(
         scope_key: scope_key(target),
         owner: owner(target),
         steward_agent_id: target.steward_agent_id.clone(),
-        reviewer_agent_id: target.reviewer_agent_id.clone(),
+        review_principal: target.review_principal.clone(),
         review_policy: "independent_reviewer".into(),
         visibility_policy: target.visibility_policy.into(),
         storage_profile_version: MEMORY_PROFILE_VERSION.into(),
@@ -376,19 +378,20 @@ fn space_dto(
 }
 
 fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryCandidateDto> {
-    let baseline: String = row.get(8)?;
+    let baseline: String = row.get(9)?;
     Ok(MemoryCandidateDto {
         id: row.get(0)?,
         space_id: row.get(1)?,
         proposer_agent_id: row.get(2)?,
-        reviewer_agent_id: row.get(3)?,
+        review_principal: ReviewPrincipal::from_database(&row.get::<_, String>(3)?, row.get(4)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
         source: MemorySourceDto {
-            kind: row.get(4)?,
-            label: row.get(5)?,
+            kind: row.get(5)?,
+            label: row.get(6)?,
         },
-        summary: row.get(6)?,
-        proposed_content: row.get(7)?,
-        proposed_content_hash: row.get(9)?,
+        summary: row.get(7)?,
+        proposed_content: row.get(8)?,
+        proposed_content_hash: row.get(10)?,
         submitted_baseline: serde_json::from_str(&baseline).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
                 baseline.len(),
@@ -396,11 +399,23 @@ fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryCandida
                 Box::new(error),
             )
         })?,
-        submitted_base_content: row.get(14)?,
-        status: row.get(10)?,
-        version: row.get::<_, i64>(11)? as u64,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        submitted_base_content: row.get(15)?,
+        status: row.get(11)?,
+        version: row.get::<_, i64>(12)? as u64,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
+}
+
+fn decision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryReviewDecisionDto> {
+    Ok(MemoryReviewDecisionDto {
+        id: row.get(0)?,
+        candidate_id: row.get(1)?,
+        actor_principal: ReviewPrincipal::from_database(&row.get::<_, String>(2)?, row.get(3)?)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+        decision: row.get(4)?,
+        comment: row.get(5)?,
+        decided_at: row.get(6)?,
     })
 }
 
@@ -408,7 +423,7 @@ fn load_candidate(
     connection: &rusqlite::Connection,
     candidate_id: &str,
 ) -> Result<MemoryCandidateDto, String> {
-    connection.query_row("SELECT id, space_id, proposer_agent_id, reviewer_agent_id, source_kind, source_label, summary, proposed_content, submitted_baseline_json, proposed_content_hash, status, version, created_at, updated_at, submitted_base_content FROM memory_candidates WHERE id = ?1", [candidate_id], candidate_from_row)
+    connection.query_row("SELECT id, space_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_kind, source_label, summary, proposed_content, submitted_baseline_json, proposed_content_hash, status, version, created_at, updated_at, submitted_base_content FROM memory_candidates WHERE id = ?1", [candidate_id], candidate_from_row)
         .optional().map_err(|_| "无法读取 MemoryCandidate".to_string())?.ok_or_else(|| "MemoryCandidate 不存在".to_string())
 }
 
@@ -422,8 +437,8 @@ fn load_space(
     let row = connection
         .query_row(
             "SELECT id, scope_type, agent_id, workspace_id, department_id,
-                    steward_agent_id, reviewer_agent_id, current_revision_id,
-                    content_hash, updated_at, storage_profile_version, state
+                    steward_agent_id, reviewer_principal_kind, reviewer_principal_id,
+                    current_revision_id, content_hash, updated_at, storage_profile_version, state
              FROM memory_spaces WHERE id = ?1",
             [space_id],
             |row| {
@@ -435,18 +450,19 @@ fn load_space(
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
                     row.get::<_, String>(9)?,
                     row.get::<_, String>(10)?,
                     row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
                 ))
             },
         )
         .optional()
         .map_err(|_| "无法读取 MemorySpace".to_string())?
         .ok_or_else(|| "MemorySpace 不存在".to_string())?;
-    if row.10 != MEMORY_PROFILE_VERSION {
+    if row.11 != MEMORY_PROFILE_VERSION {
         return Err("MemorySpace 存储版本不受支持".into());
     }
     let resolve = |state: &str| {
@@ -460,15 +476,15 @@ fn load_space(
             row.4.as_deref(),
             &row.0,
             row.5.clone(),
-            row.6.clone(),
+            ReviewPrincipal::from_database(&row.6, row.7.clone())?,
             state,
         )
     };
-    let target = match resolve(&row.11) {
+    let target = match resolve(&row.12) {
         Ok(target) => target,
         Err(message)
             if row.1 == "department_workspace"
-                && row.11 == "active"
+                && row.12 == "active"
                 && message == "Department × Workspace 关系已失效" =>
         {
             connection
@@ -481,7 +497,7 @@ fn load_space(
         }
         Err(message) => return Err(message),
     };
-    let space = space_dto(&target, row.7, row.8, row.9);
+    let space = space_dto(&target, row.8, row.9, row.10);
     Ok((space, target))
 }
 
@@ -553,8 +569,8 @@ pub(crate) fn list_revisions_at(
     let mut statement = connection
         .prepare(
             "SELECT id, space_id, parent_revision_id, candidate_id, review_decision_id,
-                    proposer_agent_id, reviewer_agent_id, source_content_hash, content_hash,
-                    write_receipt_id, written_at
+                    proposer_agent_id, reviewer_principal_kind, reviewer_principal_id,
+                    source_content_hash, content_hash, write_receipt_id, written_at
              FROM memory_revisions
              WHERE space_id = ?1
              ORDER BY written_at DESC, id DESC",
@@ -569,12 +585,16 @@ pub(crate) fn list_revisions_at(
                 candidate_id: row.get(3)?,
                 review_decision_id: row.get(4)?,
                 proposer_agent_id: row.get(5)?,
-                reviewer_agent_id: row.get(6)?,
-                source_content_hash: row.get(7)?,
-                content_hash: row.get(8)?,
+                review_principal: ReviewPrincipal::from_database(
+                    &row.get::<_, String>(6)?,
+                    row.get(7)?,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                source_content_hash: row.get(8)?,
+                content_hash: row.get(9)?,
                 storage_locator: storage_locator.clone(),
-                write_receipt_id: row.get(9)?,
-                written_at: row.get(10)?,
+                write_receipt_id: row.get(10)?,
+                written_at: row.get(11)?,
             })
         })
         .map_err(|_| "无法读取 MemoryRevision 历史".to_string())?
@@ -732,6 +752,7 @@ pub(crate) fn create_candidate_at(
                 None,
             ),
         };
+    let (principal_kind, principal_id) = target.review_principal.database_parts();
     let mut connection = domain_store::open_at(database)?;
     let transaction = connection
         .transaction()
@@ -740,16 +761,18 @@ pub(crate) fn create_candidate_at(
         .execute(
             "INSERT INTO memory_spaces (
             id, scope_type, agent_id, workspace_id, department_id,
-            owner_kind, owner_agent_id, steward_agent_id, reviewer_agent_id,
+            owner_kind, owner_agent_id, steward_agent_id,
+            reviewer_principal_kind, reviewer_principal_id,
             review_policy, visibility_policy, storage_profile_version, state,
             current_revision_id, content_hash, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-            'independent_reviewer', ?10, ?11, 'active', NULL, ?12, ?13
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+            'independent_reviewer', ?11, ?12, 'active', NULL, ?13, ?14
          )
          ON CONFLICT(id) DO UPDATE SET
             steward_agent_id = excluded.steward_agent_id,
-            reviewer_agent_id = excluded.reviewer_agent_id,
+            reviewer_principal_kind = excluded.reviewer_principal_kind,
+            reviewer_principal_id = excluded.reviewer_principal_id,
             storage_profile_version = excluded.storage_profile_version,
             content_hash = excluded.content_hash,
             updated_at = excluded.updated_at",
@@ -762,7 +785,8 @@ pub(crate) fn create_candidate_at(
                 owner_kind,
                 owner_agent_id,
                 target.steward_agent_id,
-                target.reviewer_agent_id,
+                principal_kind,
+                principal_id,
                 target.visibility_policy,
                 MEMORY_PROFILE_VERSION,
                 baseline.asset_content_hash,
@@ -770,7 +794,7 @@ pub(crate) fn create_candidate_at(
             ],
         )
         .map_err(|error| format!("无法保存 MemorySpace：{error}"))?;
-    transaction.execute("INSERT INTO memory_candidates (id, space_id, proposer_agent_id, reviewer_agent_id, source_kind, source_label, summary, proposed_content, proposed_content_hash, submitted_baseline_json, submitted_base_content, status, version, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending_review', 1, ?12, ?12)", params![request.candidate_id, target.space_id, request.proposer_agent_id, target.reviewer_agent_id, request.source.kind, request.source.label, request.summary, request.proposed_content, proposed_hash, serde_json::to_string(&baseline).map_err(|_| "无法序列化 Memory baseline".to_string())?, current, timestamp]).map_err(|_| "无法保存 MemoryCandidate".to_string())?;
+    transaction.execute("INSERT INTO memory_candidates (id, space_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_kind, source_label, summary, proposed_content, proposed_content_hash, submitted_baseline_json, submitted_base_content, status, version, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending_review', 1, ?13, ?13)", params![request.candidate_id, target.space_id, request.proposer_agent_id, principal_kind, principal_id, request.source.kind, request.source.label, request.summary, request.proposed_content, proposed_hash, serde_json::to_string(&baseline).map_err(|_| "无法序列化 Memory baseline".to_string())?, current, timestamp]).map_err(|_| "无法保存 MemoryCandidate".to_string())?;
     transaction
         .commit()
         .map_err(|_| "无法提交 MemoryCandidate".to_string())?;
@@ -797,7 +821,8 @@ pub(crate) fn list_reviews_at(
     let mut statement = connection
         .prepare(
             "SELECT id FROM memory_candidates
-             WHERE proposer_agent_id = ?1 OR reviewer_agent_id = ?1
+             WHERE proposer_agent_id = ?1
+                OR (reviewer_principal_kind = 'agent' AND reviewer_principal_id = ?1)
              ORDER BY created_at DESC, id DESC",
         )
         .map_err(|_| "无法读取正式 Memory 候选列表".to_string())?;
@@ -896,31 +921,6 @@ pub(crate) fn review_candidate_at(
             )],
         });
     }
-    let actor_agent_id = candidate.reviewer_agent_id.clone();
-    if candidate.proposer_agent_id == actor_agent_id {
-        return Ok(ReviewMemoryCandidateResult::SelfReviewForbidden {
-            request_id: request.request_id,
-            diagnostics: vec![local_service::diagnostic(
-                "memory_self_review_forbidden",
-                "error",
-                "提议者不能审核自己的候选",
-                None,
-                None,
-            )],
-        });
-    }
-    if candidate.reviewer_agent_id != actor_agent_id {
-        return Ok(ReviewMemoryCandidateResult::ReviewerMismatch {
-            request_id: request.request_id,
-            diagnostics: vec![local_service::diagnostic(
-                "memory_reviewer_mismatch",
-                "error",
-                "当前操作人不是候选审核者",
-                None,
-                Some("由当前审核者处理或重新计算治理关系"),
-            )],
-        });
-    }
     if !matches!(
         candidate.status.as_str(),
         "pending_review" | "approved_pending_write"
@@ -952,15 +952,38 @@ pub(crate) fn review_candidate_at(
             "MemorySpace 仅保留历史，不允许继续审核写入",
         ));
     }
-    if space.reviewer_agent_id != actor_agent_id {
-        return Ok(ReviewMemoryCandidateResult::ReviewerMismatch {
+    let current_target = memory_target::resolve_requested(
+        database,
+        agents_root,
+        registry_root,
+        &candidate.space_id,
+        &candidate.proposer_agent_id,
+    )?;
+    let actor_principal = current_target.review_principal;
+    if actor_principal.is_agent(&candidate.proposer_agent_id) {
+        return Ok(ReviewMemoryCandidateResult::SelfReviewForbidden {
+            request_id: request.request_id,
+            diagnostics: vec![local_service::diagnostic(
+                "memory_self_review_forbidden",
+                "error",
+                "提议者不能审核自己的候选",
+                None,
+                None,
+            )],
+        });
+    }
+    if actor_principal != request.expected_review_principal
+        || actor_principal != candidate.review_principal
+        || actor_principal != space.review_principal
+    {
+        return Ok(ReviewMemoryCandidateResult::GovernanceChanged {
             request_id: request.request_id,
             diagnostics: vec![local_service::diagnostic(
                 "memory_governance_changed",
                 "error",
                 "MemorySpace 审核关系已变化",
                 None,
-                Some("重新载入审核关系"),
+                Some("重新载入审核关系后重试"),
             )],
         });
     }
@@ -995,7 +1018,7 @@ pub(crate) fn review_candidate_at(
     }
     let (decision_id, decision) = if candidate.status == "approved_pending_write" {
         let decision = connection
-            .query_row("SELECT id, candidate_id, actor_agent_id, decision, comment, decided_at FROM memory_review_decisions WHERE candidate_id = ?1 AND decision = 'approve' ORDER BY rowid DESC LIMIT 1", [&candidate.id], |row| Ok(MemoryReviewDecisionDto { id: row.get(0)?, candidate_id: row.get(1)?, actor_agent_id: row.get(2)?, decision: row.get(3)?, comment: row.get(4)?, decided_at: row.get(5)? }))
+            .query_row("SELECT id, candidate_id, actor_principal_kind, actor_principal_id, decision, comment, decided_at FROM memory_review_decisions WHERE candidate_id = ?1 AND decision = 'approve' ORDER BY rowid DESC LIMIT 1", [&candidate.id], decision_from_row)
             .optional().map_err(|_| "无法读取正式 Memory 批准决定".to_string())?.ok_or_else(|| "候选批准决定不存在".to_string())?;
         (decision.id.clone(), decision)
     } else {
@@ -1003,14 +1026,17 @@ pub(crate) fn review_candidate_at(
             "memory-decision",
             &format!(
                 "{}:{}:{}:{}",
-                candidate.id, actor_agent_id, request.decision, candidate.version
+                candidate.id,
+                serde_json::to_string(&actor_principal).unwrap_or_default(),
+                request.decision,
+                candidate.version
             ),
         );
         let decided_at = now();
         let decision = MemoryReviewDecisionDto {
             id: decision_id.clone(),
             candidate_id: candidate.id.clone(),
-            actor_agent_id: actor_agent_id.clone(),
+            actor_principal: actor_principal.clone(),
             decision: request.decision.clone(),
             comment: request.comment.clone(),
             decided_at: decided_at.clone(),
@@ -1023,7 +1049,8 @@ pub(crate) fn review_candidate_at(
         let transaction = connection
             .transaction()
             .map_err(|_| "无法开始正式 Memory 审核事务".to_string())?;
-        transaction.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_agent_id, decision, comment, decided_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![decision.id, decision.candidate_id, decision.actor_agent_id, decision.decision, decision.comment, decision.decided_at]).map_err(|_| "无法记录正式 Memory 审核决定".to_string())?;
+        let (actor_kind, actor_id) = decision.actor_principal.database_parts();
+        transaction.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_principal_kind, actor_principal_id, decision, comment, decided_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![decision.id, decision.candidate_id, actor_kind, actor_id, decision.decision, decision.comment, decision.decided_at]).map_err(|_| "无法记录正式 Memory 审核决定".to_string())?;
         transaction.execute("UPDATE memory_candidates SET status = ?1, version = version + 1, updated_at = ?2 WHERE id = ?3 AND version = ?4", params![next_status, decided_at, candidate.id, candidate.version as i64]).map_err(|_| "无法更新 MemoryCandidate 状态".to_string())?;
         transaction
             .commit()
@@ -1093,7 +1120,7 @@ pub(crate) fn review_candidate_at(
         candidate_id: candidate.id.clone(),
         review_decision_id: decision_id,
         proposer_agent_id: candidate.proposer_agent_id.clone(),
-        reviewer_agent_id: candidate.reviewer_agent_id.clone(),
+        review_principal: candidate.review_principal.clone(),
         source_content_hash: actual_baseline.asset_content_hash,
         content_hash: written_hash.clone(),
         storage_locator: space.storage_locator,
@@ -1109,7 +1136,8 @@ pub(crate) fn review_candidate_at(
     let transaction = connection
         .transaction()
         .map_err(|_| "无法开始 MemoryRevision 事务".to_string())?;
-    let recorded = transaction.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_agent_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![revision.id, revision.space_id, revision.parent_revision_id, revision.candidate_id, revision.review_decision_id, revision.proposer_agent_id, revision.reviewer_agent_id, revision.source_content_hash, revision.content_hash, revision.write_receipt_id, revision.written_at])
+    let (reviewer_kind, reviewer_id) = revision.review_principal.database_parts();
+    let recorded = transaction.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![revision.id, revision.space_id, revision.parent_revision_id, revision.candidate_id, revision.review_decision_id, revision.proposer_agent_id, reviewer_kind, reviewer_id, revision.source_content_hash, revision.content_hash, revision.write_receipt_id, revision.written_at])
         .and_then(|_| transaction.execute("UPDATE memory_spaces SET current_revision_id = ?1, content_hash = ?2, updated_at = ?3 WHERE id = ?4", params![revision_id, written_hash, written_at, candidate.space_id]))
         .and_then(|_| transaction.execute("UPDATE memory_candidates SET status = 'written', version = version + 1, updated_at = ?1 WHERE id = ?2", params![written_at, candidate.id]));
     let committed = match recorded {
@@ -1212,12 +1240,13 @@ pub(crate) fn recover_revision_at(
         });
     }
     let decision = connection
-        .query_row("SELECT id, candidate_id, actor_agent_id, decision, comment, decided_at FROM memory_review_decisions WHERE id = ?1", [&revision.review_decision_id], |row| Ok(MemoryReviewDecisionDto { id: row.get(0)?, candidate_id: row.get(1)?, actor_agent_id: row.get(2)?, decision: row.get(3)?, comment: row.get(4)?, decided_at: row.get(5)? }))
+        .query_row("SELECT id, candidate_id, actor_principal_kind, actor_principal_id, decision, comment, decided_at FROM memory_review_decisions WHERE id = ?1", [&revision.review_decision_id], decision_from_row)
         .optional().map_err(|_| "无法读取正式 Memory 审核决定".to_string())?.ok_or_else(|| "正式 Memory 审核决定不存在".to_string())?;
     let transaction = connection
         .transaction()
         .map_err(|_| "无法开始 MemoryRevision 补记事务".to_string())?;
-    transaction.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_agent_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![revision.id, revision.space_id, revision.parent_revision_id, revision.candidate_id, revision.review_decision_id, revision.proposer_agent_id, revision.reviewer_agent_id, revision.source_content_hash, revision.content_hash, revision.write_receipt_id, revision.written_at]).map_err(|_| "无法补记 MemoryRevision".to_string())?;
+    let (reviewer_kind, reviewer_id) = revision.review_principal.database_parts();
+    transaction.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![revision.id, revision.space_id, revision.parent_revision_id, revision.candidate_id, revision.review_decision_id, revision.proposer_agent_id, reviewer_kind, reviewer_id, revision.source_content_hash, revision.content_hash, revision.write_receipt_id, revision.written_at]).map_err(|_| "无法补记 MemoryRevision".to_string())?;
     transaction.execute("UPDATE memory_spaces SET current_revision_id = ?1, content_hash = ?2, updated_at = ?3 WHERE id = ?4", params![revision.id, revision.content_hash, revision.written_at, revision.space_id]).map_err(|_| "无法更新 MemorySpace 正式版本".to_string())?;
     transaction.execute("UPDATE memory_candidates SET status = 'written', version = version + 1, updated_at = ?1 WHERE id = ?2", params![revision.written_at, candidate.id]).map_err(|_| "无法更新 MemoryCandidate 正式状态".to_string())?;
     transaction
@@ -1292,16 +1321,36 @@ mod tests {
         super::recover_revision_at(database, agents_root, &registry_root(database), request)
     }
 
+    fn write_raw_agent_record(package: &Path, agent_id: &str, status: &str) {
+        fs::create_dir_all(package).unwrap();
+        fs::write(
+            package.join(".bandi-agent.json"),
+            serde_json::to_vec(&serde_json::json!({ "id": agent_id, "status": status })).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn write_agent_record(package: &Path, agent_id: &str, manager_agent_id: &str) {
         fs::write(
             package.join(".bandi-agent.json"),
             serde_json::to_vec(&serde_json::json!({
                 "id": agent_id,
-                "managerAgentId": manager_agent_id
+                "managerAgentId": manager_agent_id,
+                "status": "active"
             }))
             .unwrap(),
         )
         .unwrap();
+        if manager_agent_id != agent_id {
+            write_raw_agent_record(
+                &package
+                    .parent()
+                    .unwrap()
+                    .join(format!("agt_{manager_agent_id}")),
+                manager_agent_id,
+                "active",
+            );
+        }
     }
 
     fn write_department_agent_record(
@@ -1315,11 +1364,22 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({
                 "id": agent_id,
                 "managerAgentId": manager_agent_id,
-                "primaryDepartmentId": department_id
+                "primaryDepartmentId": department_id,
+                "status": "active"
             }))
             .unwrap(),
         )
         .unwrap();
+        if manager_agent_id != agent_id {
+            write_raw_agent_record(
+                &package
+                    .parent()
+                    .unwrap()
+                    .join(format!("agt_{manager_agent_id}")),
+                manager_agent_id,
+                "active",
+            );
+        }
     }
 
     fn save_memory_organization(database: &Path, workspace_root: &Path) {
@@ -1339,7 +1399,23 @@ mod tests {
             },
         )
         .unwrap();
+        write_raw_agent_record(
+            &workspace_root
+                .parent()
+                .unwrap()
+                .join("agents/agt_assistant"),
+            "assistant",
+            "active",
+        );
         for (id, manager) in [("dev", "dev-manager"), ("design", "design-manager")] {
+            write_raw_agent_record(
+                &workspace_root
+                    .parent()
+                    .unwrap()
+                    .join(format!("agents/agt_{manager}")),
+                manager,
+                "active",
+            );
             domain_store::save_department_at(
                 database,
                 domain_store::SaveDepartmentRequest {
@@ -1439,7 +1515,9 @@ mod tests {
         let decision = MemoryReviewDecisionDto {
             id: "decision-recovery".into(),
             candidate_id: bundle.candidate.id.clone(),
-            actor_agent_id: "manager".into(),
+            actor_principal: ReviewPrincipal::Agent {
+                agent_id: "manager".into(),
+            },
             decision: "approve".into(),
             comment: None,
             decided_at: now(),
@@ -1452,7 +1530,9 @@ mod tests {
             candidate_id: bundle.candidate.id.clone(),
             review_decision_id: decision.id.clone(),
             proposer_agent_id: "worker".into(),
-            reviewer_agent_id: "manager".into(),
+            review_principal: ReviewPrincipal::Agent {
+                agent_id: "manager".into(),
+            },
             source_content_hash: bundle
                 .candidate
                 .submitted_baseline
@@ -1472,7 +1552,7 @@ mod tests {
             atomic_replace: true,
         };
         let connection = domain_store::open_at(&database).unwrap();
-        connection.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_agent_id, decision, comment, decided_at) VALUES (?1, ?2, ?3, 'approve', NULL, ?4)", params![decision.id, decision.candidate_id, decision.actor_agent_id, decision.decided_at]).unwrap();
+        connection.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_principal_kind, actor_principal_id, decision, comment, decided_at) VALUES (?1, ?2, 'agent', ?3, 'approve', NULL, ?4)", params![decision.id, decision.candidate_id, "manager", decision.decided_at]).unwrap();
         connection.execute("UPDATE memory_candidates SET status = 'revision_pending', version = 2 WHERE id = ?1", [&bundle.candidate.id]).unwrap();
         connection.execute("INSERT INTO memory_revision_recovery (recovery_ref, candidate_id, review_decision_id, revision_json, write_receipt_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![recovery_ref, bundle.candidate.id, decision.id, serde_json::to_string(&revision).unwrap(), serde_json::to_string(&receipt).unwrap(), revision.written_at]).unwrap();
         (root, database, agents, bundle.candidate.id, recovery_ref)
@@ -1512,6 +1592,7 @@ mod tests {
                 candidate_id: bundle.candidate.id,
                 decision: "approve".into(),
                 expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline,
                 comment: None,
             },
@@ -1522,6 +1603,110 @@ mod tests {
             fs::read_to_string(package.join(MEMORY_RELATIVE_PATH)).unwrap(),
             "new"
         );
+    }
+
+    #[test]
+    fn agent_memory_without_active_manager_uses_chairman_user() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        let package = agents.join("agt_worker");
+        fs::create_dir_all(package.join("memory")).unwrap();
+        fs::write(
+            package.join(".bandi-agent.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id": "worker",
+                "companyId": "company",
+                "status": "active"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(package.join(MEMORY_RELATIVE_PATH), "old").unwrap();
+
+        let bundle = create_candidate_at(
+            &root.path().join("bandi.db"),
+            &agents,
+            CreateMemoryCandidateRequest {
+                request_id: "create-chairman".into(),
+                candidate_id: "candidate-chairman".into(),
+                space_id: "memory-agent-worker".into(),
+                proposer_agent_id: "worker".into(),
+                source: MemorySourceDto {
+                    kind: "manual".into(),
+                    label: "test".into(),
+                },
+                summary: "更新".into(),
+                proposed_content: "new".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            bundle.candidate.review_principal,
+            ReviewPrincipal::ChairmanUser {
+                company_id: "company".into()
+            }
+        );
+    }
+
+    #[test]
+    fn changed_manager_invalidates_candidate_governance_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        let package = agents.join("agt_worker");
+        fs::create_dir_all(package.join("memory")).unwrap();
+        write_agent_record(&package, "worker", "manager");
+        fs::write(package.join(MEMORY_RELATIVE_PATH), "old").unwrap();
+        let database = root.path().join("bandi.db");
+        let bundle = create_candidate_at(
+            &database,
+            &agents,
+            CreateMemoryCandidateRequest {
+                request_id: "create-governance".into(),
+                candidate_id: "candidate-governance".into(),
+                space_id: "memory-agent-worker".into(),
+                proposer_agent_id: "worker".into(),
+                source: MemorySourceDto {
+                    kind: "manual".into(),
+                    label: "test".into(),
+                },
+                summary: "更新".into(),
+                proposed_content: "new".into(),
+            },
+        )
+        .unwrap();
+        write_agent_record(&package, "worker", "new-manager");
+
+        let result = review_candidate_at(
+            &database,
+            &agents,
+            ReviewMemoryCandidateRequest {
+                request_id: "review-governance".into(),
+                candidate_id: bundle.candidate.id.clone(),
+                decision: "approve".into(),
+                expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal,
+                expected_baseline: bundle.candidate.submitted_baseline,
+                comment: None,
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            result,
+            ReviewMemoryCandidateResult::GovernanceChanged { .. }
+        ));
+        assert_eq!(
+            fs::read_to_string(package.join(MEMORY_RELATIVE_PATH)).unwrap(),
+            "old"
+        );
+        let connection = domain_store::open_at(&database).unwrap();
+        let decisions: i64 = connection
+            .query_row("SELECT COUNT(*) FROM memory_review_decisions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(decisions, 0);
     }
 
     #[test]
@@ -1567,6 +1752,7 @@ mod tests {
                     candidate_id: bundle.candidate.id,
                     decision: decision.into(),
                     expected_candidate_version: 1,
+                    expected_review_principal: bundle.candidate.review_principal.clone(),
                     expected_baseline: bundle.candidate.submitted_baseline,
                     comment: None,
                 },
@@ -1639,6 +1825,7 @@ mod tests {
                 candidate_id: bundle.candidate.id,
                 decision: "approve".into(),
                 expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline,
                 comment: None,
             },
@@ -1694,6 +1881,7 @@ mod tests {
                 candidate_id: bundle.candidate.id.clone(),
                 decision: "approve".into(),
                 expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline.clone(),
                 comment: None,
             },
@@ -1718,6 +1906,7 @@ mod tests {
                 candidate_id: bundle.candidate.id.clone(),
                 decision: "approve".into(),
                 expected_candidate_version: 2,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline,
                 comment: None,
             },
@@ -1731,6 +1920,70 @@ mod tests {
                 [&bundle.candidate.id],
                 |row| row.get(0),
             )
+            .unwrap();
+        assert_eq!(decisions, 1);
+    }
+
+    #[test]
+    fn approved_pending_write_does_not_reuse_decision_after_governance_change() {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join("agents");
+        let package = agents.join("agt_worker");
+        fs::create_dir_all(package.join("memory")).unwrap();
+        write_agent_record(&package, "worker", "manager");
+        fs::write(package.join(MEMORY_RELATIVE_PATH), "old").unwrap();
+        let database = root.path().join("bandi.db");
+        let bundle = create_candidate_at(
+            &database,
+            &agents,
+            CreateMemoryCandidateRequest {
+                request_id: "create-approved-governance".into(),
+                candidate_id: "candidate-approved-governance".into(),
+                space_id: "memory-agent-worker".into(),
+                proposer_agent_id: "worker".into(),
+                source: MemorySourceDto {
+                    kind: "manual".into(),
+                    label: "test".into(),
+                },
+                summary: "更新".into(),
+                proposed_content: "new".into(),
+            },
+        )
+        .unwrap();
+        let connection = domain_store::open_at(&database).unwrap();
+        connection.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_principal_kind, actor_principal_id, decision, decided_at) VALUES ('approved-decision', ?1, 'agent', 'manager', 'approve', '2026-09-03T00:00:00Z')", [&bundle.candidate.id]).unwrap();
+        connection.execute("UPDATE memory_candidates SET status = 'approved_pending_write', version = 2 WHERE id = ?1", [&bundle.candidate.id]).unwrap();
+        drop(connection);
+        write_agent_record(&package, "worker", "new-manager");
+
+        let result = review_candidate_at(
+            &database,
+            &agents,
+            ReviewMemoryCandidateRequest {
+                request_id: "retry-approved-governance".into(),
+                candidate_id: bundle.candidate.id.clone(),
+                decision: "approve".into(),
+                expected_candidate_version: 2,
+                expected_review_principal: bundle.candidate.review_principal,
+                expected_baseline: bundle.candidate.submitted_baseline,
+                comment: None,
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            result,
+            ReviewMemoryCandidateResult::GovernanceChanged { .. }
+        ));
+        assert_eq!(
+            fs::read_to_string(package.join(MEMORY_RELATIVE_PATH)).unwrap(),
+            "old"
+        );
+        let connection = domain_store::open_at(&database).unwrap();
+        let decisions: i64 = connection
+            .query_row("SELECT COUNT(*) FROM memory_review_decisions", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(decisions, 1);
     }
@@ -1887,7 +2140,12 @@ mod tests {
                 },
             )
             .unwrap();
-            assert_eq!(bundle.space.reviewer_agent_id, reviewer_id);
+            assert_eq!(
+                bundle.space.review_principal,
+                ReviewPrincipal::Agent {
+                    agent_id: reviewer_id.into()
+                }
+            );
         }
         let connection = domain_store::open_at(&database).unwrap();
         connection
@@ -1954,7 +2212,7 @@ mod tests {
             ("memory-agent-worker", "worker"),
             ("memory-agent-other", "other"),
         ] {
-            connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_agent_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES (?1, 'agent_long_term', ?2, 'agent', ?2, ?2, 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", params![space_id, agent_id]).unwrap();
+            connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_principal_kind, reviewer_principal_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES (?1, 'agent_long_term', ?2, 'agent', ?2, ?2, 'agent', 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", params![space_id, agent_id]).unwrap();
         }
         for (candidate_id, space_id, written_at) in [
             (
@@ -1975,9 +2233,9 @@ mod tests {
         ] {
             let revision_id = candidate_id.replace("candidate", "revision");
             let decision_id = candidate_id.replace("candidate", "decision");
-            connection.execute("INSERT INTO memory_candidates (id, space_id, proposer_agent_id, reviewer_agent_id, source_kind, source_label, summary, proposed_content, proposed_content_hash, submitted_baseline_json, submitted_base_content, status, version, created_at, updated_at) VALUES (?1, ?2, 'worker', 'manager', 'manual', 'test', 'summary', 'content', 'sha256:content', '{}', '', 'written', 2, ?3, ?3)", params![candidate_id, space_id, written_at]).unwrap();
-            connection.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_agent_id, decision, comment, decided_at) VALUES (?1, ?2, 'manager', 'approve', NULL, ?3)", params![decision_id, candidate_id, written_at]).unwrap();
-            connection.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_agent_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, NULL, ?3, ?4, 'worker', 'manager', 'sha256:source', 'sha256:content', ?5, ?6)", params![revision_id, space_id, candidate_id, decision_id, format!("receipt-{candidate_id}"), written_at]).unwrap();
+            connection.execute("INSERT INTO memory_candidates (id, space_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_kind, source_label, summary, proposed_content, proposed_content_hash, submitted_baseline_json, submitted_base_content, status, version, created_at, updated_at) VALUES (?1, ?2, 'worker', 'agent', 'manager', 'manual', 'test', 'summary', 'content', 'sha256:content', '{}', '', 'written', 2, ?3, ?3)", params![candidate_id, space_id, written_at]).unwrap();
+            connection.execute("INSERT INTO memory_review_decisions (id, candidate_id, actor_principal_kind, actor_principal_id, decision, comment, decided_at) VALUES (?1, ?2, 'agent', 'manager', 'approve', NULL, ?3)", params![decision_id, candidate_id, written_at]).unwrap();
+            connection.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, NULL, ?3, ?4, 'worker', 'agent', 'manager', 'sha256:source', 'sha256:content', ?5, ?6)", params![revision_id, space_id, candidate_id, decision_id, format!("receipt-{candidate_id}"), written_at]).unwrap();
         }
         connection.execute("UPDATE memory_spaces SET current_revision_id = 'revision-new' WHERE id = 'memory-agent-worker'", []).unwrap();
         drop(connection);
@@ -2007,7 +2265,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let database = root.path().join("bandi.db");
         let connection = domain_store::open_at(&database).unwrap();
-        connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_agent_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES ('memory-agent-worker', 'agent_long_term', 'worker', 'agent', 'worker', 'worker', 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", []).unwrap();
+        connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_principal_kind, reviewer_principal_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES ('memory-agent-worker', 'agent_long_term', 'worker', 'agent', 'worker', 'worker', 'agent', 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", []).unwrap();
         drop(connection);
         assert!(list_revisions_at(
             &database,
@@ -2032,13 +2290,13 @@ mod tests {
             ("memory-agent-worker", "worker"),
             ("memory-agent-other", "other"),
         ] {
-            connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_agent_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES (?1, 'agent_long_term', ?2, 'agent', ?2, ?2, 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", params![space_id, agent_id]).unwrap();
+            connection.execute("INSERT INTO memory_spaces (id, scope_type, agent_id, owner_kind, owner_agent_id, steward_agent_id, reviewer_principal_kind, reviewer_principal_id, review_policy, visibility_policy, storage_profile_version, state, current_revision_id, content_hash, updated_at) VALUES (?1, 'agent_long_term', ?2, 'agent', ?2, ?2, 'agent', 'manager', 'independent_reviewer', 'agent_private', 'memory-v1', 'active', NULL, 'sha256:empty', '2026-01-01T00:00:00Z')", params![space_id, agent_id]).unwrap();
         }
         for (id, space_id) in [
             ("revision-worker", "memory-agent-worker"),
             ("revision-other", "memory-agent-other"),
         ] {
-            connection.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_agent_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, NULL, ?3, ?4, 'worker', 'manager', 'sha256:source', 'sha256:content', ?5, '2026-01-01T00:00:00Z')", params![id, space_id, format!("candidate-{id}"), format!("decision-{id}"), format!("receipt-{id}")]).unwrap();
+            connection.execute("INSERT INTO memory_revisions (id, space_id, parent_revision_id, candidate_id, review_decision_id, proposer_agent_id, reviewer_principal_kind, reviewer_principal_id, source_content_hash, content_hash, write_receipt_id, written_at) VALUES (?1, ?2, NULL, ?3, ?4, 'worker', 'agent', 'manager', 'sha256:source', 'sha256:content', ?5, '2026-01-01T00:00:00Z')", params![id, space_id, format!("candidate-{id}"), format!("decision-{id}"), format!("receipt-{id}")]).unwrap();
         }
         connection.execute("UPDATE memory_revisions SET parent_revision_id = 'revision-other' WHERE id = 'revision-worker'", []).unwrap();
         drop(connection);
@@ -2090,7 +2348,13 @@ mod tests {
             result
                 .spaces
                 .iter()
-                .map(|space| (space.id.as_str(), space.reviewer_agent_id.as_str()))
+                .map(|space| (
+                    space.id.as_str(),
+                    match &space.review_principal {
+                        ReviewPrincipal::Agent { agent_id } => agent_id.as_str(),
+                        ReviewPrincipal::ChairmanUser { company_id } => company_id.as_str(),
+                    }
+                ))
                 .collect::<Vec<_>>(),
             vec![
                 ("memory-agent-worker", "manager"),
@@ -2106,6 +2370,63 @@ mod tests {
             })
             .unwrap();
         assert_eq!(candidates, 0);
+    }
+
+    #[test]
+    fn steward_proposal_uses_active_assistant_then_chairman_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("bandi.db");
+        let agents = root.path().join("agents");
+        let package = agents.join("agt_dev-manager");
+        let workspace_root = root.path().join("workspace");
+        fs::create_dir_all(package.join("memory")).unwrap();
+        fs::create_dir_all(&workspace_root).unwrap();
+        write_department_agent_record(&package, "dev-manager", "chairman", "dev");
+        write_workspace_binding(&package);
+        save_memory_organization(&database, &workspace_root);
+        fs::write(
+            package.join(".bandi-agent.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id": "dev-manager",
+                "companyId": "company",
+                "managerAgentId": "chairman",
+                "primaryDepartmentId": "dev",
+                "status": "active"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let assistant_target = memory_target::resolve_requested(
+            &database,
+            &agents,
+            &registry_root(&database),
+            "mem-ws-bandi",
+            "dev-manager",
+        )
+        .unwrap();
+        assert_eq!(
+            assistant_target.review_principal,
+            ReviewPrincipal::Agent {
+                agent_id: "assistant".into()
+            }
+        );
+
+        write_raw_agent_record(&agents.join("agt_assistant"), "assistant", "inactive");
+        let chairman_target = memory_target::resolve_requested(
+            &database,
+            &agents,
+            &registry_root(&database),
+            "mem-ws-bandi",
+            "dev-manager",
+        )
+        .unwrap();
+        assert_eq!(
+            chairman_target.review_principal,
+            ReviewPrincipal::ChairmanUser {
+                company_id: "company".into()
+            }
+        );
     }
 
     #[test]
@@ -2237,6 +2558,7 @@ mod tests {
                 candidate_id: bundle.candidate.id,
                 decision: "approve".into(),
                 expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline,
                 comment: None,
             },
@@ -2292,6 +2614,7 @@ mod tests {
                 candidate_id: bundle.candidate.id,
                 decision: "approve".into(),
                 expected_candidate_version: 1,
+                expected_review_principal: bundle.candidate.review_principal.clone(),
                 expected_baseline: bundle.candidate.submitted_baseline,
                 comment: None,
             },

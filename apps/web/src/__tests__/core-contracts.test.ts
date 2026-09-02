@@ -99,7 +99,7 @@ describe('首切片核心共享合同', () => {
     expect(space.storageProfileVersion).toBe('memory-v1')
     expect(space.storageLocator.relativePath).toBe('memory/long-term.md')
     expect(candidate.spaceId).toBe(space.id)
-    expect(candidate.proposerAgentId).not.toBe(candidate.reviewerAgentId)
+    expect(candidate.proposerAgentId).not.toBe(candidate.reviewPrincipal.kind === 'agent' ? candidate.reviewPrincipal.agentId : candidate.reviewPrincipal.companyId)
     expect(candidate.proposedContentHash).toMatch(hashPattern)
     expect(request.decision).toBe('approve')
     expect(request.expectedBaseline.assetId).toBe(space.id)

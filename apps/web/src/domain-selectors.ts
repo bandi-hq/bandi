@@ -9,7 +9,6 @@ import type { PluginInstallation } from './plugin-installation'
 export type ConfigIssue = {
   code:
     | 'external-change'
-    | 'missing-rules'
     | 'missing-reference'
     | 'skill-unavailable'
     | 'missing-workspace'
@@ -119,9 +118,8 @@ export function getAgentConfigStatus(state: Pick<SelectorState, 'agents' | 'work
   const workspaceIds = new Set(state.workspaces.map((workspace) => workspace.id))
   for (const binding of agent.workspaceBindings) {
     if (!workspaceIds.has(binding.workspaceId)) issues.push({ code: 'missing-workspace', label: `工作区 ${binding.workspaceId} 不在当前索引中` })
-    if (!binding.ruleIds.length) issues.push({ code: 'missing-rules', label: `${binding.workspaceId} Binding 缺少 Rules` })
     const path = workspaceConfigPath(binding.workspaceId)
-    if (!path || !agent.files.some((file) => file.path === path)) issues.push({ code: 'missing-binding-file', label: `${binding.workspaceId} Binding 未登记配置文件` })
+    if (agent.packageSource.kind !== 'external-reference' && (!path || !agent.files.some((file) => file.path === path))) issues.push({ code: 'missing-binding-file', label: `${binding.workspaceId} Binding 未登记配置文件` })
     const missing = missingReferences([...binding.ruleIds, ...binding.skillIds, ...binding.mcpIds], state.assets)
     if (missing.length) issues.push({ code: 'missing-reference', label: `${binding.workspaceId} 存在失效引用：${missing.join('、')}` })
     if (binding.orchestrationPolicy) issues.push(...validateOrchestrationOverride(agent.orchestrationPolicy, binding.orchestrationPolicy).map((issue) => ({ code: 'orchestration-expanded' as const, label: `${binding.workspaceId}：${issue.message}` })))
@@ -138,8 +136,8 @@ export function getAgentConfigStatus(state: Pick<SelectorState, 'agents' | 'work
     const skill = state.assets.find((asset) => asset.id === skillId)?.skill
     if (!skill || skill.installation.status === 'available') issues.push({ code: 'skill-unavailable', label: `Skill ${skillId} 当前不可用` })
   }
-  if (!issues.length) return { level: 'healthy', label: '演示记录完整', issues }
-  if (issues.some((issue) => issue.code === 'external-change')) return { level: 'warning', label: '外部变化（演示）', issues }
+  if (!issues.length) return { level: 'healthy', label: '配置完整', issues }
+  if (issues.some((issue) => issue.code === 'external-change')) return { level: 'warning', label: '外部变化', issues }
   return { level: 'error', label: '配置缺口', issues }
 }
 
@@ -148,8 +146,8 @@ export function getWorkspaceConfigStatus(state: Pick<SelectorState, 'agents' | '
   const agents = getAgentsBoundToWorkspace(state, workspace.id)
   const issues = agents.flatMap((agent) => getAgentConfigStatus(state, agent).issues.filter((issue) => issue.label.includes(workspace.id) || issue.code === 'external-change'))
   if (workspace.files.some((file) => file.status.includes('外部变化'))) issues.unshift({ code: 'external-change', label: '工作区存在预置的外部变化记录' })
-  if (!issues.length) return { level: 'healthy', label: '演示记录完整', issues }
-  return { level: issues.some((issue) => issue.code === 'external-change') ? 'warning' : 'error', label: issues.some((issue) => issue.code === 'external-change') ? '外部变化（演示）' : '配置缺口', issues }
+  if (!issues.length) return { level: 'healthy', label: '配置完整', issues }
+  return { level: issues.some((issue) => issue.code === 'external-change') ? 'warning' : 'error', label: issues.some((issue) => issue.code === 'external-change') ? '外部变化' : '配置缺口', issues }
 }
 
 export function getLatestRevisionForAgent(state: Pick<SelectorState, 'configRevisions'>, agentId: string) {

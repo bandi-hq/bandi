@@ -252,12 +252,12 @@ describe('Agent 双模式配置工作台', () => {
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
     const hash = `sha256:${'a'.repeat(64)}` as const
     const baseline = { id: 'memory-base', assetId: 'memory-agent-zhouce', containerId: 'memory-agent-zhouce', assetContentHash: hash, containerContentHash: hash }
-    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: [{ id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: { kind: 'agent', agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }], diagnostics: [] })
+    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: [{ id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }], diagnostics: [] })
     vi.spyOn(desktopBridge, 'listMemoryReviews').mockResolvedValue([])
     const create = vi.spyOn(desktopBridge, 'createMemoryCandidate').mockImplementation(async (request) => ({
       requestId: request.requestId,
-      space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' },
-      candidate: { id: request.candidateId, spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', source: request.source, summary: request.summary, proposedContent: request.proposedContent, proposedContentHash: hash, submittedBaseline: baseline, status: 'pending_review', version: 1, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' },
+      space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' },
+      candidate: { id: request.candidateId, spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, source: request.source, summary: request.summary, proposedContent: request.proposedContent, proposedContentHash: hash, submittedBaseline: baseline, status: 'pending_review', version: 1, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' },
       currentContent: '当前正式内容',
     }))
     vi.spyOn(desktopBridge, 'loadMemoryReview').mockImplementation(async (requestId, candidateId) => {
@@ -289,11 +289,11 @@ describe('Agent 双模式配置工作台', () => {
     }
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
     const hash = `sha256:${'c'.repeat(64)}` as const
-    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: [{ id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: { kind: 'agent', agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }], diagnostics: [] })
+    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: [{ id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term', agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }], diagnostics: [] })
     vi.spyOn(desktopBridge, 'listMemoryReviews').mockResolvedValue([{
       requestId: 'list-memory-zhouce',
-      space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, currentRevisionId: 'memory-revision-1', contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' },
-      candidate: { id: 'candidate-hydrated', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', source: { kind: 'manual', label: 'test' }, summary: '重启恢复候选', proposedContent: '正式内容', proposedContentHash: hash, submittedBaseline: { id: 'base', assetId: 'memory-agent-zhouce', containerId: 'memory-agent-zhouce', assetContentHash: hash, containerContentHash: hash }, status: 'written', version: 3, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:01:00Z' },
+      space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term', scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer', visibilityPolicy: 'agent_private', storageProfileVersion: 'memory-v1', state: 'active', storageLocator: { rootKind: 'managed', displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, currentRevisionId: 'memory-revision-1', contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' },
+      candidate: { id: 'candidate-hydrated', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, source: { kind: 'manual', label: 'test' }, summary: '重启恢复候选', proposedContent: '正式内容', proposedContentHash: hash, submittedBaseline: { id: 'base', assetId: 'memory-agent-zhouce', containerId: 'memory-agent-zhouce', assetContentHash: hash, containerContentHash: hash }, status: 'written', version: 3, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:01:00Z' },
       currentContent: '正式内容',
     }])
 
@@ -319,11 +319,11 @@ describe('Agent 双模式配置工作台', () => {
       { id: 'mem-ws-bandi', scopeType: 'workspace_shared' as const, scopeKey: { kind: 'workspace_shared' as const, workspaceId: 'bandi' }, owner: { kind: 'workspace' as const, workspaceId: 'bandi' }, visibilityPolicy: 'workspace_shared' as const, rootKind: 'workspace' as const, relativePath: '.bandi/memory/public.md', state: 'active' as const },
       { id: 'mem-dev-bandi', scopeType: 'department_workspace' as const, scopeKey: { kind: 'department_workspace' as const, departmentId: 'dev', workspaceId: 'bandi' }, owner: { kind: 'department_workspace' as const, departmentId: 'dev', workspaceId: 'bandi' }, visibilityPolicy: 'department_workspace' as const, rootKind: 'workspace' as const, relativePath: '.bandi/memory/departments/dev.md', state: 'read_only_history' as const },
     ]
-    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: scopes.map((scope) => ({ ...scope, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer' as const, storageProfileVersion: 'memory-v1' as const, storageLocator: { rootKind: scope.rootKind, displayPath: scope.relativePath, relativePath: scope.relativePath }, contentHash: hash, updatedAt: timestamp })), diagnostics: [] })
+    vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: scopes.map((scope) => ({ ...scope, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer' as const, storageProfileVersion: 'memory-v1' as const, storageLocator: { rootKind: scope.rootKind, displayPath: scope.relativePath, relativePath: scope.relativePath }, contentHash: hash, updatedAt: timestamp })), diagnostics: [] })
     vi.spyOn(desktopBridge, 'listMemoryReviews').mockResolvedValue(scopes.map((scope, index) => ({
       requestId: 'list-memory-zhouce',
-      space: { ...scope, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer' as const, storageProfileVersion: 'memory-v1' as const, storageLocator: { rootKind: scope.rootKind, displayPath: scope.relativePath, relativePath: scope.relativePath }, currentRevisionId: `revision-${index}`, contentHash: hash, updatedAt: timestamp },
-      candidate: { id: `candidate-${index}`, spaceId: scope.id, proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', source: { kind: 'manual' as const, label: 'test' }, summary: `候选 ${index}`, proposedContent: '内容', proposedContentHash: hash, submittedBaseline: { id: `base-${index}`, assetId: scope.id, containerId: scope.id, assetContentHash: hash, containerContentHash: hash }, status: 'written' as const, version: 1, createdAt: timestamp, updatedAt: timestamp },
+      space: { ...scope, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer' as const, storageProfileVersion: 'memory-v1' as const, storageLocator: { rootKind: scope.rootKind, displayPath: scope.relativePath, relativePath: scope.relativePath }, currentRevisionId: `revision-${index}`, contentHash: hash, updatedAt: timestamp },
+      candidate: { id: `candidate-${index}`, spaceId: scope.id, proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, source: { kind: 'manual' as const, label: 'test' }, summary: `候选 ${index}`, proposedContent: '内容', proposedContentHash: hash, submittedBaseline: { id: `base-${index}`, assetId: scope.id, containerId: scope.id, assetContentHash: hash, containerContentHash: hash }, status: 'written' as const, version: 1, createdAt: timestamp, updatedAt: timestamp },
       currentContent: '内容',
     })))
 
@@ -342,20 +342,20 @@ describe('Agent 双模式配置工作台', () => {
     const state: State = {
       ...initialState,
       agents: initialState.agents.map((item) => item.id === source.id ? { ...item, packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' } } : item),
-      memoryCandidates: [{ id: 'memory-candidate-recovery', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', summary: '正式记忆修改', current: '旧内容', proposed: '新内容', status: '待审核' }],
+      memoryCandidates: [{ id: 'memory-candidate-recovery', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, summary: '正式记忆修改', current: '旧内容', proposed: '新内容', status: '待审核' }],
     }
     vi.spyOn(desktopBridge, 'isDesktopRuntime').mockReturnValue(true)
     const hash = `sha256:${'b'.repeat(64)}` as const
     const baseline = { id: 'memory-base', assetId: 'memory-agent-zhouce', containerId: 'memory-agent-zhouce', assetContentHash: hash, containerContentHash: hash }
-    const candidate = { id: 'memory-candidate-recovery', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', source: { kind: 'manual' as const, label: 'test' }, summary: '正式记忆修改', proposedContent: '新内容', proposedContentHash: hash, submittedBaseline: baseline, status: 'pending_review' as const, version: 1, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' }
-    const bundle = { requestId: 'load', space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term' as const, scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewerAgentId: 'zhiheng', reviewPolicy: 'independent_reviewer' as const, visibilityPolicy: 'agent_private' as const, storageProfileVersion: 'memory-v1' as const, state: 'active' as const, storageLocator: { rootKind: 'managed' as const, displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }, candidate, currentContent: '旧内容' }
+    const candidate = { id: 'memory-candidate-recovery', spaceId: 'memory-agent-zhouce', proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, source: { kind: 'manual' as const, label: 'test' }, summary: '正式记忆修改', proposedContent: '新内容', proposedContentHash: hash, submittedBaseline: baseline, status: 'pending_review' as const, version: 1, createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' }
+    const bundle = { requestId: 'load', space: { id: 'memory-agent-zhouce', scopeType: 'agent_long_term' as const, scopeKey: { kind: 'agent_long_term' as const, agentId: 'zhouce' }, owner: { kind: 'agent' as const, agentId: 'zhouce' }, stewardAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, reviewPolicy: 'independent_reviewer' as const, visibilityPolicy: 'agent_private' as const, storageProfileVersion: 'memory-v1' as const, state: 'active' as const, storageLocator: { rootKind: 'managed' as const, displayPath: 'memory/long-term.md', relativePath: 'memory/long-term.md' }, contentHash: hash, updatedAt: '2026-09-01T00:00:00Z' }, candidate, currentContent: '旧内容' }
     vi.spyOn(desktopBridge, 'discoverEligibleMemorySpaces').mockResolvedValue({ requestId: 'discover-memory-zhouce', spaces: [bundle.space], diagnostics: [] })
     vi.spyOn(desktopBridge, 'listMemoryReviews').mockResolvedValue([])
     vi.spyOn(desktopBridge, 'loadMemoryReview').mockResolvedValue(bundle)
-    const decision = { id: 'decision-1', candidateId: candidate.id, actorAgentId: 'zhiheng', decision: 'approve' as const, decidedAt: '2026-09-01T00:01:00Z' }
+    const decision = { id: 'decision-1', candidateId: candidate.id, actorPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, decision: 'approve' as const, decidedAt: '2026-09-01T00:01:00Z' }
     const receipt = { id: 'receipt-1', containerId: candidate.spaceId, previousContainerHash: hash, writtenContainerHash: hash, verifiedAt: '2026-09-01T00:01:00Z', atomicReplace: true }
     const review = vi.spyOn(desktopBridge, 'reviewMemoryCandidate').mockResolvedValue({ kind: 'revision_pending', requestId: 'review', candidate: { ...candidate, status: 'revision_pending', version: 2 }, decision, writeReceipt: receipt, recoveryRef: 'revision-1', diagnostics: [{ code: 'memory_revision_pending', severity: 'warning', message: '版本待补记' }] })
-    const recover = vi.spyOn(desktopBridge, 'recoverMemoryRevision').mockResolvedValue({ kind: 'saved', requestId: 'recover', candidate: { ...candidate, status: 'written', version: 3 }, decision, revision: { id: 'revision-1', spaceId: candidate.spaceId, candidateId: candidate.id, reviewDecisionId: decision.id, proposerAgentId: 'zhouce', reviewerAgentId: 'zhiheng', sourceContentHash: hash, contentHash: hash, storageLocator: bundle.space.storageLocator, writeReceiptId: receipt.id, writtenAt: receipt.verifiedAt }, writeReceipt: receipt })
+    const recover = vi.spyOn(desktopBridge, 'recoverMemoryRevision').mockResolvedValue({ kind: 'saved', requestId: 'recover', candidate: { ...candidate, status: 'written', version: 3 }, decision, revision: { id: 'revision-1', spaceId: candidate.spaceId, candidateId: candidate.id, reviewDecisionId: decision.id, proposerAgentId: 'zhouce', reviewPrincipal: { kind: 'agent' as const, agentId: 'zhiheng' }, sourceContentHash: hash, contentHash: hash, storageLocator: bundle.space.storageLocator, writeReceiptId: receipt.id, writtenAt: receipt.verifiedAt }, writeReceipt: receipt })
 
     renderAgent('/agents/zhouce?tab=memory', state)
     fireEvent.click(await screen.findByRole('button', { name: /正式记忆修改/ }))
@@ -402,6 +402,56 @@ describe('Agent 双模式配置工作台', () => {
     await waitFor(() => expect(packageTab).toHaveFocus())
     fireEvent.keyDown(packageTab, { key: 'ArrowRight' })
     await waitFor(() => expect(management).toHaveFocus())
+  })
+
+  it('关闭窄屏文件选择后恢复触发按钮焦点', async () => {
+    renderAgent('/agents/zhouce?tab=package')
+
+    const trigger = screen.getByRole('button', { name: '选择文件' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '选择 AgentPackage 文件' })).toBeInTheDocument())
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('受管 AgentPackage 未返回文件时提供安全重新读取', () => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      runtime: 'desktop',
+      agents: initialState.agents.map((item) => item.id === source.id ? {
+        ...item,
+        files: [],
+        packageSource: { kind: 'bandi-managed', packageId: 'agt_zhouce', strategy: 'managed' },
+      } : item),
+    }
+
+    renderAgent('/agents/zhouce?tab=package', state)
+
+    expect(screen.getByText('尚未读取到 AgentPackage 文件')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '选择文件' })).not.toBeInTheDocument()
+    expect(screen.queryByText('选择一个文件查看结构化预览或只读源码。')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['外部引用', { kind: 'external-reference' as const, externalPath: '/tmp/external', strategy: 'reference-only' as const }, { compatibility: 'unverified' as const }, '外部目录未被读取'],
+    ['Web 演示', { kind: 'bandi-demo' as const, strategy: 'create-demo' as const }, { schemaVersion: 1, compatibility: 'current' as const }, '当前演示没有已登记文件'],
+  ])('%s 的空 AgentPackage 不提供系统读取操作', (_label, packageSource, packageSchema, title) => {
+    const source = initialState.agents.find((item) => item.id === 'zhouce')!
+    const state: State = {
+      ...initialState,
+      agents: initialState.agents.map((item) => item.id === source.id ? { ...item, files: [], packageSource, packageSchema } : item),
+    }
+
+    renderAgent('/agents/zhouce?tab=package', state)
+
+    expect(screen.getByText(title)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重新读取' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
   })
 
   it('AgentPackage 深链展示文件树和默认文件', () => {

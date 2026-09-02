@@ -8,6 +8,7 @@ export type BaselineRefDto = {
   containerId: Id
   assetContentHash: ContentHash
   containerContentHash: ContentHash
+  targetExists?: boolean
 }
 
 export type Diagnostic = {
@@ -19,6 +20,11 @@ export type Diagnostic = {
   path?: string
   range?: { startLine: number; startColumn: number; endLine: number; endColumn: number }
   remediation?: string
+}
+
+export type AgentListResult = {
+  agents: import('./domain').FullAgent[]
+  diagnostics: Diagnostic[]
 }
 
 export type CreateWorkspaceBindingRequest = {
@@ -282,6 +288,11 @@ export type MemoryOwnerDto =
   | { kind: 'agent'; agentId: Id }
   | { kind: 'workspace'; workspaceId: Id }
   | { kind: 'department_workspace'; departmentId: Id; workspaceId: Id }
+
+export type ReviewPrincipalDto =
+  | { kind: 'agent'; agentId: Id }
+  | { kind: 'chairman_user'; companyId: Id }
+
 export type FormalMemoryCandidateStatus =
   | 'pending_review'
   | 'changes_requested'
@@ -297,7 +308,7 @@ export type MemorySpaceDto = {
   scopeKey: MemoryScopeKeyDto
   owner: MemoryOwnerDto
   stewardAgentId: Id
-  reviewerAgentId: Id
+  reviewPrincipal: ReviewPrincipalDto
   reviewPolicy: 'independent_reviewer'
   visibilityPolicy: 'agent_private' | 'workspace_shared' | 'department_workspace'
   storageProfileVersion: 'memory-v1'
@@ -323,7 +334,7 @@ export type MemoryCandidateDto = {
   id: Id
   spaceId: Id
   proposerAgentId: Id
-  reviewerAgentId: Id
+  reviewPrincipal: ReviewPrincipalDto
   source: { kind: 'manual' | 'import'; label: string }
   summary: string
   proposedContent: string
@@ -338,7 +349,7 @@ export type MemoryCandidateDto = {
 export type MemoryReviewDecisionDto = {
   id: Id
   candidateId: Id
-  actorAgentId: Id
+  actorPrincipal: ReviewPrincipalDto
   decision: MemoryReviewDecision
   comment?: string
   decidedAt: Timestamp
@@ -351,7 +362,7 @@ export type MemoryRevisionDto = {
   candidateId: Id
   reviewDecisionId: Id
   proposerAgentId: Id
-  reviewerAgentId: Id
+  reviewPrincipal: ReviewPrincipalDto
   sourceContentHash: ContentHash
   contentHash: ContentHash
   storageLocator: AssetLocatorDto
@@ -382,6 +393,7 @@ export type ReviewMemoryCandidateRequest = {
   decision: MemoryReviewDecision
   expectedCandidateVersion: number
   expectedBaseline: BaselineRefDto
+  expectedReviewPrincipal: ReviewPrincipalDto
   comment?: string
 }
 
@@ -401,7 +413,7 @@ export type ReviewMemoryCandidateResult =
   | { kind: 'saved'; requestId: Id; candidate: MemoryCandidateDto; decision: MemoryReviewDecisionDto; revision: MemoryRevisionDto; writeReceipt: WriteReceiptDto }
   | { kind: 'candidate_changed'; requestId: Id; candidate: MemoryCandidateDto; diagnostics: Diagnostic[] }
   | { kind: 'baseline_changed'; requestId: Id; candidateId: Id; base: ConfigSide; current: ConfigSide; proposed: ConfigSide; diagnostics: Diagnostic[] }
-  | { kind: 'governance_changed' | 'reviewer_mismatch' | 'self_review_forbidden' | 'validation_failed'; requestId: Id; diagnostics: Diagnostic[] }
+  | { kind: 'governance_changed' | 'self_review_forbidden' | 'validation_failed'; requestId: Id; diagnostics: Diagnostic[] }
   | { kind: 'save_failed'; requestId: Id; diagnostics: Diagnostic[]; retryable: boolean; fileState: 'unchanged' | 'write_not_verified' }
   | { kind: 'revision_pending'; requestId: Id; candidate: MemoryCandidateDto; decision: MemoryReviewDecisionDto; writeReceipt: WriteReceiptDto; recoveryRef: Id; diagnostics: Diagnostic[] }
 

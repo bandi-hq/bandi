@@ -5,6 +5,7 @@ import { continueAgentRecovery } from '../desktop-bridge'
 import { Button } from '../components/ui/button'
 import { EmptyState, MockBoundaryNote, MonoPath, PageHeader, StatusBadge } from '../components/app/page'
 import { useApp } from '../state'
+import { getAgentConfigStatus } from '../domain-selectors'
 
 export function HomePage() {
   const { state, dispatch, hydrateDesktop } = useApp()
@@ -12,14 +13,14 @@ export function HomePage() {
   const [recovering, setRecovering] = useState<string>()
   if (state.runtime === 'desktop' && Object.values(state.hydration).some((status) => status === 'failed')) return <HomeHydrationFailed onRetry={hydrateDesktop} />
   if (state.runtime === 'desktop' && Object.values(state.hydration).some((status) => status === 'loading')) return <HomeHydrationPending />
-  if (state.onboarding.status === 'active' || !state.agents.length) return <FirstAgentWelcome />
+  if (state.onboarding.status === 'active' || (!state.agents.length && !state.agentDiagnostics.length)) return <FirstAgentWelcome />
   const desktop = state.runtime === 'desktop'
   const workspace = state.workspaces.find((item) => item.id === state.currentWorkspaceId)
-  const missingAgent = state.agents.find((item) => item.config.includes('缺少'))
-  const changedAgent = state.agents.find((item) => item.config === '外部变化')
+  const missingAgent = state.agents.find((item) => getAgentConfigStatus(state, item).level === 'error')
+  const changedAgent = state.agents.find((item) => getAgentConfigStatus(state, item).level === 'warning')
   const candidate = state.memoryCandidates.find((item) => item.status === '待审核')
   const recoveries = state.agentRecoveryOperations
-  const issues = [missingAgent, changedAgent, candidate].filter(Boolean).length + recoveries.length
+  const issues = [missingAgent, changedAgent, candidate].filter(Boolean).length + recoveries.length + state.agentDiagnostics.length
   const recentEdits = workspace?.recentEdits ?? []
   const recover = async (operationId: string) => {
     if (recovering) return
@@ -51,6 +52,7 @@ export function HomePage() {
         {missingAgent && <button onClick={() => navigate(`/agents/${missingAgent.id}?tab=rules`)} className="flex w-full items-start gap-3 text-left"><CircleAlert size={18} className="mt-0.5 text-danger" /><span className="flex-1"><b className="block text-sm">配置缺失</b><small className="text-muted-foreground">{missingAgent.name} 尚未配置规则</small></span><ArrowRight size={16} /></button>}
         {changedAgent && <button onClick={() => desktop ? navigate(`/agents/${changedAgent.id}?tab=instructions`) : dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'diff', agentId: changedAgent.id, path: `${changedAgent.packagePath}instructions.md` } })} className="flex w-full items-start gap-3 text-left"><CircleAlert size={18} className="mt-0.5 text-warning" /><span className="flex-1"><b className="block text-sm">外部变化</b><small className="text-muted-foreground">{changedAgent.name} 的主指令在外部被修改</small></span><ArrowRight size={16} /></button>}
         {candidate && <button onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'memory', candidateId: candidate.id } })} className="flex w-full items-start gap-3 text-left"><CircleAlert size={18} className="mt-0.5 text-warning" /><span className="flex-1"><b className="block text-sm">待审核正式记忆</b><small className="text-muted-foreground">{candidate.id} · {candidate.summary}</small></span><ArrowRight size={16} /></button>}
+        {state.agentDiagnostics.map((diagnostic, index) => <div key={`${diagnostic.source}-${diagnostic.code}-${diagnostic.path}-${index}`} className="flex items-start gap-3"><CircleAlert size={18} className="mt-0.5 shrink-0 text-danger" aria-hidden="true" /><span className="min-w-0 flex-1"><b className="block text-sm">AgentPackage 需要修复</b><small className="block text-muted-foreground">{diagnostic.source ?? '受管 AgentPackage'}{diagnostic.path ? ` · ${diagnostic.path}` : ''} · {diagnostic.message}</small>{diagnostic.remediation && <small className="block text-muted-foreground">{diagnostic.remediation}</small>}</span><Button variant="outline" size="sm" onClick={hydrateDesktop}><RefreshCw size={14} aria-hidden="true" />重新读取</Button></div>)}
         {recoveries.map((operation) => <div key={operation.id} className="flex items-start gap-3"><CircleAlert size={18} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" /><span className="min-w-0 flex-1"><b className="block text-sm">Agent 配置尚未完整保存</b><small className="block text-muted-foreground">{state.agents.find((item) => item.id === operation.agentId)?.name ?? operation.agentId} · {operation.status === 'blocked' ? '内容已变化，不会自动覆盖' : '可安全继续未完成阶段'}</small></span>{operation.status === 'blocked' ? <Button asChild variant="outline" size="sm"><Link to={`/agents/${operation.agentId}`}>查看 Agent</Link></Button> : <Button variant="outline" size="sm" disabled={Boolean(recovering)} aria-busy={recovering === operation.id} onClick={() => void recover(operation.id)}>{recovering === operation.id ? '修复中…' : '继续修复'}</Button>}</div>)}
       </div> : <p className="mt-4 text-sm text-success">{desktop ? '当前没有待处理配置。' : '当前演示配置已就绪。'}</p>}</section>
     </div>

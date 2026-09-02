@@ -14,6 +14,7 @@ vi.mock('../desktop-bridge', () => ({
   isDesktopRuntime: () => desktopBridge.desktop,
   listManagedAgents: () => Promise.resolve([]),
   loadOrganizationSnapshot: () => Promise.resolve({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] }),
+  loadToolConfiguration: () => Promise.resolve({ revision: 0, selectedPlanId: 'default', builtInToolIds: [], plans: [{ id: 'default', name: '默认方案', toolIds: [] }], customTools: [] }),
   requestClientHandoff: desktopBridge.requestClientHandoff,
 }))
 

@@ -5,7 +5,7 @@ import { AiClientHandoffAction } from '../../components/ai-clients'
 import { Button } from '../../components/ui/button'
 import { AppDialog } from '../../components/ui/dialog'
 import { useUnsavedChangesGuard } from '../../hooks/use-unsaved-changes-guard'
-import { EntityNotFound, EntityTabPanel, EntityTabs, FieldRow, MockBoundaryNote, MonoPath, PathActions, StatusBadge, toneForStatus } from '../../components/app/page'
+import { EmptyState, EntityNotFound, EntityTabPanel, EntityTabs, FieldRow, MockBoundaryNote, MonoPath, PathActions, StatusBadge, toneForStatus } from '../../components/app/page'
 import { useApp } from '../../state'
 import { getEligibleMemorySpaces, resolveMemoryGovernance } from '../../memory-policy'
 import type { ContextPolicy, ContextPolicyOverride, FullAgent, ServiceGrant, WorkspaceBinding, WorkspaceBindingConfig } from '../../domain'
@@ -95,7 +95,7 @@ export function AgentDetailPage() {
       <Link to="/agents" className="mb-4 inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ArrowLeft size={16} aria-hidden="true" />返回 Agent 列表</Link>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3"><AgentAvatar agent={agent} className="size-12 text-lg" /><div className="min-w-0"><h2 className="text-2xl font-semibold tracking-tight">{agent.name}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{roleName} · {agent.department}</p></div></div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'source', agentId: agent.id, section: route.section } })}><Search size={16} aria-hidden="true" />诊断来源</Button><AiClientHandoffAction workspaceId={state.currentWorkspaceId ?? undefined} agentId={agent.id} /></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'source', agentId: agent.id, section: route.section } })}><Search size={16} aria-hidden="true" />诊断来源</Button><AiClientHandoffAction workspaceId={state.currentWorkspaceId ?? undefined} agentId={agent.id} agentName={agent.name} disabled={agent.status !== 'active'} /></div>
       </div>
     </header>
     <section aria-label="Agent 状态与视图" className="panel mb-5 p-4 sm:p-5">
@@ -633,6 +633,7 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
   const [proposedContent, setProposedContent] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
+  const [diagnostics, setDiagnostics] = useState<string[]>([])
   const [formalSpaces, setFormalSpaces] = useState<Record<string, MemorySpaceDto>>({})
   const governance = !desktop && spaceId ? resolveMemoryGovernance(state, spaceId, agent.id) : undefined
   const selectedFormalSpace = spaceId ? formalSpaces[spaceId] : undefined
@@ -648,10 +649,14 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
     if (owner.kind === 'workspace') return owner.workspaceId
     return `${owner.departmentId} × ${owner.workspaceId}`
   }
-  const reviewerFor = (space: MemorySpaceDto | (typeof demoSpaces)[number]) => desktop ? (space as MemorySpaceDto).reviewerAgentId : (space as (typeof demoSpaces)[number]).reviewer
+  const reviewerFor = (space: MemorySpaceDto | (typeof demoSpaces)[number]) => {
+    if (!desktop) return (space as (typeof demoSpaces)[number]).reviewer
+    const principal = (space as MemorySpaceDto).reviewPrincipal
+    return principal.kind === 'agent' ? state.agents.find((item) => item.id === principal.agentId)?.name ?? principal.agentId : `董事长（${state.companies.find((item) => item.id === principal.companyId)?.name ?? principal.companyId}）`
+  }
   const stewardFor = (space: MemorySpaceDto | (typeof demoSpaces)[number]) => desktop ? (space as MemorySpaceDto).stewardAgentId : (space as (typeof demoSpaces)[number]).steward
   const pathFor = (space: MemorySpaceDto | (typeof demoSpaces)[number]) => desktop ? (space as MemorySpaceDto).storageLocator.displayPath : (space as (typeof demoSpaces)[number]).path
-  const canPropose = desktop ? Boolean(selectedFormalSpace?.reviewerAgentId && !selectedReadOnly) : Boolean(governance?.canPropose)
+  const canPropose = desktop ? Boolean(selectedFormalSpace?.reviewPrincipal && !selectedReadOnly) : Boolean(governance?.canPropose)
 
   useEffect(() => {
     if (!desktop || agent.packageSource.kind === 'external-reference' || agent.packageSource.kind === 'bandi-demo') return
@@ -665,7 +670,7 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
         setEligibleFormalSpaces(discovery.spaces)
         setFormalSpaces(Object.fromEntries(discovery.spaces.map((space) => [space.id, space])))
         dispatch({ type: 'HYDRATE_FORMAL_MEMORY_REVIEWS', bundles })
-        if (discovery.diagnostics.length) setError(discovery.diagnostics.map((item) => item.message).join('；'))
+        setDiagnostics(discovery.diagnostics.map((item) => item.message))
       })
       .catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause))
@@ -674,12 +679,12 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
   }, [agent.id, agent.packageSource.kind, desktop, dispatch])
 
   const create = async () => {
-    const reviewerAgentId = desktop ? selectedFormalSpace?.reviewerAgentId : governance?.reviewerAgentId
-    if (!spaceId || !reviewerAgentId || selectedReadOnly || !proposedContent.trim() || creating) return
+    const reviewPrincipal = desktop ? selectedFormalSpace?.reviewPrincipal : governance?.reviewPrincipal
+    if (!spaceId || !reviewPrincipal || selectedReadOnly || !proposedContent.trim() || creating) return
     const id = `memory-candidate-${agent.id}-${crypto.randomUUID()}`
     const summary = `${agent.name} 提出的正式记忆修改`
     if (!desktop) {
-      dispatch({ type: 'CREATE_MEMORY_CANDIDATE', candidate: { id, spaceId, proposerAgentId: agent.id, reviewerAgentId, summary, current: '当前正式内容', proposed: proposedContent, status: '待审核' } })
+      dispatch({ type: 'CREATE_MEMORY_CANDIDATE', candidate: { id, spaceId, proposerAgentId: agent.id, reviewPrincipal, summary, current: '当前正式内容', proposed: proposedContent, status: '待审核' } })
       setSpaceId('')
       setProposedContent('')
       return
@@ -699,7 +704,7 @@ function MemoryTab({ agent }: { agent: FullAgent }) {
     }
   }
 
-  return <section className="panel overflow-hidden"><div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-5 py-4"><div><b>正式记忆</b><p className="mt-1 text-xs text-muted-foreground">正式记忆不能直接修改；请先提交修改建议并完成审核。</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-medium">目标记忆范围<select aria-label="目标记忆范围" className="mt-1 block h-10 max-w-72 px-3 text-sm" value={spaceId} onChange={(event) => { setSpaceId(event.target.value); setError('') }}><option value="">请选择</option>{spaces.map((space) => <option key={space.id} value={space.id}>{scopeLabel(space)} · {ownerLabel(space)}</option>)}</select></label></div></div>{spaceId && <div className="border-b border-border p-5"><label className="block text-sm font-medium">建议写回的完整内容<textarea className="mt-2 min-h-36 w-full p-3 font-mono text-sm" value={proposedContent} onChange={(event) => setProposedContent(event.target.value)} placeholder={selectedReadOnly ? '该记忆范围仅保留历史，不能再提交修改建议' : '填写审核通过后写入正式记忆的完整内容'} disabled={selectedReadOnly} /></label>{selectedReadOnly && <p role="status" className="mt-2 text-sm text-muted-foreground">该部门与工作区的关系已失效；历史版本仍可查看，但不能提交新的修改建议。</p>}<div className="mt-3 flex justify-end"><Button disabled={!canPropose || !proposedContent.trim() || creating} onClick={create}><Plus size={15} aria-hidden="true" />{creating ? '正在创建…' : desktop ? '提交修改建议' : '提交演示建议'}</Button></div></div>}{spaceId && governance?.errors.length ? <div role="alert" className="border-b border-danger/30 bg-danger/5 px-5 py-3 text-sm text-danger">{governance.errors.join(' ')}</div> : null}{error && <div role="alert" className="border-b border-danger/30 bg-danger/5 px-5 py-3 text-sm text-danger">{error}</div>}<div className="divide-y divide-border">{spaces.map((space) => <div key={space.id} className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]"><div><b>{scopeLabel(space)}</b><p className="mt-1 text-xs text-muted-foreground">{ownerLabel(space)} · 归口 {stewardFor(space)} · 审核 {reviewerFor(space)}</p><MonoPath>{pathFor(space)}</MonoPath></div><div className="flex flex-wrap items-center justify-end gap-2">{formalSpaces[space.id]?.state === 'read_only_history' && <StatusBadge tone="neutral">只读历史</StatusBadge>}<StatusBadge tone="success">{desktop ? ((space as MemorySpaceDto).currentRevisionId ?? '尚无正式版本') : (space as (typeof demoSpaces)[number]).revision}</StatusBadge>{desktop && formalSpaces[space.id]?.id && <MemoryRevisionHistory spaceId={formalSpaces[space.id].id} currentRevisionId={formalSpaces[space.id].currentRevisionId} />}</div></div>)}</div><div className="border-t border-border p-5"><div className="label mb-3">修改建议</div>{candidates.length ? <div className="space-y-2">{candidates.map((candidate) => <button key={candidate.id} type="button" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'memory', candidateId: candidate.id } })} className="flex w-full items-center justify-between rounded-lg border border-border p-3 text-left hover:bg-muted"><span><b>{candidate.id}</b><small className="ml-2 text-muted-foreground">{candidate.summary}</small></span><StatusBadge tone={candidate.status === '待审核' ? 'warning' : 'success'}>{candidate.status}</StatusBadge></button>)}</div> : <p className="text-sm text-muted-foreground">暂无相关修改建议。</p>}</div></section>
+  return <section className="panel overflow-hidden"><div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-5 py-4"><div><b>正式记忆</b><p className="mt-1 text-xs text-muted-foreground">正式记忆不能直接修改；请先提交修改建议并完成审核。</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-medium">目标记忆范围<select aria-label="目标记忆范围" className="mt-1 block h-10 max-w-72 px-3 text-sm" value={spaceId} onChange={(event) => { setSpaceId(event.target.value); setError('') }}><option value="">请选择</option>{spaces.map((space) => <option key={space.id} value={space.id}>{scopeLabel(space)} · {ownerLabel(space)}</option>)}</select></label></div></div>{spaceId && <div className="border-b border-border p-5"><label className="block text-sm font-medium">建议写回的完整内容<textarea className="mt-2 min-h-36 w-full p-3 font-mono text-sm" value={proposedContent} onChange={(event) => setProposedContent(event.target.value)} placeholder={selectedReadOnly ? '该记忆范围仅保留历史，不能再提交修改建议' : '填写审核通过后写入正式记忆的完整内容'} disabled={selectedReadOnly} /></label>{selectedReadOnly && <p role="status" className="mt-2 text-sm text-muted-foreground">该部门与工作区的关系已失效；历史版本仍可查看，但不能提交新的修改建议。</p>}<div className="mt-3 flex justify-end"><Button disabled={!canPropose || !proposedContent.trim() || creating} onClick={create}><Plus size={15} aria-hidden="true" />{creating ? '正在创建…' : desktop ? '提交修改建议' : '提交演示建议'}</Button></div></div>}{spaceId && governance?.errors.length ? <div role="alert" className="border-b border-danger/30 bg-danger/5 px-5 py-3 text-sm text-danger">{governance.errors.join(' ')}</div> : null}{diagnostics.length > 0 && <div role="status" className="border-b border-warning/30 bg-warning/8 px-5 py-3 text-sm text-warning">{diagnostics.join('；')}</div>}{error && <div role="alert" className="border-b border-danger/30 bg-danger/5 px-5 py-3 text-sm text-danger">{error}</div>}{spaces.length === 0 && <div className="p-5"><EmptyState title="暂无可提交的正式记忆范围" description="请先完善 Agent 的公司、主管或工作区关系。" action={<Button asChild variant="outline"><Link to={agent.companyId ? `/organization?company=${encodeURIComponent(agent.companyId)}` : '/organization'}>前往组织配置</Link></Button>} /></div>}<div className="divide-y divide-border">{spaces.map((space) => <div key={space.id} className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]"><div><b>{scopeLabel(space)}</b><p className="mt-1 text-xs text-muted-foreground">{ownerLabel(space)} · 归口 {stewardFor(space)} · 审核 {reviewerFor(space)}</p><MonoPath>{pathFor(space)}</MonoPath></div><div className="flex flex-wrap items-center justify-end gap-2">{formalSpaces[space.id]?.state === 'read_only_history' && <StatusBadge tone="neutral">只读历史</StatusBadge>}<StatusBadge tone="success">{desktop ? ((space as MemorySpaceDto).currentRevisionId ?? '尚无正式版本') : (space as (typeof demoSpaces)[number]).revision}</StatusBadge>{desktop && formalSpaces[space.id]?.id && <MemoryRevisionHistory spaceId={formalSpaces[space.id].id} currentRevisionId={formalSpaces[space.id].currentRevisionId} />}</div></div>)}</div><div className="border-t border-border p-5"><div className="label mb-3">修改建议</div>{candidates.length ? <div className="space-y-2">{candidates.map((candidate) => <button key={candidate.id} type="button" onClick={() => dispatch({ type: 'OPEN_DIALOG', dialog: { kind: 'memory', candidateId: candidate.id } })} className="flex w-full items-center justify-between rounded-lg border border-border p-3 text-left hover:bg-muted"><span><b>{candidate.id}</b><small className="ml-2 text-muted-foreground">{candidate.summary}</small></span><StatusBadge tone={candidate.status === '待审核' ? 'warning' : 'success'}>{candidate.status}</StatusBadge></button>)}</div> : <p className="text-sm text-muted-foreground">暂无相关修改建议。</p>}</div></section>
 }
 
 function PermissionsTab({ agent }: { agent: FullAgent }) {

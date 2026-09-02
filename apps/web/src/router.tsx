@@ -9,6 +9,7 @@ import { WorkspaceDetailPage, WorkspacesPage, WorkspaceWizardPage } from './page
 import { AssetDetailPage, AssetsPage } from './pages/assets/asset-pages'
 import { SkillsPage } from './pages/assets/skills-page'
 import { SettingsPage } from './pages/settings/settings-pages'
+import { GuidePage } from './pages/guide-page'
 import { NotFoundPage } from './pages/not-found-page'
 import { RouteErrorPage } from './pages/route-error-page'
 
@@ -31,8 +32,9 @@ export const router = createHashRouter([{
     { path: 'assets/skills', element: <SkillsPage /> },
     { path: 'assets/:id', element: <AssetDetailPage /> },
     { path: 'settings', element: <SettingsPage /> },
-    { path: 'settings/claude-code', element: <Navigate to="/settings?section=ai-clients" replace /> },
-    { path: 'settings/backup', element: <Navigate to="/settings?section=data" replace /> },
+    { path: 'guide', element: <GuidePage /> },
+    { path: 'settings/claude-code', element: <Navigate to="/settings?section=tools" replace /> },
+    { path: 'settings/backup', element: <Navigate to="/settings?section=recovery" replace /> },
     { path: '*', element: <NotFoundPage /> },
   ],
 }])

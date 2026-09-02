@@ -17,7 +17,7 @@ describe('Memory 治理策略', () => {
   it('Agent 长期空间由独立主管审核', () => {
     const result = resolveMemoryGovernance(initialState, 'mem-agent-zhouce', 'zhouce')
     expect(result.canPropose).toBe(true)
-    expect(result.reviewerAgentId).not.toBe('zhouce')
+    expect(result.reviewPrincipal).not.toBe('zhouce')
   })
 
   it('拒绝跨 Agent 写入', () => {
@@ -36,12 +36,12 @@ describe('Memory 治理策略', () => {
         ? { ...company, assistantAgentId: undefined }
         : company),
       memorySpaces: initialState.memorySpaces.map((space) => space.id === 'mem-agent-zhouce'
-        ? { ...space, reviewerAgentId: undefined }
+        ? { ...space, reviewPrincipal: undefined }
         : space),
     }
     const result = resolveMemoryGovernance(state, 'mem-agent-zhouce', 'zhouce')
-    expect(result.canPropose).toBe(false)
-    expect(result.errors).toContain('没有可用的独立审核者，请先完善主管或项目责任关系。')
+    expect(result.canPropose).toBe(true)
+    expect(result.reviewPrincipal).toEqual({ kind: 'chairman_user', companyId: 'xinghe' })
   })
 
   it('改投合法空间后重新计算审核者', () => {
@@ -52,6 +52,6 @@ describe('Memory 治理策略', () => {
     const result = retargetMemoryCandidate(initialState, candidate!.id, target!.id)
     const governance = resolveMemoryGovernance(initialState, target!.id, 'zhouce')
     expect(result?.spaceId).toBe(target!.id)
-    expect(result?.reviewerAgentId).toBe(governance.reviewerAgentId)
+    expect(result?.reviewPrincipal).toStrictEqual(governance.reviewPrincipal)
   })
 })

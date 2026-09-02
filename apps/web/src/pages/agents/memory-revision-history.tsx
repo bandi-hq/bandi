@@ -57,7 +57,7 @@ export function MemoryRevisionHistory({ spaceId, currentRevisionId }: MemoryRevi
           <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
             <div><dt className="text-muted-foreground">基于版本</dt><dd className="mt-1 font-mono break-all">{revision.parentRevisionId ?? '首个版本'}</dd></div>
             <div><dt className="text-muted-foreground">修改建议</dt><dd className="mt-1 font-mono break-all">{revision.candidateId}</dd></div>
-            <div><dt className="text-muted-foreground">审核者</dt><dd className="mt-1 font-mono break-all">{revision.reviewerAgentId}</dd></div>
+            <div><dt className="text-muted-foreground">审核者</dt><dd className="mt-1 font-mono break-all">{revision.reviewPrincipal.kind === 'agent' ? revision.reviewPrincipal.agentId : `董事长（${revision.reviewPrincipal.companyId}）`}</dd></div>
             <div><dt className="text-muted-foreground">内容校验值</dt><dd><MonoPath>{revision.contentHash}</MonoPath></dd></div>
           </dl>
         </article>)}

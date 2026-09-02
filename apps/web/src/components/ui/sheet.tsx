@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { cn } from '../../lib'
 import { Tooltip } from './tooltip'
 
@@ -8,7 +8,6 @@ type Props = { open: boolean; onOpenChange: (open: boolean) => void; title: stri
 export function Sheet({ open, onOpenChange, title, description, children, footer, wide, side = 'right', navigation }: Props) {
   const triggerRef = useRef<HTMLElement | null>(null)
   if (open && !triggerRef.current && document.activeElement instanceof HTMLElement) triggerRef.current = document.activeElement
-  useEffect(() => { if (!open) triggerRef.current = null }, [open])
 
   return <Dialog.Root open={open} onOpenChange={onOpenChange}><Dialog.Portal>
     <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-[2px] data-[state=open]:animate-fade" />

@@ -30,8 +30,8 @@ describe('Agents 列表入口', () => {
     renderAgents()
 
     expect(screen.getByRole('link', { name: '查看 知衡 Agent 详情' })).toHaveAttribute('href', '/agents/zhiheng')
-    expect(screen.getByRole('link', { name: '查看 周策 Agent 详情，定位到外部变化' })).toHaveAttribute('href', '/agents/zhouce?tab=package&path=instructions.md&view=preview')
-    expect(screen.getByRole('link', { name: '查看 林序 Agent 详情，定位到缺少 Rules' })).toHaveAttribute('href', '/agents/linxu?tab=rules')
+    expect(screen.getByRole('link', { name: '查看 周策 Agent 详情，外部变化' })).toHaveAttribute('href', '/agents/zhouce?tab=package&path=instructions.md&view=preview')
+    expect(screen.getByRole('link', { name: '查看 林序 Agent 详情' })).toHaveAttribute('href', '/agents/linxu')
   })
 
   it('外部变化缺少对应文件时安全降级到 AgentPackage', () => {

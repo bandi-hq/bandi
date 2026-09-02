@@ -16,6 +16,7 @@ const desktopBridge = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   generateEntityId: vi.fn(),
   loadOrganizationSnapshot: vi.fn(),
+  loadToolConfiguration: vi.fn(),
   listAgents: vi.fn(),
   listAgentRecoveryOperations: vi.fn(),
   continueAgentRecovery: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('../desktop-bridge', () => ({
   listAgents: desktopBridge.listAgents,
   listManagedAgents: () => Promise.resolve([]),
   loadOrganizationSnapshot: desktopBridge.loadOrganizationSnapshot,
+  loadToolConfiguration: desktopBridge.loadToolConfiguration,
   selectWorkspaceDirectory: desktopBridge.selectWorkspaceDirectory,
   createWorkspace: desktopBridge.createWorkspace,
   generateEntityId: desktopBridge.generateEntityId,
@@ -44,9 +46,10 @@ beforeEach(() => {
   desktopBridge.createWorkspace.mockReset()
   desktopBridge.generateEntityId.mockReset()
   desktopBridge.loadOrganizationSnapshot.mockReset()
+  desktopBridge.loadToolConfiguration.mockReset().mockResolvedValue({ revision: 0, selectedPlanId: 'default', builtInToolIds: [], plans: [{ id: 'default', name: '默认方案', toolIds: [] }], customTools: [] })
   desktopBridge.listAgentRecoveryOperations.mockReset()
   desktopBridge.continueAgentRecovery.mockReset()
-  desktopBridge.listAgents.mockResolvedValue([])
+  desktopBridge.listAgents.mockResolvedValue({ agents: [], diagnostics: [] })
   desktopBridge.listAgentRecoveryOperations.mockResolvedValue([])
   desktopBridge.loadOrganizationSnapshot.mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
   desktopBridge.generateEntityId.mockResolvedValue('workspace-generated')
@@ -112,7 +115,7 @@ describe('渐进式首次体验', () => {
 
   it('Desktop 持久展示多项读取失败并允许重试', async () => {
     desktopBridge.desktop = true
-    desktopBridge.listAgents.mockRejectedValueOnce(new Error('agent root unavailable')).mockResolvedValue([])
+    desktopBridge.listAgents.mockRejectedValueOnce(new Error('agent root unavailable')).mockResolvedValue({ agents: [], diagnostics: [] })
     desktopBridge.loadOrganizationSnapshot.mockRejectedValueOnce(new Error('database unavailable')).mockResolvedValue({ schemaVersion: 1, companies: [], departments: [], roles: [], workspaces: [], serviceGrants: [] })
     desktopBridge.listAgentRecoveryOperations.mockImplementation(() => new Promise(() => undefined))
     const router = createMemoryRouter([{ path: '/', element: <AppProvider><HomePage /></AppProvider> }], { initialEntries: ['/'] })
